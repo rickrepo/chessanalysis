@@ -1,0 +1,386 @@
+-- AuctionMesh UI: the one window.
+--
+--   +-------------------------------------------------------------+
+--   | AuctionMesh                              Gold: 32s 00c   [x] |
+--   | [ BUY (2) ] [ SELL (3) ]                                     |
+--   | What to do next, in plain words.                             |
+--   |-------------------------------------------------------------|
+--   | [icon] Copper Ore                                    [ Buy ] |
+--   |        SAFE  Buy 12 for 36c > vendor pays 60c > +24c         |
+--   | [icon] Linen Cloth x20            Ready to post     [ Post ] |
+--   |        Paid 20c > Sell 99c > +71c each                       |
+--   |-------------------------------------------------------------|
+--   | Paid 4s > back 19s = +15s            [Flips: ON] [Post next] |
+--   +-------------------------------------------------------------+
+--
+-- BUY tab: only deals verified against live listings, with the exact
+-- quantity and total you will pay. SELL tab: everything you bought, what you
+-- paid, what it sells for, and the one thing to do with it.
+-- Rendering is throttled (5x per second, only while shown and only if changed).
+local _, ns = ...
+ns = ns or {}
+
+local UI = {}
+ns.UI = UI
+
+local floor, min = math.floor, math.min
+local ROWS, ROW_H, WIDTH = 8, 38, 520
+UI.tab = "BUY"
+
+local GREEN, GOLD, BLUE, RED, GREY, ORANGE = "|cff33ff66", "|cffffd100", "|cff4d99ff", "|cffff4040", "|cffaaaaaa", "|cffff8040"
+
+local frame, rows = nil, {}
+
+local function ahOpen() return AuctionHouseFrame and AuctionHouseFrame:IsShown() end
+local function merchantOpen() return MerchantFrame and MerchantFrame:IsShown() end
+local function mailOpen() return MailFrame and MailFrame:IsShown() end
+
+function UI:Dirty() self.dirty = true end
+
+---------------------------------------------------------------- row content
+
+local function buyRows()
+    local S, list = ns.Sniper, {}
+    for _, d in pairs(S.verified) do list[#list + 1] = d end
+    table.sort(list, function(a, b)
+        if a.kind ~= b.kind then return a.kind == "VENDOR" end
+        return a.profit > b.profit
+    end)
+    return list
+end
+
+local function fillBuy(r, d, short)
+    local S = ns.Sniper
+    local units, total = S.NextBuy(d)
+    r.name:SetText(S.nameOf(d.key))
+    r.state:SetText("")
+    local each = d.units > 0 and d.profit / d.units or 0
+    if d.kind == "VENDOR" then
+        r.detail:SetText(("%sSAFE|r  Buy %d for %s  >  vendor pays %s  >  %s+%s|r"):format(
+            GREEN, units, short(total), short(d.sell * units), GREEN, short(each * units)))
+    else
+        r.detail:SetText(("%sFLIP|r  Buy %d for %s  >  resell at %s each  >  %s+%s|r %s(not guaranteed)|r"):format(
+            GOLD, units, short(total), short(d.sell), GREEN, short(d.profit), GREY))
+    end
+    local b = S.buying
+    if b and b.key == d.key then
+        if b.phase == "confirm" then
+            r.btn:SetText("Confirm"); r.btn:Enable()
+        else
+            r.btn:SetText("..."); r.btn:Disable()
+        end
+    else
+        r.btn:SetText("Buy")
+        r.btn:SetEnabled(not b)
+    end
+    r.btn:Show()
+end
+
+local STATE = {
+    AH = function(e, ready, busy)
+        if not ahOpen() then return GOLD .. "Open the AH to post|r", nil end
+        if busy then return GREY .. "Checking price...|r", nil end
+        if ready then return GOLD .. "Ready to post|r", "Post" end
+        return GREY .. "Waiting for price check|r", nil
+    end,
+    VENDOR = function() return GREEN .. "Sell to any vendor|r", merchantOpen() and "Sell" or nil end,
+    MAIL = function(e) return BLUE .. (e.seen and "In your mailbox" or "In your mailbox (not checked yet)") .. "|r", nil end,
+    HOLD = function() return RED .. "Waiting: market is below your cost|r", ahOpen() and "Re-check" or nil end,
+}
+
+local function fillSell(r, e, short)
+    local Se = ns.Seller
+    local name = ns.Sniper.nameOf(e.key)
+    r.name:SetText(e.count > 1 and (name .. " x" .. e.count) or name)
+    local p = Se.prices[e.key]
+    local ready = p and p.price and GetTime() - p.at < 90
+    local busy = Se.pending and Se.pending.key == e.key
+    if Se.posting and Se.posting.key == e.key then busy = true end
+    local text, button = STATE[e.action](e, ready, busy)
+    r.state:SetText(text)
+    local paid, sell, _, profit, live = Se:Numbers(e)
+    local paidText = paid and short(paid) or (ORANGE .. "unknown|r")
+    if e.action == "HOLD" then
+        r.detail:SetText(("Paid %s each  >  market is lower right now"):format(paidText))
+    else
+        local profitText = ""
+        if profit then profitText = ("  >  %s%s%s|r each"):format(profit >= 0 and GREEN or RED, profit >= 0 and "+" or "", short(profit)) end
+        local est = (e.f.kind == "FLIP" and not live) and (GREY .. " (planned)|r") or ""
+        r.detail:SetText(("Paid %s  >  Sell %s%s%s"):format(paidText, short(sell), est, profitText))
+    end
+    if button then r.btn:SetText(button); r.btn:Enable(); r.btn:Show() else r.btn:Hide() end
+end
+
+---------------------------------------------------------------- status line
+
+local function buyStatus(n)
+    if not ahOpen() then return GOLD .. "Open the Auction House to look for deals.|r" end
+    local S, Sw = ns.Sniper, ns.Swarm
+    local parts = {}
+    if Sw and Sw.active and #Sw.units > 0 then
+        local fresh, total = Sw:Coverage()
+        parts[#parts + 1] = fresh < total and ("Scanning prices: %d of %d categories done."):format(fresh, total)
+            or "Prices are up to date."
+    elseif ns.Store.n == 0 then
+        parts[#parts + 1] = "No price data yet."
+    end
+    local pending = S:Pending()
+    if pending > 0 then parts[#parts + 1] = ("Checking %d possible deal(s)..."):format(pending) end
+    if n == 0 then
+        parts[#parts + 1] = "No deals right now. Only confirmed deals you can afford are listed."
+    else
+        parts[#parts + 1] = GREEN .. "Press Buy. What you see is exactly what you get.|r"
+    end
+    return table.concat(parts, " ")
+end
+
+---------------------------------------------------------------- render
+
+function UI:Render()
+    self.dirty = false
+    if not frame or not frame:IsShown() then return end
+    local Se, short = ns.Seller, ns.Seller.short
+    local deals, entries = buyRows(), Se:Entries()
+    frame.gold:SetText("Gold: " .. short(GetMoney()))
+    frame.tabBuy:SetText(("BUY (%d)"):format(#deals))
+    frame.tabSell:SetText(("SELL (%d)"):format(#entries))
+    frame.tabBuy:SetEnabled(self.tab ~= "BUY")
+    frame.tabSell:SetEnabled(self.tab ~= "SELL")
+
+    local list = self.tab == "BUY" and deals or entries
+    frame.status:SetText(self.tab == "BUY" and buyStatus(#deals) or Se:Instructions(entries))
+    for i = 1, ROWS do
+        local r, item = rows[i], list[i]
+        r.item = item
+        if not item then r:Hide() else
+            r.icon:SetTexture(C_Item.GetItemIconByID(item.key) or 134400)
+            if self.tab == "BUY" then fillBuy(r, item, short) else fillSell(r, item, short) end
+            r:Show()
+        end
+    end
+    local more = #list > ROWS and ("  +" .. (#list - ROWS) .. " more") or ""
+
+    -- Footer: money tied up in the SELL list.
+    local invested, back, unknown = 0, 0, 0
+    for _, e in ipairs(entries) do
+        local paid, _, net = Se:Numbers(e)
+        if paid then invested, back = invested + paid * e.count, back + net * e.count else unknown = unknown + 1 end
+    end
+    local text = ""
+    if #entries > 0 then
+        local profit = back - invested
+        text = ("Holding: paid %s  >  expect back %s  =  %s%s%s|r"):format(short(invested), short(back),
+            profit >= 0 and GREEN or RED, profit >= 0 and "+" or "", short(profit))
+    end
+    frame.footer:SetText(text .. more)
+    frame.post:SetShown(self.tab == "SELL" and ahOpen())
+    frame.flips:SetText(ns.Deals.cfg.flips and "Flips: ON" or "Flips: OFF")
+    frame.flips:SetShown(self.tab == "BUY")
+end
+
+---------------------------------------------------------------- clicks
+
+local function rowButton(self)
+    local item = self:GetParent().item
+    if not item then return end
+    if UI.tab == "BUY" then
+        local S = ns.Sniper
+        local b = S.buying
+        if b and b.key == item.key and b.phase == "confirm" then S:Confirm() else S:Buy(item.key) end
+    else
+        local Se = ns.Seller
+        if item.action == "AH" then Se:Post(item.key)
+        elseif item.action == "VENDOR" then Se:SellVendor(item.key)
+        elseif item.action == "HOLD" then Se.prices[item.key] = nil; Se.priority = item.key
+        end
+    end
+    UI:Dirty()
+end
+
+local function rowEnter(self)
+    local item = self.item
+    if not item then return end
+    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+    GameTooltip:SetItemByID(item.key)
+    if UI.tab == "SELL" then
+        local p = ns.Seller.prices[item.key]
+        if p and p.price then
+            local qty = ns.Seller:PostQty(item.key, p)
+            GameTooltip:AddLine(("%sPosts %d at %s each, deposit %s|r"):format(GOLD, qty,
+                ns.Seller.short(p.price), ns.Seller.short((p.depEach or 0) * qty)))
+        elseif p and p.hold then
+            GameTooltip:AddLine(RED .. p.hold .. "|r")
+        end
+        if item.f.proof then GameTooltip:AddLine(GREEN .. "Purchase confirmed: " .. item.f.proof .. "|r") end
+        GameTooltip:AddLine(GREY .. "Right-click: remove from this list|r")
+    else
+        local d = item
+        if d.kind == "FLIP" then
+            GameTooltip:AddLine(("%sOther sellers start at %s. Deposit to relist: %s.|r"):format(GREY,
+                ns.Seller.short(d.wall or 0), ns.Seller.short(d.deposit or 0)))
+        end
+    end
+    GameTooltip:Show()
+end
+
+local function rowMouseUp(self, button)
+    if GetCursorInfo() then return ns.Seller.AcceptDrop() end
+    if button == "RightButton" and UI.tab == "SELL" and self.item then ns.Seller:Untrack(self.item.key) end
+end
+
+---------------------------------------------------------------- window
+
+local function button(parent, w, text, onClick, name)
+    local b = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
+    b:SetSize(w, 22)
+    b:SetText(text)
+    b:SetScript("OnClick", onClick)
+    return b
+end
+
+function UI:Create()
+    if frame then return end
+    frame = CreateFrame("Frame", "AuctionMeshFrame", UIParent, "BackdropTemplate")
+    frame:SetSize(WIDTH, 112 + ROWS * ROW_H)
+    frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    frame:SetBackdropColor(0.04, 0.04, 0.06, 0.96)
+    frame:SetFrameStrata("HIGH")
+    frame:SetMovable(true); frame:EnableMouse(true); frame:RegisterForDrag("LeftButton")
+    frame:SetClampedToScreen(true)
+    frame:SetScript("OnDragStart", frame.StartMoving)
+    frame:SetScript("OnDragStop", function(f)
+        f:StopMovingOrSizing()
+        local point, _, rel, x, y = f:GetPoint()
+        AuctionMeshDB.cfg.pos = { point, rel, x, y }
+    end)
+    frame:SetScript("OnReceiveDrag", function() ns.Seller.AcceptDrop() end)
+    frame:SetScript("OnMouseUp", function() if GetCursorInfo() then ns.Seller.AcceptDrop() end end)
+
+    frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    frame.title:SetPoint("TOPLEFT", 12, -10)
+    frame.title:SetText("AuctionMesh")
+    local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", 0, 0)
+    frame.gold = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    frame.gold:SetPoint("TOPRIGHT", -34, -12)
+
+    frame.tabBuy = button(frame, 110, "BUY", function() UI.tab = "BUY"; UI:Render() end)
+    frame.tabBuy:SetPoint("TOPLEFT", 10, -34)
+    frame.tabSell = button(frame, 110, "SELL", function() UI.tab = "SELL"; UI:Render() end)
+    frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", 6, 0)
+    local log = button(frame, 50, "Log", function() ns.Diag:Show() end)
+    log:SetPoint("TOPRIGHT", -10, -34)
+
+    frame.status = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.status:SetPoint("TOPLEFT", 12, -62)
+    frame.status:SetWidth(WIDTH - 24)
+    frame.status:SetHeight(26)
+    frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
+
+    for i = 1, ROWS do
+        local r = CreateFrame("Frame", nil, frame)
+        r:SetSize(WIDTH - 20, ROW_H - 2)
+        r:SetPoint("TOPLEFT", 10, -92 - (i - 1) * ROW_H)
+        r.bg = r:CreateTexture(nil, "BACKGROUND")
+        r.bg:SetAllPoints()
+        r.bg:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.03 or 0.07)
+        r.icon = r:CreateTexture(nil, "ARTWORK")
+        r.icon:SetSize(30, 30); r.icon:SetPoint("LEFT", 3, 0)
+        r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        r.name:SetPoint("TOPLEFT", 40, -4)
+        r.name:SetWidth(210); r.name:SetJustifyH("LEFT"); r.name:SetWordWrap(false)
+        r.state = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.state:SetPoint("TOPLEFT", 252, -5)
+        r.state:SetWidth(170); r.state:SetJustifyH("LEFT"); r.state:SetWordWrap(false)
+        r.detail = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.detail:SetPoint("BOTTOMLEFT", 40, 4)
+        r.detail:SetWidth(WIDTH - 20 - 40 - 76); r.detail:SetJustifyH("LEFT"); r.detail:SetWordWrap(false)
+        r.btn = button(r, 68, "Buy", rowButton)
+        r.btn:SetPoint("RIGHT", -4, 0)
+        r:EnableMouse(true)
+        r:SetScript("OnEnter", rowEnter)
+        r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        r:SetScript("OnMouseUp", rowMouseUp)
+        r:Hide()
+        rows[i] = r
+    end
+
+    frame.footer = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.footer:SetPoint("BOTTOMLEFT", 12, 13)
+    frame.footer:SetJustifyH("LEFT")
+    frame.post = button(frame, 96, "Post next", function() ns.Seller:PostNext() end, "AuctionMeshPostButton")
+    frame.post:SetPoint("BOTTOMRIGHT", -10, 8)
+    frame.flips = button(frame, 96, "Flips: ON", function()
+        local cfg = AuctionMeshDB.cfg
+        cfg.flips = not cfg.flips
+        ns.Deals.cfg.flips = cfg.flips
+        ns.Print(cfg.flips and "Flips ON: also shows resale deals (good odds, not guaranteed)."
+            or "Flips OFF: only guaranteed vendor deals are shown.")
+        ns.Sniper.verified = {}
+        ns.Sniper.lastScreen = 0
+        UI:Render()
+    end)
+    frame.flips:SetPoint("BOTTOMRIGHT", -10, 8)
+
+    -- Throttled redraw: at most 5 per second, and only when something changed.
+    local acc = 0
+    frame:SetScript("OnUpdate", function(_, elapsed)
+        acc = acc + elapsed
+        if acc < 0.2 then return end
+        acc = 0
+        if UI.dirty then UI:Render() end
+    end)
+    frame:Hide()
+end
+
+function UI:Open(tab)
+    self:Create()
+    if tab then self.tab = tab end
+    if not frame:IsShown() then
+        frame:ClearAllPoints()
+        local pos = AuctionMeshDB.cfg.pos
+        if ahOpen() and not pos then
+            frame:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 4, 0)
+        elseif pos then
+            frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+        else
+            frame:SetPoint("CENTER", 250, 0)
+        end
+        frame:Show()
+    end
+    self:Render()
+end
+
+function UI:Toggle()
+    self:Create()
+    if frame:IsShown() then frame:Hide() else self:Open() end
+end
+
+function UI:IsShown() return frame and frame:IsShown() end
+
+function UI:Init()
+    local f = CreateFrame("Frame")
+    for _, e in ipairs({ "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "MERCHANT_CLOSED", "MAIL_CLOSED", "PLAYER_MONEY" }) do
+        f:RegisterEvent(e)
+    end
+    f:SetScript("OnEvent", function(_, event)
+        if event == "AUCTION_HOUSE_SHOW" then
+            if AuctionMeshDB.cfg.autoOpen then
+                -- Things to post? Start on SELL so they go up first.
+                local toPost = false
+                for _, e in ipairs(ns.Seller:Entries()) do if e.action == "AH" then toPost = true end end
+                UI:Open(toPost and "SELL" or "BUY")
+            end
+        elseif event == "AUCTION_HOUSE_CLOSED" then
+            if frame and frame:IsShown() and #ns.Seller:Entries() == 0 then frame:Hide() end
+            UI:Dirty()
+        else
+            UI:Dirty()
+        end
+    end)
+end
+
+return UI

@@ -1,11 +1,24 @@
 -- AuctionMesh Deals: pure profit math (no WoW API calls, so it is unit-tested).
 --
--- Two kinds of profit:
---   VENDOR  buy below what a vendor pays for the item. Risk-free, instant, no
---           5% AH cut, works on day one with zero price history.
---   FLIP    buy far below what the item resells for on the AH. The resale price
---           is the lower of (a) the "fair" price found by looking past the
---           cheapest listings and (b) the item's moving average.
+-- Two kinds of deal, checked against the item's LIVE listings:
+--
+--   SAFE (vendor)  Listed below what an NPC vendor pays. Guaranteed profit,
+--                  no AH cut, no deposit, no waiting for a buyer.
+--
+--   FLIP (resale)  A few units listed far below the real market. Rules, all
+--                  of which must hold (each one exists because breaking it
+--                  loses money):
+--     1. Stackable goods only. Gear varies by item level and can't be compared.
+--     2. There is a "wall": at least `depthUnits` units, in at least 2 price
+--        rows, listed within 25% of each other. That is the real market price.
+--        One lonely expensive listing is NOT a market price.
+--     3. We can afford to buy EVERY unit below our resale price. If cheap
+--        units would remain, they undercut us and ours never sell.
+--     4. What we buy is at most `share` (25%) of the wall's size: small
+--        outliers only, never a market that simply is cheap.
+--     5. One item never takes more than `maxSpend` (50%) of our gold.
+--     6. Profit after the 5% AH cut and the deposit is at least `margin` (40%).
+--     7. If we have price history, the resale price is capped by the average.
 --
 -- All amounts are copper.
 local _, ns = ...
@@ -16,14 +29,32 @@ ns.Deals = Deals
 
 local floor, min, max, ceil = math.floor, math.min, math.max, math.ceil
 
+Deals.cfg = {
+    margin = 0.40,        -- FLIP: profit must be >= 40% of what we pay
+    vendorMargin = 0.10,  -- SAFE: guaranteed, so 10% is enough
+    minProfit = 20,       -- ignore deals that make less than this in total
+    cut = 0.05,           -- auction house cut on sales
+    undercut = 1,         -- we list this far under the competition
+    step = 1,             -- smallest price unit the AH accepts (Core sets 100 if copper is rejected)
+    band = 1.25,          -- wall = listings within 25% of each other
+    depthUnits = 10,      -- wall needs at least this many units...
+    depthRows = 2,        -- ...in at least this many price rows
+    share = 0.25,         -- we buy at most 25% of the wall's size
+    maxSpend = 0.5,       -- at most half our gold on one flip
+    minSamples = 4,       -- average needs this many samples before we trust it
+    fairMaxAge = 20 * 60, -- a wall price older than this is re-checked
+    maxAge = 30 * 60,     -- only consider lowest prices seen in the last 30 min
+    screenRatio = 0.6,    -- screening: lowest price must be <= 60% of the reference
+    flips = true,         -- false = SAFE deals only
+}
+
 -- Round down to a price the auction house accepts.
 function Deals.round(p, cfg)
     local s = (cfg or Deals.cfg).step
     return floor(p / s) * s
 end
 
--- Lowest unit price that still makes 1c profit after the AH cut, rounded up to a valid price.
--- Pass cost + deposit to cover the deposit too.
+-- Lowest unit price that still makes 1c after the AH cut (pass cost + deposit).
 function Deals.breakEven(cost, cfg)
     cfg = cfg or Deals.cfg
     local s = cfg.step
@@ -31,140 +62,132 @@ function Deals.breakEven(cost, cfg)
     return ceil(p / s) * s
 end
 
-Deals.cfg = {
-    margin = 0.30,        -- FLIP: profit must be >= 30% of what we pay (after the AH cut)
-    vendorMargin = 0.10,  -- VENDOR: risk-free, so 10% is enough
-    minProfit = 20,       -- ignore deals that make less than this in total
-    cut = 0.05,           -- auction house cut on sales
-    undercut = 1,         -- we relist this far under the competition (100 if the AH has no copper)
-    step = 1,             -- smallest price unit the AH accepts (Core sets 100 if copper is rejected)
-    fairDepth = 0.15,     -- fair price = price once 15% of supply is bought out
-    fairMaxAge = 20 * 60, -- a fair price older than this is re-checked
-    minSamples = 4,       -- average needs this many samples before we trust it
-    maxAge = 30 * 60,     -- only consider lowest prices seen in the last 30 min
-}
-
--- rows: ascending by unit price, each { price = unitCopper, qty = n }.
--- Fair price = unit price at the point where max(cheapest row + 1 unit, 15% of
--- all units) has been bought. For gear (1 per listing) that is the 2nd listing;
--- for a commodity with a few cheap units it looks past them.
-function Deals.fairPrice(rows, cfg)
+-- Finds the wall: first row i >= 2 where rows i.. within `band` hold enough depth.
+-- Returns index, price, units in the wall band (or nil).
+function Deals.wall(rows, cfg)
     cfg = cfg or Deals.cfg
-    if #rows < 2 then return nil end
-    local total = 0
-    for i = 1, #rows do total = total + rows[i].qty end
-    local target = max(rows[1].qty + 1, ceil(total * cfg.fairDepth))
-    local cum = 0
-    for i = 1, #rows do
-        cum = cum + rows[i].qty
-        if cum >= target then return rows[i].price end
+    for i = 2, #rows do
+        local limit, units, nrows = rows[i].price * cfg.band, 0, 0
+        for j = i, #rows do
+            if rows[j].price > limit then break end
+            units, nrows = units + rows[j].qty, nrows + 1
+        end
+        if units >= cfg.depthUnits and nrows >= cfg.depthRows then return i, rows[i].price, units end
     end
-    return rows[#rows].price
 end
 
--- Full evaluation of one item's live listings.
---   rows     ascending listings (own listings already removed)
---   ref      outside reference price (moving average) or nil
---   vendor   vendor sell price per unit (0/nil if it can't be vendored)
---   budget   copper we can spend
---   deposit  AH deposit per unit to relist it (12h). It is counted as a cost
---            (it's lost if the item doesn't sell) and kept back from the budget,
---            so we never buy something we can't afford to post.
--- Returns a deal table or nil:
---   { kind = "VENDOR"|"FLIP", units, cost, deposit, profit, sell, maxUnit, fair, buys, counts }
-function Deals.evaluate(rows, ref, vendor, budget, cfg, deposit)
-    cfg = cfg or Deals.cfg
-    deposit = deposit or 0
-    if #rows == 0 or budget <= 0 then return nil, nil end
-    local fair = Deals.fairPrice(rows, cfg)
-    local sell = fair
-    if ref and ref > 0 then sell = sell and min(sell, ref) or ref end
-
-    if sell then sell = Deals.round(sell - cfg.undercut, cfg) end
-    -- What one unit returns: AH = sale minus 5% cut minus deposit; vendor = vendor price.
-    local ahNet = (sell and sell > 0) and (floor(sell * (1 - cfg.cut)) - deposit) or 0
-    local vendorNet = vendor or 0
-    local ahMax = floor(ahNet / (1 + cfg.margin))
-    local vMax = floor(vendorNet / (1 + cfg.vendorMargin))
-
-    local left, units, cost, deps, profit, maxUnit = budget, 0, 0, 0, 0, 0
-    local buys, counts, kinds = {}, {}, { VENDOR = 0, FLIP = 0 }
+local function vendorDeal(rows, o, cfg)
+    local left, units, cost, profit = o.budget, 0, 0, 0
+    local buys, counts, sell = {}, {}, 0
     for i = 1, #rows do
         local r = rows[i]
-        local value, kind
-        if r.price <= vMax then value, kind = vendorNet, "VENDOR" end
-        if r.price <= ahMax and (not value or ahNet > value) then value, kind = ahNet, "FLIP" end
-        if not value then break end -- rows are sorted: nothing further qualifies
-        local dep = (kind == "FLIP") and deposit or 0
-        local n, spend
-        if r.whole then -- non-commodity listing: whole stack or nothing
-            spend = r.buyout or r.qty * r.price
-            n = (spend + dep * r.qty <= left) and r.qty or 0
-        else
-            n = min(r.qty, floor(left / (r.price + dep)))
-            spend = n * r.price
-        end
-        if n > 0 then
-            units, cost, deps = units + n, cost + spend, deps + n * dep
-            -- value already has the deposit taken off for FLIP units
-            profit = profit + n * value - spend
-            left = left - spend - n * dep
-            maxUnit = r.price
-            buys[#buys + 1], counts[#counts + 1] = r, n
-            kinds[kind] = kinds[kind] + n
+        local v = r.vendor or o.vendor or 0
+        local ok = v > 0 and r.price <= floor(v / (1 + cfg.vendorMargin))
+        if ok then
+            local n, spend
+            if r.whole then
+                spend = r.buyout or r.qty * r.price
+                n = (spend <= left) and r.qty or 0
+            else
+                n = min(r.qty, floor(left / r.price))
+                spend = n * r.price
+            end
+            if n > 0 then
+                units, cost, profit, left = units + n, cost + spend, profit + n * v - spend, left - spend
+                buys[#buys + 1], counts[#counts + 1] = r, n
+                sell = v
+            end
+            if not r.whole and n < r.qty then break end -- out of gold
         elseif not r.whole then
-            break -- out of gold
+            break -- commodity rows are sorted and share one vendor price
         end
     end
-    if units == 0 or profit < cfg.minProfit then return nil, fair end
-    return {
-        kind = kinds.VENDOR >= kinds.FLIP and "VENDOR" or "FLIP",
-        units = units, cost = cost, deposit = deps, profit = profit, maxUnit = maxUnit,
-        sell = (kinds.VENDOR >= kinds.FLIP) and vendorNet or sell,
-        fair = fair, buys = buys, counts = counts,
-    }, fair
+    if units == 0 or profit < cfg.minProfit then return nil end
+    return { kind = "VENDOR", units = units, cost = cost, deposit = 0, profit = profit, sell = sell,
+             buys = buys, counts = counts }
 end
 
--- Quick screen of everything the mesh knows, using only the lowest price.
--- store: the Store module; vendorOf(key) -> vendor price or nil;
--- depositOf(key) -> estimated AH deposit per unit (optional).
--- Returns up to `limit` estimated deals sorted by estimated profit:
---   { key, price, qty, sell, kind, units, profit, margin }
-function Deals.candidates(store, budget, now, vendorOf, cfg, limit, depositOf)
+local function flipDeal(rows, o, cfg)
+    local wi, wall, depth = Deals.wall(rows, cfg)
+    if not wi then return nil, nil end
+    local dep = o.deposit or 0
+    if dep == math.huge then return nil, wall end
+    local ref = wall
+    if o.avg and o.avg > 0 and o.avg < ref then ref = o.avg end -- rule 7
+    -- Rule 3: the resale price is set by the first row we do NOT buy.
+    local k, sell, net
+    for _ = 1, wi do
+        sell = Deals.round(ref - cfg.undercut, cfg)
+        net = floor(sell * (1 - cfg.cut)) - dep
+        local maxBuy = floor(net / (1 + cfg.margin))
+        k = 0
+        while k + 1 < wi and rows[k + 1].price <= maxBuy do k = k + 1 end
+        if k + 1 < wi and rows[k + 1].price < ref then
+            ref = rows[k + 1].price -- an unbought cheap row becomes our competition; try again
+        else
+            break
+        end
+    end
+    if not k or k == 0 or sell <= 0 then return nil, wall end
+    local units, cost = 0, 0
+    for i = 1, k do units, cost = units + rows[i].qty, cost + rows[i].qty * rows[i].price end
+    if units > floor(depth * cfg.share) then return nil, wall end                 -- rule 4
+    local need = cost + units * dep
+    if need > o.budget or need > floor(o.gold * cfg.maxSpend) then return nil, wall end -- rules 3, 5
+    local profit = units * net - cost
+    if profit < cfg.minProfit then return nil, wall end
+    return { kind = "FLIP", units = units, cost = cost, deposit = units * dep, profit = profit, sell = sell,
+             wall = wall, buys = {}, counts = {} }, wall
+end
+
+-- Full evaluation of one item's live listings (ascending by unit price, own
+-- listings removed). Row: { price, qty } and for non-stackables also
+-- { whole = true, buyout, id, vendor }.
+--   o.budget     copper we may spend now
+--   o.gold       total copper we own (defaults to budget)
+--   o.vendor     vendor price per unit (nil if none)
+--   o.avg        trusted average price (nil if no history)
+--   o.deposit    AH deposit per unit to relist (math.huge = unknown)
+--   o.commodity  true for stackable goods
+-- Returns deal or nil, and the wall price (market price) if one was found.
+--   deal = { kind = "VENDOR"|"FLIP", units, cost, deposit, profit, sell, buys, counts }
+function Deals.evaluate(rows, o, cfg)
+    cfg = cfg or Deals.cfg
+    if #rows == 0 or not o.budget or o.budget <= 0 then return nil, nil end
+    o.gold = o.gold or o.budget
+    local wall
+    if o.commodity then wall = select(2, Deals.wall(rows, cfg)) end
+    local deal = vendorDeal(rows, o, cfg)
+    if deal then return deal, wall end
+    if o.commodity and cfg.flips then return flipDeal(rows, o, cfg) end
+    return nil, wall
+end
+
+-- Cheap screen over everything the mesh knows, to decide what is worth a live
+-- check. Nothing from here is ever shown as a deal. Returns { key, kind, score }.
+function Deals.candidates(store, budget, now, vendorOf, cfg, limit)
     cfg = cfg or Deals.cfg
     local out, n = {}, 0
     local pp, qq = store.p, store.q
     for key, t in pairs(store.t) do
         local p = pp[key]
         if key > 0 and p <= budget and now - t <= cfg.maxAge then
-            local best, kind, sell, each
             local v = vendorOf(key)
             if v and v > 0 and p <= floor(v / (1 + cfg.vendorMargin)) then
-                best, kind, sell, each = v - p, "VENDOR", v, p
-            end
-            local ref = store:Reference(key, now, cfg.fairMaxAge, cfg.minSamples)
-            if ref then
-                local dep = depositOf and depositOf(key) or 0
-                local s = Deals.round(ref - cfg.undercut, cfg)
-                local net = floor(s * (1 - cfg.cut)) - dep
-                if s > 0 and p <= floor(net / (1 + cfg.margin)) and (not best or net - p > best) then
-                    best, kind, sell, each = net - p, "FLIP", s, p + dep
-                end
-            end
-            if best then
-                local units = min(qq[key], floor(budget / each))
-                if units > 0 and best * units >= cfg.minProfit then
+                n = n + 1
+                out[n] = { key = key, kind = "VENDOR", score = (v - p) * min(qq[key], floor(budget / p)) }
+            elseif cfg.flips then
+                local ref = store:Reference(key, now, cfg.fairMaxAge, cfg.minSamples)
+                if ref and p <= ref * cfg.screenRatio then
                     n = n + 1
-                    out[n] = { key = key, price = p, qty = qq[key], sell = sell, kind = kind,
-                               units = units, profit = best * units, margin = best / p }
+                    out[n] = { key = key, kind = "FLIP", score = ref - p }
                 end
             end
         end
     end
-    -- Vendor deals first (risk-free), then by total profit.
     table.sort(out, function(a, b)
         if a.kind ~= b.kind then return a.kind == "VENDOR" end
-        return a.profit > b.profit
+        return a.score > b.score
     end)
     if limit and n > limit then for i = n, limit + 1, -1 do out[i] = nil end end
     return out
@@ -175,7 +198,7 @@ end
 --   cost     what we paid per unit
 --   target   resale price we planned when buying
 --   deposit  deposit per unit for posting it now
--- Returns price, reason. price nil = hold (market is below our break-even).
+-- Returns price, reason. price nil = wait (market is below our break-even).
 function Deals.postPrice(rows, cost, target, cfg, deposit)
     cfg = cfg or Deals.cfg
     local floorP = Deals.breakEven(cost + (deposit or 0), cfg)
@@ -185,7 +208,7 @@ function Deals.postPrice(rows, cost, target, cfg, deposit)
     end
     local p = Deals.round(lowest - cfg.undercut, cfg)
     if p >= floorP then return p, "undercut" end
-    if lowest >= floorP then return lowest, "match" end -- can't undercut further, match instead
+    if lowest >= floorP then return lowest, "match" end
     return nil, ("market %d is below break-even %d (cost + deposit + cut)"):format(lowest, floorP)
 end
 

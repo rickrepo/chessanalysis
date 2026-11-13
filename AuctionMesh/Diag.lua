@@ -85,6 +85,15 @@ function Gate:Ready()
     return now >= self.nextAt and self.outstanding <= 0 and C_AuctionHouse.IsThrottledMessageSystemReady()
 end
 
+-- Your own clicks (Buy, Confirm, Post) don't wait for the background spacing:
+-- they only need the server to be ready and no error back-off in progress.
+-- Background scanning then waits its turn behind the click.
+function Gate:ReadyForUser()
+    local now = GetTime()
+    if self.outstanding > 0 and now - self.changedAt > 5 then self.outstanding = 0 end
+    return now >= (self.penaltyUntil or 0) and C_AuctionHouse.IsThrottledMessageSystemReady()
+end
+
 -- Call right before sending a request.
 function Gate:Use(what)
     self.nextAt = GetTime() + self.interval
@@ -96,6 +105,7 @@ function Gate:Penalize(why)
     self.errors, self.lastError = self.errors + 1, now
     self.interval = math.min(3, self.interval * 1.5)
     self.nextAt = now + 5
+    self.penaltyUntil = now + 2
     Log("GATE backoff (%s): pause 5s, spacing now %.2fs", why, self.interval)
 end
 

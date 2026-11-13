@@ -1,6 +1,7 @@
 -- AuctionMesh Core: wiring, saved data, seed import/export, tooltip, slash commands.
 local ADDON, ns = ...
 local Codec, Store, Comm, Sync, Scanner, Swarm, Sniper, Deals, Seller = ns.Codec, ns.Store, ns.Comm, ns.Sync, ns.Scanner, ns.Swarm, ns.Sniper, ns.Deals, ns.Seller
+local UI = ns.UI
 
 local floor = math.floor
 
@@ -11,7 +12,7 @@ local say = ns.Print
 
 -- New realm: profession goods are where the early money is, so the swarm scans them first.
 local DEFAULTS = { channel = "", password = "", route = "channel", focus = "tradegoods reagents professions recipes",
-    snipeAuto = true, margin = 30, minProfit = 20 }
+    snipeAuto = true, margin = 40, minProfit = 20, flips = true, autoOpen = true, autoScan = true }
 
 local function money(c)
     if C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then return C_CurrencyInfo.GetCoinTextureString(c) end
@@ -107,6 +108,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         local db = AuctionMeshDB
         db.cfg = db.cfg or {}
         for k, v in pairs(DEFAULTS) do if db.cfg[k] == nil then db.cfg[k] = v end end
+        if db.cfg.v ~= 2 then db.cfg.v, db.cfg.margin = 2, 40 end -- stricter flip rules
         db.realms = db.realms or {}
     elseif event == "PLAYER_LOGIN" then
         local db, realm = AuctionMeshDB, realmKey()
@@ -128,8 +130,18 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         Swarm:Init()
         Swarm:SetFocus(db.cfg.focus)
         Deals.cfg.margin, Deals.cfg.minProfit = db.cfg.margin / 100, db.cfg.minProfit
+        Deals.cfg.flips = db.cfg.flips
         Sniper:Init(function() return AuctionMeshDB.cfg.snipeAuto end)
         Seller:Init()
+        UI:Init()
+        -- Scanning starts by itself when the Auction House opens.
+        local ah = CreateFrame("Frame")
+        ah:RegisterEvent("AUCTION_HOUSE_SHOW")
+        ah:SetScript("OnEvent", function()
+            C_Timer.After(1.5, function()
+                if AuctionMeshDB.cfg.autoScan and not Swarm.active and not Swarm.manual then Swarm:Start(true) end
+            end)
+        end)
         -- Retail-style AH rejects copper: prices must be whole silver, so undercut by 1s.
         if C_AuctionHouse.SupportsCopperValues and not C_AuctionHouse.SupportsCopperValues() then
             Deals.cfg.step, Deals.cfg.undercut = 100, 100
@@ -163,28 +175,35 @@ SlashCmdList.AUCTIONMESH = function(input)
     local cmd, rest = (input or ""):match("^(%S*)%s*(.-)$")
     cmd = cmd:lower()
     local cfg = AuctionMeshDB.cfg
-    if cmd == "log" then
+    if cmd == "" then
+        UI:Toggle()
+    elseif cmd == "log" then
         if rest == "clear" then ns.Diag:Clear(); say("Log cleared.") else ns.Diag:Show() end
-    elseif cmd == "bag" then
-        if rest == "restore" then Seller:Restore() else Seller:Toggle() end
+    elseif cmd == "restore" then
+        Seller:Restore()
     elseif cmd == "track" then
         -- /amesh track [item link] [cost per unit in copper]
         local id = tonumber(rest:match("item:(%d+)")) or tonumber(rest:match("^(%d+)"))
         local cost = tonumber(rest:match("%]|h|r%s*(%d+)%s*$") or rest:match("^%d+%s+(%d+)%s*$"))
-        if id then Seller:Track(id, cost) else say("Usage: /amesh track [item link] [cost in copper], or drag the item onto the Flip Bag.") end
-    elseif cmd == "snipe" then
-        if Sniper.active then Sniper:Stop(); cfg.snipeAuto = false; say("Sniper off (won't auto-open).")
-        else cfg.snipeAuto = true; Sniper:Start() end
+        if id then Seller:Track(id, cost) else say("Usage: /amesh track [item link] [cost in copper], or drag the item onto the AuctionMesh window.") end
+    elseif cmd == "flips" then
+        cfg.flips = (rest ~= "off")
+        Deals.cfg.flips = cfg.flips
+        Sniper.verified = {}
+        say(cfg.flips and "Flips ON: resale deals are shown too (not guaranteed)." or "Flips OFF: only guaranteed vendor deals.")
+    elseif cmd == "auto" then
+        cfg.autoOpen = (rest ~= "off"); cfg.snipeAuto = cfg.autoOpen; cfg.autoScan = cfg.autoOpen
+        say(cfg.autoOpen and "Opens and scans automatically at the Auction House." or "Automatic open/scan off. Use /amesh.")
     elseif cmd == "margin" then
         local m = tonumber(rest)
         if m then cfg.margin = m; Deals.cfg.margin = m / 100 end
-        say(("Flip margin: %d%% profit after the 5%% AH cut (vendor flips use %d%%)."):format(cfg.margin, Deals.cfg.vendorMargin * 100))
+        say(("Flip margin: %d%% profit after the AH cut and deposit (vendor deals use %d%%)."):format(cfg.margin, Deals.cfg.vendorMargin * 100))
     elseif cmd == "minprofit" then
         local m = tonumber(rest)
         if m then cfg.minProfit = m; Deals.cfg.minProfit = m end
         say("Minimum profit per deal: " .. money(cfg.minProfit))
     elseif cmd == "swarm" then
-        if Swarm.active then Swarm:Stop("Swarm off.") else Swarm:Start() end
+        if Swarm.active then cfg.autoScan = false; Swarm:Stop("Scanning off.") else cfg.autoScan = true; Swarm:Start() end
     elseif cmd == "step" then
         Swarm:ManualStep()
     elseif cmd == "focus" then
@@ -211,7 +230,7 @@ SlashCmdList.AUCTIONMESH = function(input)
         local p, q, t = Store:Get(id or 0)
         if p then say(("%s: %s, %d listed, %s ago"):format(rest, money(p), q, ago(GetServerTime() - t)))
         else say("No mesh data for " .. rest) end
-    else
+    elseif cmd == "status" then
         local cs, ss = Comm.stats, Sync.stats
         local chatType, target = Comm:Route()
         local fago, fby = Sync:FreshestScan()
@@ -226,6 +245,8 @@ SlashCmdList.AUCTIONMESH = function(input)
             say(("swarm %s: %d/%d categories fresh, %d peers scanning, you did %d units / %d queries"):format(
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
-        say("Commands: /amesh log [clear] | bag [restore] | track <item> [cost] | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <item>")
+    else
+        say("/amesh = open the window | flips on/off | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
+        say("Sharing: /amesh channel <name> [password] | guild | sync.   Scanning: /amesh swarm | focus <types> | scan")
     end
 end

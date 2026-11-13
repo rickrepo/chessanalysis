@@ -187,9 +187,9 @@ end
 
 ---------------------------------------------------------------- control
 
-function Swarm:Start()
+function Swarm:Start(quiet)
     if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then
-        if ns.Print then ns.Print("Open the Auction House first.") end
+        if ns.Print and not quiet then ns.Print("Open the Auction House first.") end
         return
     end
     if #self.units == 0 then self:BuildUnits() end
@@ -197,7 +197,7 @@ function Swarm:Start()
     if not self.ticker then
         self.ticker = C_Timer.NewTicker(self.cfg.tick, function() Swarm:Step() end)
     end
-    if ns.Print then ns.Print(("Swarm on: %d categories shared with everyone scanning."):format(#self.units)) end
+    if ns.Print and not quiet then ns.Print(("Scanning on: %d categories, shared with everyone scanning."):format(#self.units)) end
 end
 
 function Swarm:Stop(reason)
@@ -261,10 +261,10 @@ function Swarm:Init()
     f:RegisterEvent("ADDON_ACTION_BLOCKED")
     f:SetScript("OnEvent", function(_, event, arg1)
         if event == "AUCTION_HOUSE_CLOSED" then
-            if Swarm.active then Swarm:Stop("Auction House closed; swarm paused.") end
+            if Swarm.active then Swarm:Stop() end
         elseif event == "ADDON_ACTION_BLOCKED" then
             if arg1 == "AuctionMesh" and Swarm.active then
-                Swarm:Stop("The client blocked automatic searching. Bind a key to '/amesh step' and press it to scan unit by unit.")
+                Swarm:Stop("The game blocked automatic scanning. Prices will come from your own AH searches and from friends instead.")
                 Swarm.manual = true
             end
         else

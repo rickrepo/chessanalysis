@@ -2,64 +2,64 @@
 
 AuctionMesh is a WoW Forever addon (Midnight retail client, interface 16001) that lets a group of friends share auction house prices in real time and split the scanning work between them. It also includes a simple **sniper** that lists only the deals you can afford right now.
 
-## The sniper (start here)
+## How to use it
 
-Open the auction house and the **Snipes** window appears next to it. Each row is one deal:
-
-```
-[icon] Linen Cloth     VENDOR 12x @3c > 5c   +24c   [Buy]
-[icon] Copper Ore      FLIP   40x @20c > 79c  +22s   [Buy]
-[icon] Peacebloom      FLIP    8x @15c > 60c   +2s   [Check]
-```
-
-* **VENDOR** means the item is listed for less than a vendor pays for it. Buy it, sell it to any NPC, and keep the difference. It's risk-free, has no 5% AH cut, and works on a brand-new realm with no price history. These deals are always listed first.
-* **FLIP** means the cheapest listings are far below what the item really sells for. The resale price is the **lower** of two numbers: (a) the price once the cheap outliers are bought out, and (b) the item's moving average. On a new realm prices fall fast, so the lower number is the safer bet. Profit counts the 5% AH cut, a 1c undercut, **and the deposit to relist it**. The default bar is 30% profit.
-* **Budget-aware:** only items you can afford with the gold in your bag are shown. The buy amount is capped at your gold **and keeps back the gold you'll need to post them**, and the budget updates as you earn. That works fine starting from 32s.
-* **Check** searches that item's listings to confirm the deal and work out exactly how many to buy. The sniper also checks affordable profession goods in the background, starting with the items that have the most listed (those resell fastest). Every price it confirms is shared with your friends, so they don't check the same items again.
-* **Buy** works differently by item type. For stackable goods, **Buy** asks the server for the real total, then you click **Confirm**. If the price rose more than 2% in the meantime, the purchase is cancelled automatically. For gear, one click buys one listing.
-* After you buy something, its tooltip says "sell to a vendor" or "post at X each".
-
-## The Flip Bag (selling what you bought)
-
-A bag-style window (`/amesh bag`, or the **Flip Bag** button on the Snipes window) that shows every item you bought to flip. Each tile shows **what you paid**, **what it sells for**, and **profit per item** (after the 5% AH cut and the deposit):
+Open the auction house. One window opens next to it and price scanning starts by itself. The window has two tabs.
 
 ```
-[icon] POST ON AH          [icon] SELL TO VENDOR
-  20   Paid 20c              10   Paid 5c
-       Sell 99c  +71c             Sell 13c  +8c
-
-Paid 4s50c  ->  back 19s50c  =  +15s00c
+ AuctionMesh                                   Gold: 32s00c
+ [ BUY (2) ] [ SELL (3) ]
+ Scanning prices: 34 of 100 categories done. Press Buy. What you see is exactly what you get.
+ ---------------------------------------------------------------------------
+ Copper Ore                                                          [ Buy ]
+   SAFE  Buy 12 for 36c  >  vendor pays 60c  >  +24c
+ Linen Cloth                                                         [ Buy ]
+   FLIP  Buy 6 for 1s20c  >  resell at 77c each  >  +3s12c (not guaranteed)
 ```
 
-A grey **?** after the sell price means it's the price planned at purchase. It turns into the live price once the AH is open and the current listings have been checked. The bottom line totals everything. Each tile has a colored border, and the text at the top always tells you the next step:
+### BUY tab
 
-| Badge | Meaning | What happens |
-|---|---|---|
-| **MAIL** (blue) | AH purchases arrive in your mailbox | Open any mailbox; purchases and sale gold are collected automatically |
-| **VENDOR** (green) | Sell to an NPC | Talk to any vendor; these sell automatically |
-| **AH** (gold) | Post on the auction house | Open the AH. Each item is priced 1 step under the cheapest competitor, never below what you paid plus the 5% cut. **Click an item to post it** |
-| **HOLD** (red) | Market is below what you paid | Not posted, because that would lose money. It re-checks every 10 minutes |
+Only deals that were just checked against the live listings appear here, with the exact quantity and the exact total you'll pay. Nothing is shown from an estimate.
 
-The game requires one click or keypress per auction posted, so posting can't be fully automatic. For speed, make a macro `/click AuctionMeshPostButton`, bind it to a key, and tap it to post your items one after another. Listings are 12 hours, which has the cheapest deposit. Right-click an item in the Flip Bag to stop tracking it.
+* **SAFE** means the item is listed for less than an NPC vendor pays. Buy it, sell it to any vendor, and keep the difference. This is guaranteed profit, with no AH cut and no deposit.
+* **FLIP** means a few units are listed far below the real market. It has good odds but is not guaranteed, because someone still has to buy from you. A flip is only shown when **all** of these hold:
+  1. It's a stackable good. Gear is never flipped, because item levels make prices incomparable.
+  2. There's a real market price: at least 10 units, at 2 or more prices, within 25% of each other. One lonely expensive listing doesn't count.
+  3. You can afford **every** cheap unit. If cheap ones were left over they would undercut you, so there are never partial buys.
+  4. The cheap units are at most 25% of the size of the real market.
+  5. It uses at most half your gold.
+  6. Profit is at least 40% after the 5% AH cut and the deposit.
+  7. If there's price history (samples at least 30 minutes apart), the resale price can't exceed the average.
+* **Buy** asks the server for the real total; then you press **Confirm**. If the total is even 1c above what was checked, the purchase is cancelled and the deal is re-checked.
+* A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
+* **Flips: ON/OFF** at the bottom switches to SAFE deals only.
 
-**Safety rules for posting**
-* Only one post at a time. Pressing again while a post is in flight is ignored, and background price checks pause around each post, so the AH never answers "you're doing that too fast".
-* An item leaves the Flip Bag only once your bags show it actually went. A rejected post keeps the item, and the chat says why.
-* Auto-vendoring only sells stacks that fit inside the number you bought, never copies you already owned.
+### SELL tab
 
-**Purchases are only recorded once confirmed.** A purchase goes into the Flip Bag only after the server confirms it, or after the gold has actually left your bags. Then you get a green "Purchase confirmed" message. If the server refuses it, the AH shows an error, or nothing is confirmed within 10s, you get a red "Purchase NOT completed" message and nothing is added. The cost recorded is the gold that really left your bags.
+Everything you bought is listed here, with what you paid, what it sells for, the profit per item, and the one thing to do with it:
 
-**The mailbox is checked for real.** Opening the mailbox collects AH items, then reads what's left in the inbox and compares it with your bags. Items seen there show **IN MAILBOX (seen)**. **IN MAILBOX?** means it hasn't been checked yet. If a purchase is in neither your bags nor your mailbox (and is more than 2 minutes old), it's removed from the Flip Bag with a message. Hovering over an item shows how its purchase was confirmed.
+```
+ Copper Ore x12        In your mailbox
+   Paid 3c  >  Sell 5c  >  +2c each
+ Linen Cloth x6        Ready to post                               [ Post ]
+   Paid 20c  >  Sell 77c  >  +52c each
+ Holding: paid 1s56c  >  expect back 4s92c  =  +3s36c            [Post next]
+```
 
-**Sharing a debug log:** type `/amesh log`, click in the box, press Ctrl+A then Ctrl+C, and paste it to Claude. It records every auction house call (AuctionMesh's and the game's own AH window), every AH error and throttle event, and what AuctionMesh decided (prices, posts, purchases), with timestamps. It keeps the last 800 lines, including the end of your previous session. `/amesh log clear` starts it fresh. The log is also saved in `WTF/Account/<ACCOUNT>/SavedVariables/AuctionMesh.lua`.
+| It says | What happens |
+|---|---|
+| **In your mailbox** | Open any mailbox. AH purchases and sale gold are collected automatically, and the inbox is checked against your bags. |
+| **Sell to any vendor** | Talk to any vendor. These sell automatically. Only the units you bought are sold, never copies you already owned. |
+| **Ready to post** | Press **Post** (or **Post next**). The price is 1 step under the cheapest other seller, and never below what you paid plus the deposit plus the 5% cut. It posts everything of that item in one click. |
+| **Waiting: market is below your cost** | Nothing is posted, because that would lose money. It re-checks every 10 minutes. |
 
-**One gate for every AH request.** Searches, browse pages, posts and purchases wait their turn. Each waits until the server has answered the previous one, with at least 0.6s between requests. After an "Internal auction error" or a dropped request, it pauses 5s and spaces requests further apart (up to 3s), then relaxes again after a minute without errors.
+The game requires one click or key press per auction. For speed, make a macro `/click AuctionMeshPostButton` and tap it. An item only leaves the list once your bags show it really went. Right-click a row to remove it. Drag an item from your bags onto the window to add it by hand.
 
-**Missing items?** `/amesh bag restore` rebuilds the Flip Bag from your purchase log (purchases from the last 3 days that are still in your bags). For anything else, drag the item from your bags onto the Flip Bag, or use `/amesh track [item link] [cost in copper]`.
+### If something goes wrong
 
-Settings: `/amesh margin 30` (flip profit %), `/amesh minprofit 20` (minimum copper per deal), `/amesh snipe` (toggle the window).
-
-Profession goods (trade goods, reagents, recipes, profession items) are the swarm's default focus, because that's where the money is on a new realm.
+* Press **Log** (or type `/amesh log`), then Ctrl+A, Ctrl+C, and paste it to Claude. It records every auction house call, every error, and every decision (which listings a deal was based on, quotes, purchases, posts).
+* `/amesh restore` rebuilds the SELL list from your purchase log.
+* All requests go through one queue, so your clicks go first and background scanning slows down automatically after an "Internal auction error".
 
 ## What WoW lets addons do
 
@@ -80,7 +80,7 @@ Since bandwidth is the scarce resource, the protocol is built to save bytes:
 
 ## Swarm scanning (the speed feature)
 
-`/amesh swarm` while the AH is open:
+Scanning starts automatically when the AH opens (`/amesh swarm` turns it off or on):
 
 1. The AH is split into about 100 work units, one per item class or subclass (Herbs, Ore, Cloth, Potions, Plate…).
 2. Each friend claims the **stalest unclaimed** unit and browses it. One `SendBrowseQuery` returns the lowest price and listed quantity of every item in that category. When it's finished, the friend marks it done and the prices go out over the mesh.
@@ -123,16 +123,18 @@ The server and every client use the same conflict rule: the newer timestamp wins
 
 1. Copy the `AuctionMesh` folder into `World of Warcraft/_forever_/Interface/AddOns/`. The folder name may differ on your install; it's the one Auctioneer lives in.
 2. Everyone in the group runs the same command once: `/amesh channel <SecretName> <password>`. Or use `/amesh guild` to go over guild chat instead.
-3. At the AH, run `/amesh swarm`. Price lines show up in item tooltips. `/amesh` on its own shows status and statistics.
+3. Open the AH. The window opens and scanning starts by itself. Price lines also show up in item tooltips.
 
-Commands: `/amesh log [clear] | bag [restore] | track <item> [cost] | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <itemID|link>`
+Commands: `/amesh` (open/close the window) `| flips on/off | auto on/off | margin <pct> | log | restore | track <item> [cost] | status | channel <name> [pw] | guild | swarm | focus <types> | scan`
 
 ## Tests
 
 ```bash
-lua5.1 tests/sim.lua          # protocol simulator + deal and posting math (52 checks)
-lua5.1 tests/seller_test.lua   # Flip Bag posting / vendor safety
+lua5.1 tests/ui_smoke.lua      # whole addon against a fake game client: scan, buy, mail, vendor, post
+lua5.1 tests/deals_test.lua    # deal rules, posting prices, price history
 lua5.1 tests/purchase_test.lua # purchase confirmation + mailbox check
+lua5.1 tests/seller_test.lua   # posting / vendor safety
+lua5.1 tests/sim.lua           # multi-player network simulator
 python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 ```
 

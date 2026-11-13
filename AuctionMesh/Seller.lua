@@ -1,23 +1,14 @@
--- AuctionMesh Seller + Flip Bag.
+-- AuctionMesh Seller: everything after a purchase. No window of its own (see UI.lua).
 --
--- The Flip Bag is a bag-style window showing every item you bought to flip,
--- with a badge saying what to do with it:
+-- Each item you bought is in one of four states:
+--   MAIL    still in your mailbox. Opening the mailbox collects it.
+--   VENDOR  sell to any NPC vendor. Opening a vendor sells these automatically.
+--   AH      post on the auction house: priced 1 step under the cheapest
+--           competitor, never below cost + deposit + 5% cut. One click or key
+--           press per auction (a game rule). Macro: /click AuctionMeshPostButton
+--   HOLD    the market is below your break-even; wait instead of losing money.
 --
---   VENDOR (green)  sell to any NPC vendor. Opening a vendor sells these
---                   automatically, or click the item while the vendor is open.
---   AH (gold)       post on the auction house. Open the AH: prices are worked out
---                   in the background (1 step under the cheapest competitor,
---                   never below what you paid + the 5% cut), then click an
---                   item to post it. One click per auction is a game rule
---                   (posting is hardware-event protected). For speed, bind a
---                   key to  /click AuctionMeshPostButton  and tap it.
---   MAIL (blue)     still in your mailbox (AH purchases arrive by mail).
---                   Opening the mailbox collects them automatically.
---   HOLD (red)      the market is currently below your break-even, so we wait
---                   instead of selling at a loss. Re-checked every 10 minutes.
---
--- The text at the top always says the next thing to do. Right-click an item to
--- stop tracking it.
+-- An item only leaves the list when your bags show it really went.
 local _, ns = ...
 ns = ns or {}
 
@@ -31,7 +22,6 @@ local PRICE_TTL = 90        -- a computed post price is trusted this long
 local HOLD_TTL = 600        -- re-check held items after this
 local PRICE_TIMEOUT = 6
 local LAST_BAG = 5          -- 0-4 bags + reagent bag
-local COLS, TILE_W, TILE_H, PAD, MAXSLOTS = 3, 156, 48, 4, 24
 
 local COLORS = {
     VENDOR = { 0.2, 1, 0.4, "|cff33ff66" },
@@ -126,7 +116,7 @@ function Seller:Instructions(entries)
     local function add(action, text) lines[#lines + 1] = COLORS[action][4] .. text .. "|r" end
     if n.MAIL > 0 then
         add("MAIL", mailOpen() and ("Collecting " .. n.MAIL .. " item(s) from the mailbox...")
-            or ("Go to a mailbox: " .. n.MAIL .. " confirmed purchase(s) should be there. Opening it checks."))
+            or ("Go to a mailbox: " .. n.MAIL .. " purchase(s) to collect."))
     end
     if n.AH > 0 then
         if ahOpen() then
@@ -135,7 +125,7 @@ function Seller:Instructions(entries)
                 local p = e.action == "AH" and self.prices[e.key]
                 if p and p.price and GetTime() - p.at < PRICE_TTL then ready = ready + 1 end
             end
-            add("AH", ("Click an AH item to post it (%d of %d priced and ready)."):format(ready, n.AH))
+            add("AH", ("Press Post on each item, or Post next (%d of %d priced and ready)."):format(ready, n.AH))
         else
             add("AH", "Open the Auction House to post " .. n.AH .. " item(s).")
         end
@@ -144,9 +134,9 @@ function Seller:Instructions(entries)
         add("VENDOR", merchantOpen() and "Selling vendor items..."
             or ("Talk to any vendor: " .. n.VENDOR .. " item(s) sell automatically."))
     end
-    if n.HOLD > 0 then add("HOLD", n.HOLD .. " item(s) on hold: market is below what you paid. Will re-check.") end
+    if n.HOLD > 0 then add("HOLD", n.HOLD .. " item(s) waiting: the market is below what you paid. Re-checked every 10 min.") end
     if #lines == 0 then
-        lines[1] = "|cffaaaaaaNothing to do. Drag an item from your bags onto this window to track it,\nor type /amesh bag restore to rebuild from your purchase log.|r"
+        lines[1] = "|cffaaaaaaNothing to sell. Items you buy on the BUY tab appear here.|r"
     end
     if self.posting then table.insert(lines, 1, "|cffffffffPosting " .. nameOf(self.posting.key) .. "...|r") end
     return table.concat(lines, "\n")
@@ -179,7 +169,7 @@ function Seller:SellVendor(onlyKey)
     self.selling = true
     local i = 0
     local function finish()
-        -- Count what actually left the bags; only that is removed from the Flip Bag.
+        -- Count what actually left the bags; only that is removed from your SELL list.
         Seller:ScanBags()
         local earned = 0
         for key, was in pairs(before) do
@@ -265,7 +255,7 @@ function Seller:Reconcile()
             local missing = f.units - have
             ns.Log("RECONCILE %s: expected %d, bags %d, mail %d -> removing %d", tostring(key), f.units,
                 bagCount[key] or 0, inMail, missing)
-            say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from the Flip Bag.|r")
+            say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from your SELL list.|r")
                 :format(nameOf(key), missing))
             if have <= 0 then flips()[key] = nil; self.prices[key] = nil else f.units = have end
         end
@@ -333,12 +323,19 @@ function Seller:OnResults(key, rows, commodity)
     ns.Log("PRICE %s: lowest=%s cost=%s deposit/unit=%s -> %s (%s)", tostring(key), tostring(rows[1] and rows[1].price),
         tostring(f.cost), tostring(depEach), tostring(price), tostring(why))
     if price then
-        self.prices[key] = { price = price, qty = qty, commodity = commodity, why = why, at = GetTime(),
-                             deposit = depEach * qty }
+        self.prices[key] = { price = price, commodity = commodity, why = why, at = GetTime(), depEach = depEach }
     else
         self.prices[key] = { hold = why, at = GetTime() }
     end
     self:Refresh()
+end
+
+-- How many units one post puts up: everything of this flip that is in your bags
+-- right now (stackables), or one item (gear). Counted at post time, not earlier.
+function Seller:PostQty(key, p)
+    if not p.commodity then return 1 end
+    local f = flips()[key]
+    return min(bagCount[key] or 0, f and f.units or 0)
 end
 
 -- True while a post is in flight or just finished: background searches wait,
@@ -351,7 +348,7 @@ end
 function Seller:Post(key)
     if self.posting then say("Still posting the last item, one moment..."); return end
     local AH = C_AuctionHouse
-    if not ns.Gate:Ready() then
+    if not ns.Gate:ReadyForUser() then
         say("The Auction House is busy, press again in a second.")
         self.quietUntil = GetTime() + 1.5
         return
@@ -365,7 +362,8 @@ function Seller:Post(key)
     local bag, slot = self.FindInBags(key)
     if not bag then self:Refresh(); return end
     local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
-    local qty = p.commodity and min(p.qty, bagCount[key] or p.qty) or 1
+    local qty = self:PostQty(key, p)
+    if qty <= 0 then self:Refresh(); return end
     local deposit = (p.commodity and AH.CalculateCommodityDeposit(key, DURATION, qty)
         or AH.CalculateItemDeposit(loc, DURATION, qty)) or 0
     if deposit > GetMoney() then say("Not enough gold for the deposit (" .. money(deposit) .. ")."); return end
@@ -383,7 +381,7 @@ function Seller:Post(key)
     if not ok then
         ns.Log("POST refused by client for %s", tostring(key))
         self.posting = nil
-        say("The game refused that post. " .. nameOf(key) .. " stays in your Flip Bag.")
+        say("The game refused that post. " .. nameOf(key) .. " stays in your SELL list.")
         return
     end
     self:Refresh()
@@ -392,7 +390,7 @@ function Seller:Post(key)
         local q = Seller.posting
         if q and q.key == key and q.at == Seller.posting.at then
             Seller.posting = nil
-            say(nameOf(key) .. " wasn't posted (no change in your bags); it's still in the Flip Bag.")
+            say(nameOf(key) .. " wasn't posted (no change in your bags); it's still in your SELL list.")
             Seller:Refresh()
         end
     end)
@@ -416,7 +414,7 @@ function Seller:OnError(msg)
     ns.Log("POST error for %s: %s", tostring(self.posting.key), tostring(msg))
     self.posting = nil
     self.quietUntil = GetTime() + 2
-    say("Post failed: " .. tostring(msg) .. ". Item kept in the Flip Bag; press again in a moment.")
+    say("Post failed: " .. tostring(msg) .. ". Item kept in your SELL list; press again in a moment.")
     self:Refresh()
 end
 
@@ -465,8 +463,8 @@ function Seller:Restore()
         end
     end
     say(n > 0 and ("Restored " .. n .. " item(s) from your purchase log.")
-        or "Nothing to restore from the purchase log. Drag items onto the Flip Bag to add them.")
-    self:Refresh(true)
+        or "Nothing to restore from the purchase log. Drag items onto the AuctionMesh window to add them.")
+    self:Refresh("open")
 end
 
 -- Adds an item from your bags by hand (drag it onto the Flip Bag, or /amesh track).
@@ -484,7 +482,7 @@ function Seller:Track(key, cost)
     say(("Tracking %dx %s as %s%s."):format(have, nameOf(key), kind,
         cost and "" or " (cost unknown, so it posts at market: check the price before you click)"))
     self.prices[key] = nil
-    self:Refresh(true)
+    self:Refresh("open")
 end
 
 local function acceptDrop()
@@ -524,226 +522,27 @@ function Seller:Numbers(e)
     local p = self.prices[e.key]
     local live = p and p.price and true or false
     local sell = live and p.price or (f.sell or 0)
-    local dep = (live and p.deposit and p.qty and p.qty > 0) and math.ceil(p.deposit / p.qty)
+    local dep = (live and p.depEach)
         or (AuctionMeshDB.deposits and AuctionMeshDB.deposits[e.key]) or 0
     local net = floor(sell * (1 - Deals.cfg.cut)) - dep
     return paid, sell, net, paid and (net - paid), live
 end
 
----------------------------------------------------------------- Flip Bag window
+---------------------------------------------------------------- window hooks (the window lives in UI.lua)
 
-local frame, slots = nil, {}
-
-local function slotTooltip(self)
-    local e = self.entry
-    if not e then return end
-    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-    GameTooltip:SetItemByID(e.key)
-    local c = COLORS[e.action]
-    local p = Seller.prices[e.key]
-    if e.action == "VENDOR" then
-        GameTooltip:AddLine(c[4] .. "Sell to any vendor: " .. money(e.f.sell or 0) .. " each|r")
-    elseif e.action == "AH" then
-        if p and p.price then
-            GameTooltip:AddLine(c[4] .. ("Post %dx at %s each (%s)|r"):format(p.commodity and p.qty or 1, money(p.price), p.why))
-            GameTooltip:AddLine(("|cffaaaaaaDeposit %s (included: price covers cost + deposit + 5%% cut)|r"):format(money(p.deposit or 0)))
-        else
-            GameTooltip:AddLine(c[4] .. (ahOpen() and "Checking price..." or "Open the Auction House to post") .. "|r")
-        end
-    elseif e.action == "MAIL" then
-        if e.seen then
-            GameTooltip:AddLine(c[4] .. "Seen in your mailbox. Open it to collect.|r")
-        else
-            GameTooltip:AddLine(c[4] .. "Should be in your mailbox (not checked yet). Opening the mailbox checks it.|r")
-        end
-    else
-        GameTooltip:AddLine(c[4] .. "On hold: " .. (p and p.hold or "") .. "|r")
-    end
-    if e.f.unknownCost then
-        GameTooltip:AddLine("|cffff8040Cost unknown (added by hand): it posts at market price, so check it first.|r")
-    else
-        GameTooltip:AddLine(("|cffaaaaaaPaid %s each.|r"):format(money(e.f.cost or 0)))
-    end
-    if e.f.proof then
-        GameTooltip:AddLine(("|cff33ff66Purchase confirmed (%s) at %s|r"):format(e.f.proof, date("%H:%M", e.f.at or 0)))
-    end
-    GameTooltip:AddLine("|cffaaaaaaRight-click: stop tracking.|r")
-    GameTooltip:Show()
-end
-
-local function slotClick(self, button)
-    if GetCursorInfo() then return Seller.AcceptDrop() end
-    local e = self.entry
-    if not e then return end
-    if button == "RightButton" then
-        flips()[e.key] = nil; Seller.prices[e.key] = nil
-        say("Stopped tracking " .. nameOf(e.key) .. ".")
-        return Seller:Refresh()
-    end
-    if e.action == "AH" then
-        if ahOpen() then Seller:Post(e.key) else say("Open the Auction House first.") end
-    elseif e.action == "VENDOR" then
-        if merchantOpen() then Seller:SellVendor(e.key) else say("Talk to any vendor; it sells automatically.") end
-    elseif e.action == "MAIL" then
-        if mailOpen() then Seller:CollectMail() else say("Go to a mailbox to collect it.") end
-    else
-        Seller.prices[e.key] = nil; Seller.priority = e.key
-        say("Re-checking the price of " .. nameOf(e.key) .. ".")
-    end
-end
-
-function Seller:CreateWindow()
-    if frame then return end
-    frame = CreateFrame("Frame", "AuctionMeshFlipBag", UIParent, "BackdropTemplate")
-    frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 } })
-    frame:SetBackdropColor(0.05, 0.05, 0.08, 0.95)
-    frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -260, 140)
-    frame:SetMovable(true); frame:EnableMouse(true); frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", frame.StartMoving)
-    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-    frame:SetClampedToScreen(true)
-    frame:SetFrameStrata("HIGH")
-    -- Drop an item from your bags onto the window to start tracking it.
-    frame:SetScript("OnReceiveDrag", function() Seller.AcceptDrop() end)
-    frame:SetScript("OnMouseUp", function() if GetCursorInfo() then Seller.AcceptDrop() end end)
-
-    frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    frame.title:SetPoint("TOPLEFT", 10, -9)
-    frame.title:SetText("Flip Bag")
-    local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", 0, 0)
-
-    frame.help = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    frame.help:SetPoint("TOPLEFT", 10, -28)
-    frame.help:SetJustifyH("LEFT")
-    frame.help:SetWidth(COLS * (TILE_W + PAD) - PAD)
-    frame.help:SetSpacing(2)
-
-    for i = 1, MAXSLOTS do
-        local b = CreateFrame("Button", nil, frame)
-        b:SetSize(TILE_W, TILE_H)
-        b.border = b:CreateTexture(nil, "BACKGROUND")
-        b.border:SetAllPoints()
-        b.bg = b:CreateTexture(nil, "BORDER")
-        b.bg:SetPoint("TOPLEFT", 2, -2); b.bg:SetPoint("BOTTOMRIGHT", -2, 2)
-        b.bg:SetColorTexture(0.08, 0.08, 0.1, 1)
-        b.icon = b:CreateTexture(nil, "ARTWORK")
-        b.icon:SetSize(TILE_H - 8, TILE_H - 8)
-        b.icon:SetPoint("LEFT", 4, 0)
-        b.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-        b.count = b:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
-        b.count:SetPoint("BOTTOMRIGHT", b.icon, "BOTTOMRIGHT", 1, 1)
-        local x = TILE_H - 1
-        b.badge = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        b.badge:SetPoint("TOPLEFT", x, -4)
-        b.paid = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        b.paid:SetPoint("TOPLEFT", x, -18)
-        b.sell = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        b.sell:SetPoint("TOPLEFT", x, -31)
-        for _, fs in ipairs({ b.badge, b.paid, b.sell }) do
-            fs:SetWidth(TILE_W - x - 4); fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
-        end
-        b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-        b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        b:SetScript("OnClick", slotClick)
-        b:SetScript("OnReceiveDrag", function() Seller.AcceptDrop() end)
-        b:SetScript("OnEnter", slotTooltip)
-        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        b:Hide()
-        slots[i] = b
-    end
-
-    local post = CreateFrame("Button", "AuctionMeshPostButton", frame, "UIPanelButtonTemplate")
-    post:SetSize(110, 22)
-    post:SetText("Post next")
-    post:SetScript("OnClick", function() Seller:PostNext() end)
-    frame.post = post
-    frame.footer = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    frame.footer:SetJustifyH("LEFT")
-    frame:Hide()
-end
-
-function Seller:Render()
-    if not frame or not frame:IsShown() then return end
-    local entries = self:Entries()
-    frame.help:SetText(self:Instructions(entries))
-    local top = 32 + frame.help:GetStringHeight()
-    local shown = min(#entries, MAXSLOTS)
-    local invested, back, unknown = 0, 0, 0
-    for i = 1, MAXSLOTS do
-        local b, e = slots[i], entries[i]
-        b.entry = e
-        if i > shown then b:Hide() else
-            local c = COLORS[e.action]
-            local col, row = (i - 1) % COLS, floor((i - 1) / COLS)
-            b:ClearAllPoints()
-            b:SetPoint("TOPLEFT", 10 + col * (TILE_W + PAD), -top - row * (TILE_H + PAD))
-            b.border:SetColorTexture(c[1], c[2], c[3], 1)
-            b.icon:SetTexture(C_Item.GetItemIconByID(e.key) or 134400)
-            b.count:SetText(e.count > 1 and e.count or "")
-            local busy = e.action == "AH" and self.pending and self.pending.key == e.key
-            local label = (e.action == "AH" and "POST ON AH") or (e.action == "VENDOR" and "SELL TO VENDOR")
-                or (e.action == "MAIL" and (e.seen and "IN MAILBOX (seen)" or "IN MAILBOX?")) or "HOLD"
-            b.badge:SetText(c[4] .. (busy and "checking price..." or label) .. "|r")
-
-            local paid, sell, net, profit, live = self:Numbers(e)
-            b.paid:SetText("Paid " .. (paid and short(paid) or "|cffff8040unknown|r"))
-            local profitText = ""
-            if profit then
-                profitText = "  " .. (profit >= 0 and "|cff33ff66+" or "|cffff4040") .. short(profit) .. "|r"
-            end
-            if e.action == "HOLD" then
-                b.sell:SetText("|cffff4040Market below your cost|r")
-            else
-                b.sell:SetText("Sell " .. short(sell) .. ((e.f.kind == "FLIP" and not live) and "|cffaaaaaa?|r" or "") .. profitText)
-            end
-            if paid then
-                invested = invested + paid * e.count
-                back = back + net * e.count
-            else
-                unknown = unknown + 1
-            end
-            -- Dim AH items whose price isn't ready yet.
-            local p = self.prices[e.key]
-            local ready = e.action ~= "AH" or (p and p.price and GetTime() - p.at < PRICE_TTL)
-            b.icon:SetDesaturated(e.action == "MAIL" or e.action == "HOLD" or (ahOpen() and not ready))
-            b:Show()
-        end
-    end
-    local rows = math.max(1, math.ceil(shown / COLS))
-    local h = top + rows * (TILE_H + PAD) + 40
-    frame:SetSize(COLS * (TILE_W + PAD) - PAD + 20, h)
-    frame.post:ClearAllPoints()
-    frame.post:SetPoint("BOTTOMRIGHT", -8, 8)
-    frame.post:SetShown(ahOpen())
-    frame.footer:ClearAllPoints()
-    frame.footer:SetPoint("BOTTOMLEFT", 10, 13)
-    frame.footer:SetFontObject("GameFontHighlightSmall")
-    local text = ""
-    if shown > 0 then
-        local profit = back - invested
-        text = ("Paid %s  ->  back %s  =  %s%s|r"):format(short(invested), short(back),
-            profit >= 0 and "|cff33ff66+" or "|cffff4040", short(profit))
-        if unknown > 0 then text = text .. ("  |cffaaaaaa(%d unknown cost)|r"):format(unknown) end
-    end
-    local extra = #entries > MAXSLOTS and ("  +" .. (#entries - MAXSLOTS) .. " more") or ""
-    frame.footer:SetText(text .. extra)
-end
-
-function Seller:Toggle()
-    self:CreateWindow()
-    if frame:IsShown() then frame:Hide() else self:ScanBags(); frame:Show(); self:Render() end
-end
-
--- Re-render; with show=true also open the window if there is something to do.
+-- Re-render; with show=true also open the window on the SELL tab if there is something to do.
 function Seller:Refresh(show)
-    if show and #self:Entries() > 0 then
-        self:CreateWindow()
-        if not frame:IsShown() then self:ScanBags(); frame:Show() end
-    end
-    self:Render()
+    local UI = ns.UI
+    if not UI then return end
+    if show == "open" and #self:Entries() > 0 then UI:Open("SELL") end
+    UI:Dirty()
+end
+
+function Seller:Untrack(key)
+    flips()[key] = nil
+    self.prices[key] = nil
+    say("Stopped tracking " .. nameOf(key) .. ".")
+    self:Refresh()
 end
 
 ---------------------------------------------------------------- events
@@ -757,15 +556,15 @@ function Seller:Init()
     end
     f:SetScript("OnEvent", function(_, event, a1, a2)
         if event == "MERCHANT_SHOW" then
-            Seller:Refresh(true)
+            Seller:Refresh("open")
             C_Timer.After(0.3, function() Seller:SellVendor() end)
         elseif event == "MAIL_SHOW" then
-            Seller:Refresh(true); Seller:CollectMail()
+            Seller:Refresh("open"); Seller:CollectMail()
         elseif event == "MAIL_INBOX_UPDATE" then
             Seller:CollectMail()
         elseif event == "AUCTION_HOUSE_SHOW" then
             for k, p in pairs(Seller.prices) do if p.price then Seller.prices[k] = nil end end
-            Seller:Refresh(true)
+            Seller:Refresh()
             if not Seller.ticker then Seller.ticker = C_Timer.NewTicker(0.3, function() Seller:Tick() end) end
         elseif event == "AUCTION_HOUSE_CLOSED" then
             if Seller.ticker then Seller.ticker:Cancel(); Seller.ticker = nil end
@@ -782,7 +581,7 @@ function Seller:Init()
     -- Remind on login if there is unfinished business.
     C_Timer.After(8, function()
         local n = #Seller:Entries()
-        if n > 0 then say(n .. " flip(s) waiting. Type /amesh bag to see what to do.") end
+        if n > 0 then say(n .. " item(s) to sell. Type /amesh to see what to do.") end
     end)
 end
 

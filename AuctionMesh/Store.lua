@@ -100,13 +100,19 @@ end
 -- single snipe-priced listing or a troll listing can't wreck the average.
 local TAU = 4 * 3600
 function Store:Sample(key, price, t)
+    -- Prefer the real market price (from a live check) over the lowest listing,
+    -- which may be the very outlier we want to snipe.
+    local ft = self.ft[key]
+    if ft and t - ft <= 1200 and self.fp[key] > price then price = self.fp[key] end
     local a = self.a[key]
     if not a then
         self.a[key], self.an[key], self.at[key] = price, 1, t
         return
     end
     local dt = t - self.at[key]
-    if dt <= 0 then return end
+    -- At most one sample per 30 minutes, so "4 samples" means real history, not
+    -- four searches in a row.
+    if dt < 1800 then return end
     local w = 1 - math.exp(-dt / TAU)
     if w < 0.05 then w = 0.05 end
     local x = price
