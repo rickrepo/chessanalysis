@@ -72,7 +72,9 @@ local function fillBuy(r, d, short)
         r.profit:SetText(GREEN .. "+" .. short(d.profit) .. "|r")
     end
     local b = S.buying
-    if b and b.key == d.key then
+    if S.queued and S.queued.key == d.key then
+        r.btn:SetText("..."); r.btn:Disable()
+    elseif b and b.key == d.key then
         if b.phase == "confirm" then
             r.btn:SetText("Confirm"); r.btn:Enable()
         else
@@ -269,7 +271,8 @@ local function rowEnter(self)
         if p and p.price then
             local qty = ns.Seller:PostQty(item.key, p)
             GameTooltip:AddLine(("%sPosts %d at %s each, deposit %s|r"):format(GOLD, qty,
-                ns.Seller.short(p.price), ns.Seller.short((p.depEach or 0) * qty)))
+                ns.Seller.short(p.price), ns.Seller.short(ns.Seller:DepositTotal(item.key, p.commodity, math.max(qty, 1)))))
+            GameTooltip:AddLine(GREY .. "The posting fee comes back when it sells.|r")
         elseif p and p.hold then
             GameTooltip:AddLine(RED .. p.hold .. "|r")
         end
@@ -278,7 +281,7 @@ local function rowEnter(self)
     else
         local d = item
         if d.kind == "FLIP" then
-            GameTooltip:AddLine(("%sLive market: %d units listed from %s. Deposit to relist: %s.|r"):format(GREY,
+            GameTooltip:AddLine(("%sLive market: %d units listed from %s. Posting fee %s (kept aside, returned on sale).|r"):format(GREY,
                 d.depth or 0, ns.Seller.short(d.wall or 0), ns.Seller.short(d.deposit or 0)))
             GameTooltip:AddLine(d.sold and (GREEN .. "Real sales on record: buyers paid " .. ns.Seller.short(d.sold) .. " each.|r")
                 or (GREY .. "No recorded sale of this item yet.|r"))
@@ -393,6 +396,10 @@ function UI:Create()
         r.profit:SetPoint("RIGHT", -78, 0)
         r.profit:SetWidth(96); r.profit:SetJustifyH("RIGHT"); r.profit:SetWordWrap(false)
         r.btn = button(r, 68, "Buy", rowButton)
+        -- Mouse on a Buy/Post button = you are about to click: background work
+        -- stops so the auction house is free when you do.
+        r.btn:SetScript("OnEnter", function(self) UI.hoverBtn = self end)
+        r.btn:SetScript("OnLeave", function(self) if UI.hoverBtn == self then UI.hoverBtn = nil end end)
         r.btn:SetPoint("RIGHT", -4, 0)
         r:EnableMouse(true)
         r:SetScript("OnEnter", rowEnter)

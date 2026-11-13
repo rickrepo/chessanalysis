@@ -107,26 +107,29 @@ function Sniper.vendorOf(key)
     return sell > 0 and sell or nil
 end
 
--- AH deposit per unit for a 12h listing: what we actually paid last time,
--- else the game's own calculation, else 5% of vendor price (min 1c). math.huge = unknown.
+-- Posting fee for a 12h listing, from the game's own calculation:
+-- returns feePerUnit (may be a fraction), smallestFeePerPosting.
+-- (math.huge, 0) = unknown. Asking for 1 unit and for 100 units shows both
+-- the per-unit rate and any minimum the realm charges per posting.
 local depCache = {}
-function Sniper.depositOf(key, commodity)
-    local learned = AuctionMeshDB and AuctionMeshDB.deposits and AuctionMeshDB.deposits[key]
-    if learned then return learned end
-    if depCache[key] then return depCache[key] end
+function Sniper.ClearFees() depCache = {} end
+function Sniper.depositInfo(key, commodity)
+    local c = depCache[key]
+    if c then return c[1], c[2] end
     local AH = C_AuctionHouse
     if commodity ~= false and AH and AH.CalculateCommodityDeposit then
-        local ok, d = pcall(AH.CalculateCommodityDeposit, key, 1, 100)
-        if ok and d and d > 0 then
-            depCache[key] = math.ceil(d / 100)
-            return depCache[key]
+        local ok1, d1 = pcall(AH.CalculateCommodityDeposit, key, 1, 1)
+        local ok2, d100 = pcall(AH.CalculateCommodityDeposit, key, 1, 100)
+        if ok1 and ok2 and d1 and d100 and d100 > 0 then
+            depCache[key] = { d100 / 100, d1 }
+            ns.Log("FEE %s: %d for 1 unit, %d for 100 units", tostring(key), d1, d100)
+            return d100 / 100, d1
         end
     end
     local v = Sniper.vendorOf(key)
-    if v == nil and Sniper.vendor[key] == nil then return math.huge end
-    -- Guide (ForeverDB, from the client): faction auction houses charge 5% of the
-    -- item's vendor price as deposit; the minimum is 1 copper.
-    return math.max(1, math.ceil((v or 0) * 0.05))
+    if v == nil and Sniper.vendor[key] == nil then return math.huge, 0 end
+    -- Guide (ForeverDB, from the client): 5% of the vendor price, minimum 1 copper.
+    return (v or 0) * 0.05, 1
 end
 
 local function classOf(key)
@@ -167,11 +170,12 @@ function Sniper:Evaluate(key, rows, commodity)
         return dirty()
     end
     local avg, n = Store.a[key], Store.an[key]
+    local feePer, feeMin = self.depositInfo(key, commodity)
     local deal, wall, reason = Deals.evaluate(rows, {
         budget = self:Budget(), gold = GetMoney(), commodity = commodity,
         vendor = self.vendorOf(key),
         avg = (avg and n and n >= Deals.cfg.minSamples) and avg or nil,
-        deposit = self.depositOf(key, commodity),
+        deposit = feePer, depositMin = feeMin,
         sold = (Store:Sold(key, GetServerTime(), 48 * 3600)),
         noFlip = VENDOR_SOLD[key],
     })
@@ -283,6 +287,10 @@ end
 -- profession goods whose market price we haven't looked at recently.
 function Sniper:NextCheck()
     if self.priority then local k = self.priority; self.priority = nil; return k end
+    -- Items you are waiting to post come before everything else.
+    local Se = ns.Seller
+    local want = Se and Se.NextToPrice and Se:NextToPrice()
+    if want then Se.pending = { key = want, at = GetTime() }; return want end
     for _, c in ipairs(self.candidates or {}) do
         if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then return c.key end
     end
@@ -322,7 +330,7 @@ function Sniper:RebuildBackground()
     local rest = {}
     for key, t in pairs(Store.t) do
         if key > 0 and not seen[key] and Store.p[key] <= budget and now - t <= 2 * 3600 and not self.isItem[key]
-            and scope[classOf(key) or -1] then
+            and not VENDOR_SOLD[key] and scope[classOf(key) or -1] then
             rest[#rest + 1] = key
         end
     end
@@ -348,7 +356,7 @@ function Sniper:HasWork()
     return self.priority ~= nil or self:Pending() > 0 or (q ~= nil and #q > 0)
 end
 
-function Sniper:Busy() return self.searching ~= nil or self.buying ~= nil end
+function Sniper:Busy() return self.searching ~= nil or self.buying ~= nil or self.queued ~= nil end
 
 function Sniper:YieldTo() -- called by the scanner before each of its queries
     if self:Busy() then return false end
@@ -362,6 +370,18 @@ function Sniper:Tick()
     if not self.active then return end
     local now = GetTime()
     if self.searching and now - self.searching.at > SEARCH_TIMEOUT then self.searching = nil end
+    local qd = self.queued
+    if qd then
+        if now - qd.at > 5 then
+            self.queued = nil
+            say("The auction house did not answer in time; press Buy again.")
+        elseif ns.Gate:ReadyForUser() then
+            self.queued = nil
+            ns.deferredBuyAt = now
+            self:Buy(qd.key)
+        end
+        return dirty()
+    end
     if now - (self.lastScreen or 0) > 5 then self:Screen(); self.lastScreen = now end
     -- Re-pick the watch list every 5 minutes (or right away while it is still empty).
     local bg = self.background
@@ -399,7 +419,11 @@ function Sniper:Screen()
             self.priority = self.priority or k
         end
     end
-    self.candidates = Deals.candidates(Store, self:Budget(), GetServerTime(), self.vendorOf, nil, 40)
+    local cands = Deals.candidates(Store, self:Budget(), GetServerTime(), self.vendorOf, nil, 40)
+    for i = #cands, 1, -1 do
+        if cands[i].kind == "FLIP" and VENDOR_SOLD[cands[i].key] then table.remove(cands, i) end
+    end
+    self.candidates = cands
     dirty()
 end
 
@@ -462,7 +486,17 @@ function Sniper:Buy(key)
         say("That deal is being re-checked; it will reappear if it is still good.")
         return dirty()
     end
-    if not ns.Gate:ReadyForUser() then say("The Auction House is busy, click again in a second."); return end
+    if not ns.Gate:ReadyForUser() then
+        -- The server is answering another request. Don't make you click again:
+        -- hold the click and send it the moment the server is free.
+        if deal.commodity and not self.noDefer then
+            self.queued = { key = key, at = GetTime() }
+            say("Buying as soon as the auction house answers...")
+            return dirty()
+        end
+        say("The Auction House is busy, click again in a second.")
+        return
+    end
     if deal.commodity then
         self.buying = { key = key, units = deal.units, max = deal.cost, phase = "quote", deal = deal, at = GetTime() }
         ns.Gate:Use(("buy start %dx %s, verified total %d"):format(deal.units, tostring(key), deal.cost))
@@ -599,6 +633,7 @@ end
 function Sniper:Start()
     self.active = true
     self.checkedAt = {} -- new AH visit: everything may have changed
+    depCache = {}       -- fees are asked again each visit
     self.needOwned = true
     self.lastScreen, self.lastBg = 0, 0
     if not self.ticker then self.ticker = C_Timer.NewTicker(0.25, function() Sniper:Tick() end) end

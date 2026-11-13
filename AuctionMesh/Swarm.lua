@@ -290,7 +290,11 @@ function Swarm:Init()
         if event == "AUCTION_HOUSE_CLOSED" then
             if Swarm.active then Swarm:Stop() end
         elseif event == "ADDON_ACTION_BLOCKED" then
-            if arg1 == "AuctionMesh" and Swarm.active then
+            if arg1 == "AuctionMesh" and ns.deferredBuyAt and ns.Gate and GetTime() - ns.deferredBuyAt < 0.5 then
+                -- the game wants a real click for purchases: stop holding clicks
+                ns.Sniper.noDefer, ns.Sniper.buying, ns.Sniper.queued = true, nil, nil
+                if ns.Print then ns.Print("Press Buy once more (the game needs a direct click).") end
+            elseif arg1 == "AuctionMesh" and Swarm.active then
                 Swarm:Stop("The game blocked automatic scanning. Prices will come from your own AH searches and from friends instead.")
                 Swarm.manual = true
             end

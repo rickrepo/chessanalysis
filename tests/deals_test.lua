@@ -49,7 +49,15 @@ check(d and d.sell == 49, "history says ~50c: resale capped at 49c, not the 78c 
 check(ev(with({ { price = 20, qty = 40 } }), { avg = 22 }) == nil, "history says it's only worth 22c -> no deal")
 local d0 = ev(with({ { price = 20, qty = 40 } }), {})
 d = ev(with({ { price = 20, qty = 40 } }), { deposit = 10 })
-check(d and d.deposit == 400 and d.profit == d0.profit - 400, "deposit is subtracted from profit")
+check(d and d.deposit == 400 and d.profit == d0.profit, "posting fee is kept aside (4s) but not subtracted: it comes back on sale")
+D.cfg.depositIsCost = true
+d = ev(with({ { price = 20, qty = 40 } }), { deposit = 10 })
+check(d and d.profit == d0.profit - 400, "pessimistic setting: fee counted as lost")
+D.cfg.depositIsCost = false
+d = ev({ { price = 115, qty = 5 }, { price = 184, qty = 26 }, { price = 185, qty = 9 }, { price = 187, qty = 16 }, { price = 188, qty = 86 } }, { budget = 200, deposit = 0.05, depositMin = 100 })
+check(d == nil, "2s purse with a 1s minimum fee: 1s15c + 1s fee is more than you have -> no deal")
+d = ev({ { price = 34, qty = 8 }, { price = 134, qty = 11 }, { price = 158, qty = 237 }, { price = 159, qty = 150 } }, { budget = 189, deposit = 0.02, depositMin = 100 })
+check(d and d.units == 2 and d.cost == 68 and d.deposit == 100, "real log: Wool 8@34c, 1s89c purse, 1s minimum fee -> buy 2, keep 1s for the fee")
 d = ev(with({ { price = 20, qty = 40 } }), { deposit = 10, budget = 1100 })
 check(d and d.units == 36 and d.cost + d.deposit <= 1100, "gold for the deposit is kept back (buys 36, not 40)")
 check(ev(with({ { price = 20, qty = 40 } }), { deposit = math.huge }) == nil, "unknown deposit -> no flip")

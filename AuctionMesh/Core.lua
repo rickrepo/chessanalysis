@@ -135,8 +135,9 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         Swarm:Init()
         if (db.cfg.v or 0) < 4 then db.cfg.v, db.cfg.focus, db.cfg.scope = 4, "tradegoods", "mats" end
         if (db.cfg.v or 0) < 6 then db.cfg.margin = 20 end -- tuned from a real market log
+        if (db.cfg.v or 0) < 7 then db.deposits = nil end -- old per-unit fee guesses were wrong
         if (db.cfg.v or 0) < 5 then if db.cfg.minProfit < 50 then db.cfg.minProfit = 50 end end
-        db.cfg.v = 6
+        db.cfg.v = 7
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)

@@ -81,6 +81,8 @@ ns.Gate = Gate
 local BLIZZ = { "ItemSellFrame", "CommoditiesSellFrame", "ItemBuyFrame", "CommoditiesBuyFrame", "WoWTokenSellFrame" }
 function Gate:UserBusy()
     if GetTime() < (self.userUntil or 0) then return true end
+    local hb = ns.UI and ns.UI.hoverBtn
+    if hb and hb.IsShown and hb:IsShown() and hb:IsMouseOver() then return true end
     local ah = AuctionHouseFrame
     if type(ah) ~= "table" then return false end
     -- Mouse on the game's auction window = you are using it. Everything in the

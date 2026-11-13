@@ -28,7 +28,7 @@ Only deals that were just checked against the live listings appear here, with th
   3. You buy **every** cheap unit, so none are left to undercut you. One exception for a small purse: if the whole cheap pile is at most 10% of the real market, you may buy the part you can afford (the row says how many cheap ones are left).
   4. The cheap units are at most half the size of the real market.
   5. It uses at most half your gold (all of it while you have under 1 gold).
-  6. Profit is at least 20% after the 5% AH cut and the deposit (`/amesh margin 30` changes it).
+  6. Profit is at least 20% after the 5% AH cut (`/amesh margin 30` changes it). The posting fee is kept aside, not subtracted, because it comes back on sale.
   9. Never goods that NPC vendors sell in unlimited supply (food, drink, thread, dyes, vials…), because their price can't hold above the vendor's.
   7. If there's market-price history (readings at least 30 minutes apart), the resale price can't exceed its average.
   8. If real sales are on record, the resale price can't exceed what buyers actually paid.
@@ -97,6 +97,10 @@ Non-stackable items (gear, recipes) are never offered as deals. They are only pr
 The server has the final word on a purchase. If its quote is higher than the listing showed, nothing is bought, and the window says so. When the quote shows the cheap listings can't be bought by you (for example your own auctions), that deal is removed and doesn't come back. Your own auctions are also read from the server's "my auctions" list and never counted as deals.
 
 The top line of the window shows the result of your last click for 10 seconds, so a click always gets a visible answer.
+
+**The posting fee.** The game takes a fee when you list an item and gives it back when the item sells; you lose it only if the auction expires or you cancel. So AuctionMesh keeps the fee aside (it never lets you spend gold you need for posting) but doesn't subtract it from profit. It asks the game for the fee on 1 unit and on 100 units of each item, which also reveals any minimum fee per posting. `Deals.cfg.depositIsCost = true` in `Deals.lua` switches to counting the fee as lost. The first sale you collect writes an `INVOICE` line to the log showing whether the fee came back.
+
+**Clicks are never thrown away.** If the auction house is busy when you press Buy, the click is held and sent the moment the server is free. Background work also stops while your mouse is on a Buy or Post button. Items waiting on the SELL tab are priced before anything else is checked.
 
 ### If something goes wrong
 

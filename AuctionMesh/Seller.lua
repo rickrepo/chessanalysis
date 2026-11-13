@@ -229,7 +229,12 @@ end
 -- Called whenever sale gold is taken from the mailbox (by us or by you).
 function Seller:RecordSale(i)
     if not GetInboxInvoiceInfo then return end
-    local kind, itemName, _, bid, _, _, _, _, _, _, count = GetInboxInvoiceInfo(i)
+    local kind, itemName, _, bid, buyout, feeBack, cut, _, _, _, count = GetInboxInvoiceInfo(i)
+    if kind == "seller" then
+        -- Shows in the log whether the posting fee really came back with the sale.
+        ns.Log("INVOICE %s: sold for %s, posting fee returned %s, auction house cut %s, count %s",
+            tostring(itemName), tostring(bid), tostring(feeBack), tostring(cut), tostring(count))
+    end
     if kind ~= "seller" or not itemName or not bid or bid <= 0 then return end
     local key = AuctionMeshDB.names and AuctionMeshDB.names[itemName]
     if not key then return end
@@ -299,24 +304,16 @@ end
 
 function Seller:Tick()
     if not ahOpen() then return end
-    local S = ns.Sniper
-    local now = GetTime()
-    if self.pending and now - self.pending.at > PRICE_TIMEOUT then
-        if S.searching and S.searching.key == self.pending.key then S.searching = nil end
+    -- Pricing searches are sent by the sniper (Sniper:NextCheck gives them the
+    -- first turn); here we only clear a check that never came back.
+    if self.pending and GetTime() - self.pending.at > PRICE_TIMEOUT then
         self.pending = nil
+        self:Refresh()
     end
-    if self:Busy() or self.pending or S.searching or S.buying or not ns.Gate:Ready() then return end
-    local Sw = ns.Swarm
-    if Sw and Sw.active and Sw.current and Sw.current.phase == "query" then return end
-    local key = self:NextToPrice()
-    if not key then return end
-    self.pending = { key = key, at = now }
-    S:Search(key)
-    self:Refresh()
 end
 
 -- Real deposit per unit for posting `qty` of this item now (12h).
-function Seller:DepositEach(key, commodity, qty)
+function Seller:DepositTotal(key, commodity, qty)
     local AH, d = C_AuctionHouse, nil
     if commodity then
         d = AH.CalculateCommodityDeposit(key, DURATION, qty)
@@ -324,13 +321,10 @@ function Seller:DepositEach(key, commodity, qty)
         local bag, slot = self.FindInBags(key)
         if bag then d = AH.CalculateItemDeposit(ItemLocation:CreateFromBagAndSlot(bag, slot), DURATION, 1) end
     end
-    if d and d >= 0 then
-        local each = math.ceil(d / qty)
-        AuctionMeshDB.deposits = AuctionMeshDB.deposits or {}
-        AuctionMeshDB.deposits[key] = each -- the sniper uses this for future buys
-        return each
-    end
-    return ns.Sniper.depositOf(key, commodity)
+    if d and d >= 0 then return d end
+    local per, dmin = ns.Sniper.depositInfo(key, commodity)
+    if per == math.huge then return 0 end
+    return max(dmin, math.ceil(per * qty))
 end
 
 -- Called by the sniper for every item search result (ours or anyone's).
@@ -338,13 +332,18 @@ function Seller:OnResults(key, rows, commodity)
     local f = flips()[key]
     if not f or f.kind ~= "FLIP" then return end
     if self.pending and self.pending.key == key then self.pending = nil end
-    local qty = max(commodity and min(bagCount[key] or 0, f.units or 0) or 1, 1)
-    local depEach = self:DepositEach(key, commodity, qty)
-    local price, why = Deals.postPrice(rows, f.cost or 0, f.sell or 0, nil, depEach)
-    ns.Log("PRICE %s: lowest=%s cost=%s deposit/unit=%s -> %s (%s)", tostring(key), tostring(rows[1] and rows[1].price),
-        tostring(f.cost), tostring(depEach), tostring(price), tostring(why))
+    -- The posting fee comes back when the item sells, so the lowest acceptable
+    -- price only has to cover what you paid plus the 5% cut.
+    local feeEach = 0
+    if Deals.cfg.depositIsCost then
+        local qty = max(commodity and min(bagCount[key] or 0, f.units or 0) or 1, 1)
+        feeEach = math.ceil(self:DepositTotal(key, commodity, qty) / qty)
+    end
+    local price, why = Deals.postPrice(rows, f.cost or 0, f.sell or 0, nil, feeEach)
+    ns.Log("PRICE %s: lowest=%s cost=%s -> %s (%s)", tostring(key), tostring(rows[1] and rows[1].price),
+        tostring(f.cost), tostring(price), tostring(why))
     if price then
-        self.prices[key] = { price = price, commodity = commodity, why = why, at = GetTime(), depEach = depEach }
+        self.prices[key] = { price = price, commodity = commodity, why = why, at = GetTime() }
     else
         self.prices[key] = { hold = why, at = GetTime() }
     end
@@ -546,9 +545,7 @@ function Seller:Numbers(e)
     local p = self.prices[e.key]
     local live = p and p.price and true or false
     local sell = live and p.price or (f.sell or 0)
-    local dep = (live and p.depEach)
-        or (AuctionMeshDB.deposits and AuctionMeshDB.deposits[e.key]) or 0
-    local net = floor(sell * (1 - Deals.cfg.cut)) - dep
+    local net = floor(sell * (1 - Deals.cfg.cut)) -- the posting fee is returned on sale
     return paid, sell, net, paid and (net - paid), live
 end
 

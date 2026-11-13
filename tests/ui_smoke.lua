@@ -172,9 +172,9 @@ local r = rowsText()
 for _, l in ipairs(r) do print("     " .. l) end
 check(#r == 2, "exactly the 2 real deals are listed (the 500-unit trap is not)")
 check(r[1] and r[1]:find("Copper Ore") and r[1]:find("SAFE  Buy 12 for 36c, vendor pays 60c | +24c", 1, true), "vendor deal first, exact quantity, total and profit")
-check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c, relist at 77c", 1, true) and r[2]:find("| +3s12c |", 1, true), "flip shows exact buy and resale price")
+check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c, relist at 77c", 1, true) and r[2]:find("| +3s18c |", 1, true), "flip shows exact buy and resale price")
 check(S.verified[2447] == nil, "Peacebloom (500 cheap units) correctly rejected")
-check(strip(AuctionMeshFrame.headline._text):find("MAKE NOW: +3s36c  (2 deals)", 1, true), "big headline: MAKE NOW: +3s36c (2 deals)")
+check(strip(AuctionMeshFrame.headline._text):find("MAKE NOW: +3s42c  (2 deals)", 1, true), "big headline: MAKE NOW: +3s42c (2 deals)")
 check(morePages >= 3, "partial results: the rest of each listing was requested before judging")
 
 print("buying")
@@ -212,7 +212,7 @@ check(AuctionMeshDB.flips[2589] and AuctionMeshDB.flips[2589].units == 6, "flip 
 MailFrame:Show(); fire("MAIL_SHOW"); advance(2); MailFrame:Hide(); fire("MAIL_CLOSED")
 UI.tab = "SELL"; UI:Render(); advance(6)
 r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
-check(r[1] and r[1]:find("Ready to post") and r[1]:find("Paid 20c  >  Sell 77c  >  %+52c each") and r[1]:find("%[Post%]"), "ready to post with live price and profit after cut + deposit")
+check(r[1] and r[1]:find("Ready to post") and r[1]:find("Paid 20c  >  Sell 77c  >  %+53c each") and r[1]:find("%[Post%]"), "ready to post with live price and profit after the cut")
 click(1); advance(1)
 check(posted[1] and posted[1].qty == 6 and posted[1].price == 77 and AuctionMeshDB.flips[2589] == nil, "one click posted all 6 at 77c; removed after bags confirmed")
 
@@ -264,6 +264,39 @@ check(S.verified[2770] == nil and S.verified[2589] ~= nil and ns.Deals.cfg.minPr
 S:Evaluate(2770, { { price = 3, qty = 12 }, { price = 9, qty = 200 }, { price = 10, qty = 300 } }, true)
 check(S.verified[2770] == nil and tostring(S.last.reason):find("under your"), "the small deal stays hidden; reason says it is under your minimum (" .. tostring(S.last.reason) .. ")")
 UI:SetMinProfit(20)
+
+print("real log: busy click, SELL pricing, 1s minimum posting fee")
+-- a click while the server is busy is held and sent when it is free
+UI:SetVendorOnly(false); UI.notice = nil; S.verified, S.checkedAt, S.floor = {}, {}, {}
+LIST[2589] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }; ns.Store:Put(2589, 20, 906, GetServerTime())
+gold = 900; S.priority = 2589; advance(4)
+check(S.verified[2589] ~= nil, "deal is up")
+local realReady = C_AuctionHouse.IsThrottledMessageSystemReady
+C_AuctionHouse.IsThrottledMessageSystemReady = function() return false end
+S:Buy(2589)
+check(S.queued ~= nil and S.buying == nil, "server busy at the click: the click is held, not thrown away")
+C_AuctionHouse.IsThrottledMessageSystemReady = realReady
+advance(1.2)
+check(S.queued == nil and S.buying and S.buying.phase == "confirm", "sent by itself once the server is free: now waiting for Confirm")
+S:Confirm(); advance(1.5)
+check(AuctionMeshDB.flips[2589] and AuctionMeshDB.flips[2589].units == 6, "bought")
+-- items waiting to be posted get priced even while the watch list is busy
+GetInboxInvoiceInfo = function() return "buyer" end
+MailFrame:Show(); fire("MAIL_SHOW"); advance(2); MailFrame:Hide(); fire("MAIL_CLOSED")
+Se.prices = {}; advance(6)
+check(Se.prices[2589] and Se.prices[2589].price == 77, "SELL tab item is priced within seconds (was stuck on 'Waiting for price check')")
+-- a realm that charges at least 1s per posting
+local realDep = C_AuctionHouse.CalculateCommodityDeposit
+C_AuctionHouse.CalculateCommodityDeposit = function(id, d, q) return math.max(100, q) end
+S.ClearFees()
+ITEMS[2592] = { "Wool Cloth", 33 }
+LIST[2592] = { { 34, 8 }, { 134, 11 }, { 158, 237 }, { 159, 150 }, { 160, 24 }, { 161, 126 } }
+gold = 189; fire("PLAYER_MONEY"); S.priority = 2592; advance(4)
+local wd = S.verified[2592]
+check(wd and wd.units == 2 and wd.cost == 68 and wd.deposit == 100, "Wool 8@34c under 1s34c with 1s89c: buy 2 (68c) and keep 1s aside for the posting fee")
+check(wd and wd.profit == 2 * math.floor(133 * 0.95) - 68, "profit does not subtract the fee, because it is returned on sale (+" .. tostring(wd and wd.profit) .. "c)")
+C_AuctionHouse.CalculateCommodityDeposit = realDep; S.ClearFees()
+S.verified[2592] = nil; UI:SetMinProfit(20); AuctionMeshDB.flips[2589] = nil
 
 print("timers")
 S:RebuildBackground(); UI.tab = "BUY"; S.searching = nil; S.last = nil; S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)

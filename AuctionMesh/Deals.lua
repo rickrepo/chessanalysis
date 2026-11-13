@@ -52,6 +52,7 @@ Deals.cfg = {
     maxAge = 30 * 60,     -- only consider lowest prices seen in the last 30 min
     screenRatio = 0.6,    -- screening: lowest price must be <= 60% of the reference
     flips = true,         -- false = SAFE deals only
+    depositIsCost = false,-- true = count the posting fee as lost (pessimistic)
 }
 
 -- Round down to a price the auction house accepts.
@@ -117,21 +118,30 @@ local function vendorDeal(rows, o, cfg)
 end
 
 -- Returns deal, wall, reason (reason = plain words when there is no deal).
+--
+-- The posting fee (deposit): the game takes it when you list and gives it back
+-- when the item sells; it is lost only if the auction expires or is cancelled.
+-- So it is not subtracted from profit, but you must HAVE it: it is kept back
+-- from what you can spend. o.deposit is the fee per unit (may be a fraction),
+-- o.depositMin the smallest fee for one posting. cfg.depositIsCost = true
+-- switches to the pessimistic view (fee counted as lost).
 local function flipDeal(rows, o, cfg)
     local wi, wall, depth = Deals.wall(rows, cfg)
     if not wi then return nil, nil, "too few listings to know the real price" end
-    local dep = o.deposit or 0
-    if dep == math.huge then return nil, wall, "posting fee not known yet" end
+    local per, dmin = o.deposit or 0, o.depositMin or 0
+    if per == math.huge then return nil, wall, "posting fee not known yet" end
     if o.noFlip then return nil, wall, "sold by NPC vendors, so it can't be resold for more" end
+    local function depFor(u) return u > 0 and max(dmin, ceil(per * u)) or 0 end
+    local asCost = cfg.depositIsCost
     local ref = wall
     if o.avg and o.avg > 0 and o.avg < ref then ref = o.avg end -- rule 7
     if o.sold and o.sold > 0 and o.sold < ref then ref = o.sold end -- rule 8
     -- Rule 3: the resale price is set by the first row we do NOT buy.
-    local k, sell, net, maxBuy
+    local k, sell, gross, maxBuy
     for _ = 1, wi do
         sell = Deals.round(ref - cfg.undercut, cfg)
-        net = floor(sell * (1 - cfg.cut)) - dep
-        maxBuy = floor(net / (1 + cfg.margin))
+        gross = floor(sell * (1 - cfg.cut))
+        maxBuy = floor((gross - (asCost and ceil(per) or 0)) / (1 + cfg.margin))
         k = 0
         while k + 1 < wi and rows[k + 1].price <= maxBuy do k = k + 1 end
         if k + 1 < wi and rows[k + 1].price < ref then
@@ -148,35 +158,36 @@ local function flipDeal(rows, o, cfg)
     if units > floor(depth * cfg.share) then
         return nil, wall, ("%d cheap units is too many to clear (market has %d)"):format(units, depth)
     end
-    local need = cost + units * dep
+    local need = cost + depFor(units)
     local partial
-    -- Rule 5. Under 1 gold the cap is 80%: half of a few silver buys nothing.
     local cap = (o.gold < 10000) and 1 or cfg.maxSpend -- under 1g you may go all in on one deal
     local limit = min(o.budget, floor(o.gold * cap))
     if need > limit then
         -- Small purse: buy part of the pile, but only when the whole pile is tiny
-        -- next to the market (<= partialShare), so the leftovers sell out quickly
-        -- instead of sitting under our listing.
+        -- next to the market (<= partialShare), so the leftovers sell out quickly.
         if units > floor(depth * cfg.partialShare) then
-            return nil, wall, ("good deal but costs $%d, more than you can spend"):format(need)
+            return nil, wall, ("good deal but needs $%d (with the posting fee), more than you can spend"):format(need)
         end
-        local left, u, c = limit, 0, 0
+        local u, c = 0, 0
         for i = 1, k do
-            local n = min(rows[i].qty, floor(left / (rows[i].price + dep)))
+            local p = rows[i].price
+            local n = min(rows[i].qty, floor((limit - c) / p))
+            while n > 0 and c + n * p + depFor(u + n) > limit do n = n - 1 end
             if n <= 0 then break end
-            u, c, left = u + n, c + n * rows[i].price, left - n * (rows[i].price + dep)
+            u, c = u + n, c + n * p
             if n < rows[i].qty then break end
         end
         if u == 0 then
-            return nil, wall, ("good deal but one costs $%d, more than you have"):format(rows[1].price + dep)
+            return nil, wall, ("good deal but one costs $%d plus $%d posting fee, more than you have"):format(rows[1].price, depFor(1))
         end
         partial, units, cost = units - u, u, c
     end
-    local profit = units * net - cost
+    local dep = depFor(units)
+    local profit = units * gross - cost - (asCost and dep or 0)
     if profit < cfg.minProfit then
         return nil, wall, ("profit $%d is under your $%d minimum"):format(profit, cfg.minProfit)
     end
-    return { kind = "FLIP", units = units, cost = cost, deposit = units * dep, profit = profit, sell = sell,
+    return { kind = "FLIP", units = units, cost = cost, deposit = dep, profit = profit, sell = sell,
              wall = wall, depth = depth, sold = o.sold, partial = partial, buys = {}, counts = {} }, wall
 end
 
@@ -188,7 +199,7 @@ end
 --   o.vendor     vendor price per unit (nil if none)
 --   o.avg        trusted average market price (nil if no history)
 --   o.sold       average real sale price from recent invoices (nil if none)
---   o.deposit    AH deposit per unit to relist (math.huge = unknown)
+--   o.deposit    posting fee per unit (math.huge = unknown); o.depositMin = smallest fee per posting
 --   o.commodity  true for stackable goods
 -- Returns deal or nil, and the wall price (market price) if one was found.
 --   deal = { kind = "VENDOR"|"FLIP", units, cost, deposit, profit, sell, buys, counts }
