@@ -232,6 +232,18 @@ check(strip(AuctionMeshFrame.status._text):find("Nothing bought, nothing spent")
 advance(15)
 check(#rowsText() == 0 and S.verified[500] == nil, "the fake deal does not come back")
 
+print("vendor-only mode")
+UI:SetVendorOnly(true)
+LIST[200] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
+LIST[100] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+ns.Store:Put(100, 3, 512, GetServerTime()); ns.Store:Put(200, 20, 906, GetServerTime())
+S.checkedAt = {}; advance(10)
+r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
+check(#r == 1 and r[1]:find("Copper Ore") and r[1]:find("SAFE"), "vendor-only: the guaranteed deal is shown, the flip is not")
+S.priority = 200; advance(3)
+check(S.verified[200] == nil, "vendor-only: a flip is rejected even when checked")
+UI:SetVendorOnly(false)
+
 print("real sale")
 GetInboxInvoiceInfo = function() return "seller", "Linen Cloth", "Buyer", 462, 0, 6, 23, nil, nil, nil, 6 end
 Se:RecordSale(1); Se:RecordSale(1)

@@ -133,6 +133,7 @@ local function buyStatus(n)
     end
     local pending = S:Pending()
     if pending > 0 then parts[#parts + 1] = ("Checking %d possible deal(s)..."):format(pending) end
+    if not ns.Deals.cfg.flips then table.insert(parts, 1, GREEN .. "Vendor-only mode.|r") end
     if n == 0 then
         parts[#parts + 1] = "No deals right now. Only confirmed deals you can afford are listed."
     else
@@ -188,7 +189,7 @@ function UI:Render()
     end
     frame.footer:SetText(text .. more)
     frame.post:SetShown(self.tab == "SELL" and ahOpen())
-    frame.flips:SetText(ns.Deals.cfg.flips and "Flips: ON" or "Flips: OFF")
+    frame.flips:SetText(ns.Deals.cfg.flips and "Mode: Vendor + Flips" or "Mode: Vendor only")
     frame.flips:SetShown(self.tab == "BUY")
 end
 
@@ -329,16 +330,7 @@ function UI:Create()
     frame.footer:SetJustifyH("LEFT")
     frame.post = button(frame, 96, "Post next", function() ns.Seller:PostNext() end, "AuctionMeshPostButton")
     frame.post:SetPoint("BOTTOMRIGHT", -10, 8)
-    frame.flips = button(frame, 96, "Flips: ON", function()
-        local cfg = AuctionMeshDB.cfg
-        cfg.flips = not cfg.flips
-        ns.Deals.cfg.flips = cfg.flips
-        ns.Print(cfg.flips and "Flips ON: also shows resale deals (good odds, not guaranteed)."
-            or "Flips OFF: only guaranteed vendor deals are shown.")
-        ns.Sniper.verified = {}
-        ns.Sniper.lastScreen = 0
-        UI:Render()
-    end)
+    frame.flips = button(frame, 160, "Mode: Vendor + Flips", function() UI:SetVendorOnly(ns.Deals.cfg.flips) end)
     frame.flips:SetPoint("BOTTOMRIGHT", -10, 8)
 
     -- Throttled redraw: at most 5 per second, and only when something changed.
@@ -353,6 +345,19 @@ function UI:Create()
         if UI.dirty then UI:Render() end
     end)
     frame:Hide()
+end
+
+-- Vendor-only mode: every deal shown is guaranteed profit (buy, sell to an NPC).
+function UI:SetVendorOnly(on)
+    local cfg = AuctionMeshDB.cfg
+    cfg.flips = not on
+    ns.Deals.cfg.flips = cfg.flips
+    local S = ns.Sniper
+    S.verified, S.background, S.lastScreen, S.lastBg = {}, nil, 0, 0
+    self:Notice(on and "|cff33ff66Vendor-only mode:|r only items listed below what a vendor pays. Every deal is guaranteed profit."
+        or "|cffffd100Vendor + Flips mode:|r also shows auction house resale deals (not guaranteed).")
+    ns.Print(self.notice.text)
+    self:Dirty()
 end
 
 function UI:Open(tab)

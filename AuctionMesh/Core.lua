@@ -193,11 +193,10 @@ SlashCmdList.AUCTIONMESH = function(input)
         local id = tonumber(rest:match("item:(%d+)")) or tonumber(rest:match("^(%d+)"))
         local cost = tonumber(rest:match("%]|h|r%s*(%d+)%s*$") or rest:match("^%d+%s+(%d+)%s*$"))
         if id then Seller:Track(id, cost) else say("Usage: /amesh track [item link] [cost in copper], or drag the item onto the AuctionMesh window.") end
+    elseif cmd == "vendor" then
+        UI:SetVendorOnly(rest ~= "off" and (rest == "on" or Deals.cfg.flips))
     elseif cmd == "flips" then
-        cfg.flips = (rest ~= "off")
-        Deals.cfg.flips = cfg.flips
-        Sniper.verified = {}
-        say(cfg.flips and "Flips ON: resale deals are shown too (not guaranteed)." or "Flips OFF: only guaranteed vendor deals.")
+        UI:SetVendorOnly(rest == "off")
     elseif cmd == "auto" then
         cfg.autoOpen = (rest ~= "off"); cfg.snipeAuto = cfg.autoOpen; cfg.autoScan = cfg.autoOpen
         say(cfg.autoOpen and "Opens and scans automatically at the Auction House." or "Automatic open/scan off. Use /amesh.")
@@ -261,7 +260,7 @@ SlashCmdList.AUCTIONMESH = function(input)
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
     else
-        say("/amesh = open the window | flips on/off | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
+        say("/amesh = open the window | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
         say("Sharing: /amesh channel <name> [password] | guild | sync.   Scanning: /amesh scope money/all | swarm | focus <types>")
     end
 end

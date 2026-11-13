@@ -33,7 +33,7 @@ Only deals that were just checked against the live listings appear here, with th
   8. If real sales are on record, the resale price can't exceed what buyers actually paid.
 * **Buy** asks the server for the real total; then you press **Confirm**. If the total is even 1c above what was checked, the purchase is cancelled and the deal is re-checked.
 * A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
-* **Flips: ON/OFF** at the bottom switches to SAFE deals only.
+* The **Mode** button at the bottom switches between **Vendor only** (every deal is guaranteed) and **Vendor + Flips**. `/amesh vendor` does the same. In vendor-only mode no flip checks are made, so more of the search budget goes to vendor deals.
 
 ### What gets scanned
 
