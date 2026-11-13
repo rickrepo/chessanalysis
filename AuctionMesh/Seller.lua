@@ -106,7 +106,10 @@ function Seller:Entries()
             if action == "AH" and p and p.hold and now - p.at < HOLD_TTL then action = "HOLD" end
             out[#out + 1] = { key = key, action = action, count = inBags, f = f }
         end
-        if inMail > 0 then out[#out + 1] = { key = key, action = "MAIL", count = inMail, f = f } end
+        if inMail > 0 then
+            local seen = self.mailCount and (self.mailCount[key] or 0) >= inMail
+            out[#out + 1] = { key = key, action = "MAIL", count = inMail, f = f, seen = seen }
+        end
     end
     local order = { AH = 1, VENDOR = 2, MAIL = 3, HOLD = 4 }
     table.sort(out, function(a, b)
@@ -123,7 +126,7 @@ function Seller:Instructions(entries)
     local function add(action, text) lines[#lines + 1] = COLORS[action][4] .. text .. "|r" end
     if n.MAIL > 0 then
         add("MAIL", mailOpen() and ("Collecting " .. n.MAIL .. " item(s) from the mailbox...")
-            or ("Go to a mailbox: " .. n.MAIL .. " purchase(s) are waiting there."))
+            or ("Go to a mailbox: " .. n.MAIL .. " confirmed purchase(s) should be there. Opening it checks."))
     end
     if n.AH > 0 then
         if ahOpen() then
@@ -220,8 +223,53 @@ function Seller:CollectMail()
             end
         end
         Seller.mailBusy = false
+        -- Collection done: look at what is really in the mailbox and bags now.
+        Seller:ScanBags()
+        Seller:ScanMail()
+        Seller:Reconcile()
+        Seller:Refresh()
     end
     step()
+end
+
+-- Counts every item attached to mail in the inbox (nil until the mailbox is opened).
+function Seller:ScanMail()
+    local shown, total = GetInboxNumItems()
+    local counts = {}
+    for i = 1, shown or 0 do
+        local _, _, _, _, _, _, _, hasItem = GetInboxHeaderInfo(i)
+        if hasItem then
+            for j = 1, (ATTACHMENTS_MAX_RECEIVE or 16) do
+                local _, itemID, _, count = GetInboxItem(i, j)
+                if itemID then counts[itemID] = (counts[itemID] or 0) + (count or 1) end
+            end
+        end
+    end
+    self.mailCount = counts
+    -- More than ~50 mails: the client only shows part of the inbox, so we can't be sure.
+    self.mailComplete = (total or shown or 0) <= (shown or 0)
+end
+
+-- With the real bag + mailbox contents known, fix anything the Flip Bag got wrong:
+-- units that are in neither place (a purchase that never happened, or items you
+-- moved elsewhere) are removed, with a message. Purchases younger than 2 min are
+-- left alone in case the mail is still on its way.
+function Seller:Reconcile()
+    if not self.mailCount then return end
+    local now = GetServerTime()
+    for key, f in pairs(flips()) do
+        local inMail = self.mailCount[key] or 0
+        local have = (bagCount[key] or 0) + inMail
+        if inMail > 0 then f.mailVerified = now end
+        if self.mailComplete and have < (f.units or 0) and now - (f.at or 0) > 120 then
+            local missing = f.units - have
+            ns.Log("RECONCILE %s: expected %d, bags %d, mail %d -> removing %d", tostring(key), f.units,
+                bagCount[key] or 0, inMail, missing)
+            say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from the Flip Bag.|r")
+                :format(nameOf(key), missing))
+            if have <= 0 then flips()[key] = nil; self.prices[key] = nil else f.units = have end
+        end
+    end
 end
 
 ---------------------------------------------------------------- AH pricing (background) and posting (click)
@@ -503,7 +551,11 @@ local function slotTooltip(self)
             GameTooltip:AddLine(c[4] .. (ahOpen() and "Checking price..." or "Open the Auction House to post") .. "|r")
         end
     elseif e.action == "MAIL" then
-        GameTooltip:AddLine(c[4] .. "In your mailbox: open it to collect|r")
+        if e.seen then
+            GameTooltip:AddLine(c[4] .. "Seen in your mailbox. Open it to collect.|r")
+        else
+            GameTooltip:AddLine(c[4] .. "Should be in your mailbox (not checked yet). Opening the mailbox checks it.|r")
+        end
     else
         GameTooltip:AddLine(c[4] .. "On hold: " .. (p and p.hold or "") .. "|r")
     end
@@ -511,6 +563,9 @@ local function slotTooltip(self)
         GameTooltip:AddLine("|cffff8040Cost unknown (added by hand): it posts at market price, so check it first.|r")
     else
         GameTooltip:AddLine(("|cffaaaaaaPaid %s each.|r"):format(money(e.f.cost or 0)))
+    end
+    if e.f.proof then
+        GameTooltip:AddLine(("|cff33ff66Purchase confirmed (%s) at %s|r"):format(e.f.proof, date("%H:%M", e.f.at or 0)))
     end
     GameTooltip:AddLine("|cffaaaaaaRight-click: stop tracking.|r")
     GameTooltip:Show()
@@ -630,7 +685,7 @@ function Seller:Render()
             b.count:SetText(e.count > 1 and e.count or "")
             local busy = e.action == "AH" and self.pending and self.pending.key == e.key
             local label = (e.action == "AH" and "POST ON AH") or (e.action == "VENDOR" and "SELL TO VENDOR")
-                or (e.action == "MAIL" and "IN MAILBOX") or "HOLD"
+                or (e.action == "MAIL" and (e.seen and "IN MAILBOX (seen)" or "IN MAILBOX?")) or "HOLD"
             b.badge:SetText(c[4] .. (busy and "checking price..." or label) .. "|r")
 
             local paid, sell, net, profit, live = self:Numbers(e)

@@ -47,6 +47,10 @@ The game requires one click or keypress per auction posted, so posting can't be 
 * An item leaves the Flip Bag only once your bags show it actually went. A rejected post keeps the item, and the chat says why.
 * Auto-vendoring only sells stacks that fit inside the number you bought, never copies you already owned.
 
+**Purchases are only recorded once confirmed.** A purchase goes into the Flip Bag only after the server confirms it, or after the gold has actually left your bags. Then you get a green "Purchase confirmed" message. If the server refuses it, the AH shows an error, or nothing is confirmed within 10s, you get a red "Purchase NOT completed" message and nothing is added. The cost recorded is the gold that really left your bags.
+
+**The mailbox is checked for real.** Opening the mailbox collects AH items, then reads what's left in the inbox and compares it with your bags. Items seen there show **IN MAILBOX (seen)**. **IN MAILBOX?** means it hasn't been checked yet. If a purchase is in neither your bags nor your mailbox (and is more than 2 minutes old), it's removed from the Flip Bag with a message. Hovering over an item shows how its purchase was confirmed.
+
 **Sharing a debug log:** type `/amesh log`, click in the box, press Ctrl+A then Ctrl+C, and paste it to Claude. It records every auction house call (AuctionMesh's and the game's own AH window), every AH error and throttle event, and what AuctionMesh decided (prices, posts, purchases), with timestamps. It keeps the last 800 lines, including the end of your previous session. `/amesh log clear` starts it fresh. The log is also saved in `WTF/Account/<ACCOUNT>/SavedVariables/AuctionMesh.lua`.
 
 **One gate for every AH request.** Searches, browse pages, posts and purchases wait their turn. Each waits until the server has answered the previous one, with at least 0.6s between requests. After an "Internal auction error" or a dropped request, it pauses 5s and spaces requests further apart (up to 3s), then relaxes again after a minute without errors.
@@ -128,6 +132,7 @@ Commands: `/amesh log [clear] | bag [restore] | track <item> [cost] | snipe | ma
 ```bash
 lua5.1 tests/sim.lua          # protocol simulator + deal and posting math (52 checks)
 lua5.1 tests/seller_test.lua   # Flip Bag posting / vendor safety
+lua5.1 tests/purchase_test.lua # purchase confirmation + mailbox check
 python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 ```
 

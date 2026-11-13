@@ -236,7 +236,7 @@ end
 
 ---------------------------------------------------------------- buying
 
-local function recordFlip(deal, units, spent)
+local function recordFlip(deal, units, spent, proof)
     local db = AuctionMeshDB
     db.flips = db.flips or {}
     -- Merge with earlier buys of the same item: units add up, cost is the weighted average.
@@ -246,10 +246,12 @@ local function recordFlip(deal, units, spent)
         local total = (f.units or 0) + units
         f.cost = floor(((f.cost or unitCost) * (f.units or 0) + spent) / total + 0.5)
         f.units, f.sell, f.at = total, deal.sell, GetServerTime()
+        f.proof, f.mailVerified = proof, nil
     else
         db.flips[deal.key] = { kind = deal.kind, sell = deal.sell, units = units,
-                               cost = floor(unitCost + 0.5), at = GetServerTime() }
+                               cost = floor(unitCost + 0.5), at = GetServerTime(), proof = proof }
     end
+    ns.Log("BOUGHT (confirmed by %s) %dx %s for %d", tostring(proof), units, tostring(deal.key), spent)
     if ns.Seller then
         ns.Seller.LogBuy(deal.key, deal.kind, units, floor(unitCost + 0.5), deal.sell)
         ns.Seller:Refresh(true)
@@ -258,11 +260,8 @@ local function recordFlip(deal, units, spent)
     s.bought, s.spent = s.bought + units, s.spent + spent
     local each = deal.units > 0 and floor(deal.profit / deal.units) or 0
     s.expected = s.expected + each * units
-    if deal.kind == "VENDOR" then
-        say(("Bought %d x %s for %s. It's in your mailbox; the Flip Bag shows what to do."):format(units, nameOf(deal.key), money(spent)))
-    else
-        say(("Bought %d x %s for %s. It's in your mailbox; the Flip Bag shows what to do."):format(units, nameOf(deal.key), money(spent)))
-    end
+    say(("|cff33ff66Purchase confirmed:|r %d x %s for %s. It goes to your mailbox; the Flip Bag shows what to do.")
+        :format(units, nameOf(deal.key), money(spent)))
 end
 
 function Sniper:Buy(key)
@@ -284,18 +283,38 @@ function Sniper:Buy(key)
             say("The Auction House is busy, click again in a second."); return
         end
         ns.Gate:Use(("buyout auction %s of %s for %d"):format(tostring(row.id), tostring(key), row.buyout))
+        -- Not recorded yet: only once the server confirms (event) or the gold leaves your bags.
+        self.buying = { key = key, units = n, total = row.buyout, phase = "wait", deal = deal, at = GetTime(),
+                        auctionID = row.id, moneyBefore = GetMoney(), item = true }
         C_AuctionHouse.PlaceBid(row.id, row.buyout)
-        recordFlip(deal, n, row.buyout)
-        deal.units, deal.cost = deal.units - n, deal.cost - row.buyout
-        if #deal.buys == 0 then self.verified[key] = nil; self.priority = key end
     end
     self.dirty = true
+    self:ArmPurchaseTimeout()
+end
+
+-- A purchase that is neither confirmed nor refused within 10s is treated as failed.
+function Sniper:ArmPurchaseTimeout()
+    local b = self.buying
+    if not b then return end
+    local at = b.at
+    C_Timer.After(10, function()
+        local cur = Sniper.buying
+        if cur and cur.at == at and cur.phase == "wait" then
+            -- Last check: did the gold actually leave?
+            if cur.moneyBefore and GetMoney() <= cur.moneyBefore - cur.total + 1 then
+                Sniper:OnPurchase(true, "gold left your bags")
+            else
+                Sniper:OnPurchase(false, "no confirmation from the server within 10s")
+            end
+        end
+    end)
 end
 
 function Sniper:Confirm()
     local b = self.buying
     if not b or b.phase ~= "confirm" then return end
-    b.phase = "wait"
+    b.phase, b.moneyBefore, b.at = "wait", GetMoney(), GetTime()
+    self:ArmPurchaseTimeout()
     ns.Gate:Use(("buy confirm %dx %s total %s"):format(b.units, tostring(b.key), tostring(b.total)))
     C_AuctionHouse.ConfirmCommoditiesPurchase(b.key, b.units)
     self.dirty = true
@@ -317,11 +336,28 @@ function Sniper:OnPriceQuote(unitPrice, total)
     self.dirty = true
 end
 
-function Sniper:OnPurchase(ok)
+function Sniper:OnPurchase(ok, why)
     local b = self.buying
     if not b then return end
-    if ok then recordFlip(b.deal, b.units, b.total or b.deal.cost)
-    else say("Purchase failed (someone else bought it first?).") end
+    if b.phase ~= "wait" and ok then return end -- success only counts after we actually sent the buy
+    local spent = b.total or b.deal.cost
+    if ok and b.moneyBefore then
+        local drop = b.moneyBefore - GetMoney()
+        ns.Log("PURCHASE %s: gold before %d, now %d (dropped %d, expected %d) via %s",
+            tostring(b.key), b.moneyBefore, GetMoney(), drop, spent, tostring(why))
+        if drop > 0 and drop < spent then spent = drop end -- trust what actually left your bags
+    end
+    if ok then
+        recordFlip(b.deal, b.units, spent, why)
+        if b.item then
+            local d = b.deal
+            d.units, d.cost = d.units - b.units, d.cost - (b.total or 0)
+            if #d.buys > 0 then self.buying = nil; self.dirty = true; return end -- more listings in this deal
+        end
+    else
+        ns.Log("PURCHASE FAILED %s: %s", tostring(b.key), tostring(why))
+        say(("|cffff4040Purchase NOT completed:|r %s (%s). Nothing was added to the Flip Bag."):format(nameOf(b.key), why or "refused"))
+    end
     self.verified[b.key] = nil
     self.priority = b.key -- re-check: there may be more cheap units
     self.buying = nil
@@ -480,17 +516,33 @@ function Sniper:Init(auto)
     local f = CreateFrame("Frame")
     for _, e in ipairs({ "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "COMMODITY_SEARCH_RESULTS_UPDATED",
         "ITEM_SEARCH_RESULTS_UPDATED", "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE",
-        "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "PLAYER_MONEY" }) do
+        "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "PLAYER_MONEY",
+        "AUCTION_HOUSE_PURCHASE_COMPLETED", "UI_ERROR_MESSAGE" }) do
         pcall(f.RegisterEvent, f, e)
     end
     f:SetScript("OnEvent", function(_, event, a1, a2)
         if event == "COMMODITY_SEARCH_RESULTS_UPDATED" then Sniper:OnCommodityResults(a1)
         elseif event == "ITEM_SEARCH_RESULTS_UPDATED" then Sniper:OnItemResults(a1)
         elseif event == "COMMODITY_PRICE_UPDATED" then Sniper:OnPriceQuote(a1, a2)
-        elseif event == "COMMODITY_PRICE_UNAVAILABLE" then Sniper:OnPurchase(false)
-        elseif event == "COMMODITY_PURCHASE_SUCCEEDED" then Sniper:OnPurchase(true)
-        elseif event == "COMMODITY_PURCHASE_FAILED" then Sniper:OnPurchase(false)
-        elseif event == "PLAYER_MONEY" then Sniper.lastScreen = 0
+        elseif event == "COMMODITY_PRICE_UNAVAILABLE" then
+            if Sniper.buying then Sniper.buying.phase = "wait" end
+            Sniper:OnPurchase(false, "price no longer available")
+        elseif event == "COMMODITY_PURCHASE_SUCCEEDED" then Sniper:OnPurchase(true, "server confirmed")
+        elseif event == "COMMODITY_PURCHASE_FAILED" then Sniper:OnPurchase(false, "server refused the purchase")
+        elseif event == "AUCTION_HOUSE_PURCHASE_COMPLETED" then
+            local b = Sniper.buying
+            if b and b.item and (not a1 or a1 == b.auctionID) then Sniper:OnPurchase(true, "server confirmed") end
+        elseif event == "UI_ERROR_MESSAGE" then
+            local b = Sniper.buying
+            if b and b.phase == "wait" and a2 and tostring(a2):lower():find("auction") then
+                Sniper:OnPurchase(false, tostring(a2))
+            end
+        elseif event == "PLAYER_MONEY" then
+            Sniper.lastScreen = 0
+            local b = Sniper.buying
+            if b and b.item and b.phase == "wait" and GetMoney() <= b.moneyBefore - b.total + 1 then
+                Sniper:OnPurchase(true, "gold left your bags")
+            end
         elseif event == "AUCTION_HOUSE_SHOW" then if auto() then Sniper:Start() end
         elseif event == "AUCTION_HOUSE_CLOSED" then Sniper:Stop()
         end
