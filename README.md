@@ -32,6 +32,13 @@ A bag-style window (`/amesh bag`, or the **Flip Bag** button on the Snipes windo
 
 The game requires one click or keypress per auction posted, so posting can't be fully automatic. For speed, make a macro `/click AuctionMeshPostButton`, bind it to a key, and tap it to post your items one after another. Listings are 12 hours, which has the cheapest deposit. Right-click an item in the Flip Bag to stop tracking it.
 
+**Safety rules for posting**
+* Only one post at a time. Pressing again while a post is in flight is ignored, and background price checks pause around each post, so the AH never answers "you're doing that too fast".
+* An item leaves the Flip Bag only once your bags show it actually went. A rejected post keeps the item, and the chat says why.
+* Auto-vendoring only sells stacks that fit inside the number you bought, never copies you already owned.
+
+**Missing items?** `/amesh bag restore` rebuilds the Flip Bag from your purchase log (purchases from the last 3 days that are still in your bags). For anything else, drag the item from your bags onto the Flip Bag, or use `/amesh track [item link] [cost in copper]`.
+
 Settings: `/amesh margin 30` (flip profit %), `/amesh minprofit 20` (minimum copper per deal), `/amesh snipe` (toggle the window).
 
 Profession goods (trade goods, reagents, recipes, profession items) are the swarm's default focus, because that's where the money is on a new realm.
@@ -100,12 +107,13 @@ The server and every client use the same conflict rule: the newer timestamp wins
 2. Everyone in the group runs the same command once: `/amesh channel <SecretName> <password>`. Or use `/amesh guild` to go over guild chat instead.
 3. At the AH, run `/amesh swarm`. Price lines show up in item tooltips. `/amesh` on its own shows status and statistics.
 
-Commands: `/amesh bag | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <itemID|link>`
+Commands: `/amesh bag [restore] | track <item> [cost] | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <itemID|link>`
 
 ## Tests
 
 ```bash
 lua5.1 tests/sim.lua          # protocol simulator + deal and posting math (52 checks)
+lua5.1 tests/seller_test.lua   # Flip Bag posting / vendor safety
 python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 ```
 

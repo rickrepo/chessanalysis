@@ -201,6 +201,7 @@ function Sniper:Busy() return self.searching ~= nil or self.buying ~= nil end
 
 function Sniper:YieldTo(who) -- called by Swarm before each query
     if self:Busy() then return false end
+    if ns.Seller and ns.Seller:Busy() then return false end
     if self.priority then return false end
     if self.active and self:Wants() and ns.lastQuery == "swarm" then return false end
     return true
@@ -214,6 +215,7 @@ function Sniper:Tick()
     if now - (self.lastBg or 0) > 15 then self:RebuildBackground(); self.lastBg = now end
     if self.dirty then self:Render() end
     if self:Busy() or not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
+    if ns.Seller and ns.Seller:Busy() then return end -- never search while you're posting
     local S = ns.Swarm
     if S and S.active and S.current and S.current.phase == "query" then return end
     if not self.priority and S and S.active and not S.idle and ns.lastQuery == "sniper" then return end
@@ -247,7 +249,10 @@ local function recordFlip(deal, units, spent)
         db.flips[deal.key] = { kind = deal.kind, sell = deal.sell, units = units,
                                cost = floor(unitCost + 0.5), at = GetServerTime() }
     end
-    if ns.Seller then ns.Seller:Refresh(true) end
+    if ns.Seller then
+        ns.Seller.LogBuy(deal.key, deal.kind, units, floor(unitCost + 0.5), deal.sell)
+        ns.Seller:Refresh(true)
+    end
     local s = Sniper.stats
     s.bought, s.spent = s.bought + units, s.spent + spent
     local each = deal.units > 0 and floor(deal.profit / deal.units) or 0

@@ -175,7 +175,7 @@ function Swarm:Step()
             note(2, cur.unit)
             self.stats.units = self.stats.units + 1
             self.current = nil
-        elseif ex.ready() and not (ns.Sniper and ns.Sniper:Busy()) then
+        elseif ex.ready() and not (ns.Sniper and ns.Sniper:Busy()) and not (ns.Seller and ns.Seller:Busy()) then
             self.resultsSeen = false
             ex.more()
             self.stats.pages = self.stats.pages + 1

@@ -162,7 +162,12 @@ SlashCmdList.AUCTIONMESH = function(input)
     cmd = cmd:lower()
     local cfg = AuctionMeshDB.cfg
     if cmd == "bag" then
-        Seller:Toggle()
+        if rest == "restore" then Seller:Restore() else Seller:Toggle() end
+    elseif cmd == "track" then
+        -- /amesh track [item link] [cost per unit in copper]
+        local id = tonumber(rest:match("item:(%d+)")) or tonumber(rest:match("^(%d+)"))
+        local cost = tonumber(rest:match("%]|h|r%s*(%d+)%s*$") or rest:match("^%d+%s+(%d+)%s*$"))
+        if id then Seller:Track(id, cost) else say("Usage: /amesh track [item link] [cost in copper], or drag the item onto the Flip Bag.") end
     elseif cmd == "snipe" then
         if Sniper.active then Sniper:Stop(); cfg.snipeAuto = false; say("Sniper off (won't auto-open).")
         else cfg.snipeAuto = true; Sniper:Start() end
@@ -217,6 +222,6 @@ SlashCmdList.AUCTIONMESH = function(input)
             say(("swarm %s: %d/%d categories fresh, %d peers scanning, you did %d units / %d queries"):format(
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
-        say("Commands: /amesh bag | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <item>")
+        say("Commands: /amesh bag [restore] | track <item> [cost] | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <item>")
     end
 end

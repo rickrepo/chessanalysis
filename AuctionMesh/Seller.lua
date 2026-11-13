@@ -142,42 +142,61 @@ function Seller:Instructions(entries)
             or ("Talk to any vendor: " .. n.VENDOR .. " item(s) sell automatically."))
     end
     if n.HOLD > 0 then add("HOLD", n.HOLD .. " item(s) on hold: market is below what you paid. Will re-check.") end
-    if #lines == 0 then lines[1] = "|cffaaaaaaNothing to do. Go snipe some deals!|r" end
+    if #lines == 0 then
+        lines[1] = "|cffaaaaaaNothing to do. Drag an item from your bags onto this window to track it,\nor type /amesh bag restore to rebuild from your purchase log.|r"
+    end
+    if self.posting then table.insert(lines, 1, "|cffffffffPosting " .. nameOf(self.posting.key) .. "...|r") end
     return table.concat(lines, "\n")
 end
 
 ---------------------------------------------------------------- vendor (automatic at merchants)
 
 function Seller:SellVendor(onlyKey)
-    local queue = {}
+    if self.selling then return end
+    local queue, remaining, before = {}, {}, {}
     for bag = 0, LAST_BAG do
         for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             local f = info and flips()[info.itemID]
             if f and f.kind == "VENDOR" and (not onlyKey or onlyKey == info.itemID)
                 and not info.isLocked and not info.hasNoValue then
-                queue[#queue + 1] = { bag = bag, slot = slot, key = info.itemID, n = info.stackCount or 1 }
+                local key, n = info.itemID, info.stackCount or 1
+                remaining[key] = remaining[key] or (f.units or 0)
+                -- Never sell copies you owned before the flip: only stacks that fit
+                -- inside the number of units we actually bought.
+                if n <= remaining[key] then
+                    remaining[key] = remaining[key] - n
+                    before[key] = bagCount[key] or 0
+                    queue[#queue + 1] = { bag = bag, slot = slot, key = key }
+                end
             end
         end
     end
     if #queue == 0 then return end
-    local earned, i = 0, 0
+    self.selling = true
+    local i = 0
+    local function finish()
+        -- Count what actually left the bags; only that is removed from the Flip Bag.
+        Seller:ScanBags()
+        local earned = 0
+        for key, was in pairs(before) do
+            local gone = was - (bagCount[key] or 0)
+            if gone > 0 then
+                local f = flips()[key]
+                earned = earned + ((f and f.sell) or 0) * gone
+                Seller.ForgetUnits(key, gone)
+            end
+        end
+        Seller.selling = false
+        if earned > 0 then say("Sold vendor flips for " .. money(earned) .. ".") end
+        Seller:Refresh()
+    end
     local function nextSale()
-        if not merchantOpen() then return end
         i = i + 1
         local q = queue[i]
-        if not q then
-            if earned > 0 then say("Sold vendor flips for " .. money(earned) .. ".") end
-            return
-        end
-        local f = flips()[q.key]
-        if f then
-            local n = min(q.n, f.units or q.n)
-            C_Container.UseContainerItem(q.bag, q.slot)
-            earned = earned + (f.sell or 0) * n
-            Seller.ForgetUnits(q.key, n)
-        end
-        C_Timer.After(0.15, nextSale)
+        if not q or not merchantOpen() then return C_Timer.After(0.6, finish) end
+        C_Container.UseContainerItem(q.bag, q.slot)
+        C_Timer.After(0.2, nextSale)
     end
     nextSale()
 end
@@ -227,7 +246,7 @@ function Seller:Tick()
         if S.searching and S.searching.key == self.pending.key then S.searching = nil end
         self.pending = nil
     end
-    if self.pending or S.searching or S.buying or not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
+    if self:Busy() or self.pending or S.searching or S.buying or not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
     local Sw = ns.Swarm
     if Sw and Sw.active and Sw.current and Sw.current.phase == "query" then return end
     local key = self:NextToPrice()
@@ -272,8 +291,21 @@ function Seller:OnResults(key, rows, commodity)
     self:Refresh()
 end
 
+-- True while a post is in flight or just finished: background searches wait,
+-- so they never collide with your post ("doing that too fast").
+function Seller:Busy()
+    return self.posting ~= nil or GetTime() < (self.quietUntil or 0)
+end
+
 -- Must run from a click or keypress (posting is hardware-event protected).
 function Seller:Post(key)
+    if self.posting then say("Still posting the last item, one moment..."); return end
+    local AH = C_AuctionHouse
+    if not AH.IsThrottledMessageSystemReady() then
+        say("The Auction House is busy, press again in a second.")
+        self.quietUntil = GetTime() + 1.5
+        return
+    end
     local p = self.prices[key]
     if not p or not p.price or GetTime() - p.at >= PRICE_TTL then
         self.priority = key
@@ -282,29 +314,61 @@ function Seller:Post(key)
     end
     local bag, slot = self.FindInBags(key)
     if not bag then self:Refresh(); return end
-    local AH = C_AuctionHouse
     local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
     local qty = p.commodity and min(p.qty, bagCount[key] or p.qty) or 1
     local deposit = (p.commodity and AH.CalculateCommodityDeposit(key, DURATION, qty)
         or AH.CalculateItemDeposit(loc, DURATION, qty)) or 0
     if deposit > GetMoney() then say("Not enough gold for the deposit (" .. money(deposit) .. ")."); return end
+
+    self.posting = { key = key, qty = qty, before = bagCount[key] or 0, price = p.price,
+                     deposit = deposit, why = p.why, at = GetTime() }
+    self.quietUntil = GetTime() + 2
+    local ok
     if p.commodity then
-        if AH.PostCommodity(loc, DURATION, qty, p.price) and AH.ConfirmPostCommodity then
-            AH.ConfirmPostCommodity(loc, DURATION, qty, p.price)
-        end
+        ok = pcall(AH.PostCommodity, loc, DURATION, qty, p.price)
     else
-        if AH.PostItem(loc, DURATION, 1, nil, p.price) and AH.ConfirmPostItem then
-            AH.ConfirmPostItem(loc, DURATION, 1, nil, p.price)
-        end
+        ok = pcall(AH.PostItem, loc, DURATION, 1, nil, p.price)
     end
-    say(("Posted %dx %s at %s each, deposit %s (%s)."):format(qty, nameOf(key), money(p.price), money(deposit), p.why))
-    self.ForgetUnits(key, qty)
-    self.prices[key] = nil
+    if not ok then
+        self.posting = nil
+        say("The game refused that post. " .. nameOf(key) .. " stays in your Flip Bag.")
+        return
+    end
+    self:Refresh()
+    -- If the bags haven't changed in 5s the post didn't happen: keep the item.
+    C_Timer.After(5, function()
+        local q = Seller.posting
+        if q and q.key == key and q.at == Seller.posting.at then
+            Seller.posting = nil
+            say(nameOf(key) .. " wasn't posted (no change in your bags); it's still in the Flip Bag.")
+            Seller:Refresh()
+        end
+    end)
+end
+
+-- Bags changed: if a post is in flight and the item left the bags, it worked.
+function Seller:CheckPosted()
+    local q = self.posting
+    if not q then return end
+    local gone = q.before - (bagCount[q.key] or 0)
+    if gone <= 0 then return end
+    self.posting = nil
+    self.ForgetUnits(q.key, min(gone, q.qty))
+    self.prices[q.key] = nil
+    say(("Posted %dx %s at %s each, deposit %s (%s)."):format(min(gone, q.qty), nameOf(q.key), money(q.price), money(q.deposit), q.why))
+end
+
+function Seller:OnError(msg)
+    if not self.posting then return end
+    self.posting = nil
+    self.quietUntil = GetTime() + 2
+    say("Post failed: " .. tostring(msg) .. ". Item kept in the Flip Bag; press again in a moment.")
     self:Refresh()
 end
 
 -- Post-next for the keybind: first AH item with a ready price.
 function Seller:PostNext()
+    if self.posting then say("Still posting the last item, one moment..."); return end
     for _, e in ipairs(self:Entries()) do
         local p = e.action == "AH" and self.prices[e.key]
         if p and p.price and GetTime() - p.at < PRICE_TTL then return self:Post(e.key) end
@@ -314,6 +378,69 @@ function Seller:PostNext()
     end
     say("Nothing ready to post.")
 end
+
+---------------------------------------------------------------- recovering / adding items
+
+-- Every purchase is also written to a log, so the Flip Bag can be rebuilt.
+function Seller.LogBuy(key, kind, units, cost, sell)
+    local log = AuctionMeshDB.buys or {}
+    AuctionMeshDB.buys = log
+    log[#log + 1] = { key = key, kind = kind, units = units, cost = cost, sell = sell, t = GetServerTime() }
+    while #log > 500 do table.remove(log, 1) end
+end
+
+-- Rebuilds missing Flip Bag entries from the last 3 days of purchases still in your bags.
+function Seller:Restore()
+    self:ScanBags()
+    local since, agg = GetServerTime() - 3 * 86400, {}
+    for _, b in ipairs(AuctionMeshDB.buys or {}) do
+        if b.t >= since then
+            local a = agg[b.key] or { units = 0, spent = 0 }
+            a.units, a.spent = a.units + b.units, a.spent + b.cost * b.units
+            a.kind, a.sell = b.kind, b.sell
+            agg[b.key] = a
+        end
+    end
+    local n = 0
+    for key, a in pairs(agg) do
+        local have = bagCount[key] or 0
+        if not flips()[key] and have > 0 then
+            flips()[key] = { kind = a.kind, sell = a.sell, units = min(have, a.units),
+                             cost = floor(a.spent / a.units + 0.5), at = GetServerTime() }
+            n = n + 1
+        end
+    end
+    say(n > 0 and ("Restored " .. n .. " item(s) from your purchase log.")
+        or "Nothing to restore from the purchase log. Drag items onto the Flip Bag to add them.")
+    self:Refresh(true)
+end
+
+-- Adds an item from your bags by hand (drag it onto the Flip Bag, or /amesh track).
+-- cost = what you paid per unit in copper, if you know it.
+function Seller:Track(key, cost)
+    self:ScanBags()
+    local have = bagCount[key] or 0
+    if have == 0 then say("That item isn't in your bags."); return end
+    local Store = ns.Store
+    local vendor = ns.Sniper.vendorOf(key)
+    local market = Store.a[key] or Store.p[key]
+    local kind = (vendor and (not market or vendor >= floor(market * 0.95))) and "VENDOR" or "FLIP"
+    flips()[key] = { kind = kind, sell = (kind == "VENDOR") and vendor or (market or 0), units = have,
+                     cost = cost or 0, unknownCost = (cost == nil), at = GetServerTime() }
+    say(("Tracking %dx %s as %s%s."):format(have, nameOf(key), kind,
+        cost and "" or " (cost unknown, so it posts at market: check the price before you click)"))
+    self.prices[key] = nil
+    self:Refresh(true)
+end
+
+local function acceptDrop()
+    local what, itemID = GetCursorInfo()
+    if what == "item" and itemID then
+        ClearCursor()
+        Seller:Track(itemID)
+    end
+end
+Seller.AcceptDrop = acceptDrop
 
 ---------------------------------------------------------------- Flip Bag window
 
@@ -340,11 +467,17 @@ local function slotTooltip(self)
     else
         GameTooltip:AddLine(c[4] .. "On hold: " .. (p and p.hold or "") .. "|r")
     end
-    GameTooltip:AddLine(("|cffaaaaaaPaid %s each. Right-click: stop tracking.|r"):format(money(e.f.cost or 0)))
+    if e.f.unknownCost then
+        GameTooltip:AddLine("|cffff8040Cost unknown (added by hand): it posts at market price, so check it first.|r")
+    else
+        GameTooltip:AddLine(("|cffaaaaaaPaid %s each.|r"):format(money(e.f.cost or 0)))
+    end
+    GameTooltip:AddLine("|cffaaaaaaRight-click: stop tracking.|r")
     GameTooltip:Show()
 end
 
 local function slotClick(self, button)
+    if GetCursorInfo() then return Seller.AcceptDrop() end
     local e = self.entry
     if not e then return end
     if button == "RightButton" then
@@ -377,6 +510,9 @@ function Seller:CreateWindow()
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
     frame:SetClampedToScreen(true)
     frame:SetFrameStrata("HIGH")
+    -- Drop an item from your bags onto the window to start tracking it.
+    frame:SetScript("OnReceiveDrag", function() Seller.AcceptDrop() end)
+    frame:SetScript("OnMouseUp", function() if GetCursorInfo() then Seller.AcceptDrop() end end)
 
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     frame.title:SetPoint("TOPLEFT", 10, -9)
@@ -406,6 +542,7 @@ function Seller:CreateWindow()
         b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
         b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         b:SetScript("OnClick", slotClick)
+        b:SetScript("OnReceiveDrag", function() Seller.AcceptDrop() end)
         b:SetScript("OnEnter", slotTooltip)
         b:SetScript("OnLeave", function() GameTooltip:Hide() end)
         b:Hide()
@@ -480,10 +617,10 @@ function Seller:Init()
     self:ScanBags()
     local f = CreateFrame("Frame")
     for _, e in ipairs({ "MERCHANT_SHOW", "MERCHANT_CLOSED", "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED",
-        "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "BAG_UPDATE_DELAYED" }) do
+        "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "BAG_UPDATE_DELAYED", "UI_ERROR_MESSAGE" }) do
         f:RegisterEvent(e)
     end
-    f:SetScript("OnEvent", function(_, event)
+    f:SetScript("OnEvent", function(_, event, a1, a2)
         if event == "MERCHANT_SHOW" then
             Seller:Refresh(true)
             C_Timer.After(0.3, function() Seller:SellVendor() end)
@@ -497,10 +634,12 @@ function Seller:Init()
             if not Seller.ticker then Seller.ticker = C_Timer.NewTicker(0.3, function() Seller:Tick() end) end
         elseif event == "AUCTION_HOUSE_CLOSED" then
             if Seller.ticker then Seller.ticker:Cancel(); Seller.ticker = nil end
-            Seller.pending = nil
+            Seller.pending, Seller.posting = nil, nil
             Seller:Refresh()
         elseif event == "BAG_UPDATE_DELAYED" then
-            Seller:ScanBags(); Seller:Refresh()
+            Seller:ScanBags(); Seller:CheckPosted(); Seller:Refresh()
+        elseif event == "UI_ERROR_MESSAGE" then
+            Seller:OnError(a2 or a1)
         else
             Seller:Refresh()
         end
