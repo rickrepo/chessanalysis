@@ -34,6 +34,10 @@ The window is laid out like a trading screen. The top strip shows **BALANCE**, *
 * **VOLUME** is units sold per hour, measured by watching the listing. Vendor deals say "instant".
 * On the PORTFOLIO tab, a `*` after MARKET means the price is the plan from when you bought; it becomes the live price once checked.
 
+### HISTORY tab
+
+Everything that happened to your gold and items, newest first: "Bought: 7 x … for 1s40c", "Collected from mailbox: 7 x … is now in your bags", "Posted 1x Wool Cloth at 1s60c", "Sold: …", and purchases that were cancelled. When the addon takes a purchase out of your mailbox it also says so in chat and at the top of the window.
+
 ### BUY tab
 
 Only deals that were just checked against the live listings appear here, with the exact quantity and the exact total you'll pay. Nothing is shown from an estimate.

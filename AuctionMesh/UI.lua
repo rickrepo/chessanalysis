@@ -32,6 +32,7 @@ local COLS = { { 40, 170 }, { 214, 110 }, { 328, 74 }, { 406, 66 }, { 476, 78 } 
 local HEAD = {
     BUY = { "ITEM", "BUY", "MARKET", "SPREAD", "VOLUME", "PROFIT" },
     SELL = { "ITEM", "QTY", "COST", "MARKET", "STATUS", "P / L" },
+    HISTORY = { "WHEN", "WHAT HAPPENED", "", "", "", "" },
 }
 local CYAN = "|cff66ccff"
 UI.tab = "BUY"
@@ -47,8 +48,15 @@ local function mailOpen() return MailFrame and MailFrame:IsShown() end
 function UI:Dirty() self.dirty = true end
 
 -- Shows the latest message at the top of the window for 10 seconds.
-function UI:Notice(text)
+function UI:Notice(text, transient)
     self.notice = { text = text, till = GetTime() + 10 }
+    if not transient and AuctionMeshDB then
+        -- Everything that happened to your gold and items, newest first (HISTORY tab).
+        local h = AuctionMeshDB.history or {}
+        AuctionMeshDB.history = h
+        table.insert(h, 1, { t = GetServerTime(), m = text })
+        while #h > 60 do h[#h] = nil end
+    end
     self.dirty = true
 end
 
@@ -225,9 +233,12 @@ function UI:Render()
     frame.tabSell:SetText(("PORTFOLIO (%d)"):format(#entries))
     frame.tabBuy:SetEnabled(self.tab ~= "BUY")
     frame.tabSell:SetEnabled(self.tab ~= "SELL")
+    frame.tabHist:SetEnabled(self.tab ~= "HISTORY")
 
-    local list = self.tab == "BUY" and deals or entries
-    if self.tab == "BUY" then
+    local list = self.tab == "BUY" and deals or self.tab == "SELL" and entries or (AuctionMeshDB.history or {})
+    if self.tab == "HISTORY" then
+        frame.headline:SetText(CYAN .. "HISTORY|r  " .. GREY .. "everything bought, collected, posted and sold|r")
+    elseif self.tab == "BUY" then
         local total = 0
         for _, d in ipairs(deals) do total = total + d.profit end
         frame.headline:SetText(#deals > 0
@@ -244,6 +255,9 @@ function UI:Render()
             or (GREY .. "Nothing to sell|r"))
     end
     local status = self.tab == "BUY" and buyStatus(#deals) or Se:Instructions(entries)
+    if self.tab == "HISTORY" then
+        status = #list == 0 and (GREY .. "Nothing yet. Purchases, mailbox pick-ups, posts and sales are listed here.|r") or ""
+    end
     local n = self.notice
     if n and GetTime() < n.till then
         status = n.text
@@ -255,8 +269,20 @@ function UI:Render()
         local r, item = rows[i], list[i]
         r.item = item
         if not item then r:Hide() else
-            r.icon:SetTexture(C_Item.GetItemIconByID(item.key) or 134400)
-            if self.tab == "BUY" then fillBuy(r, item, short) else fillSell(r, item, short) end
+            if self.tab == "HISTORY" then
+                local age = GetServerTime() - item.t
+                r.icon:SetTexture(nil)
+                r.name:SetText(GREY .. (age < 90 and (age .. "s ago") or age < 5400 and (floor(age / 60) .. " min ago")
+                    or (floor(age / 3600) .. " h ago")) .. "|r")
+                for n = 1, 4 do r.c[n]:SetText("") end
+                r.state:SetText(""); r.profit:SetText(""); r.btn:Hide()
+                r.detail:SetWidth(WIDTH - 70)
+                r.detail:SetText(item.m)
+            else
+                r.detail:SetWidth(330)
+                r.icon:SetTexture(C_Item.GetItemIconByID(item.key) or 134400)
+                if self.tab == "BUY" then fillBuy(r, item, short) else fillSell(r, item, short) end
+            end
             r:Show()
         end
     end
@@ -284,7 +310,7 @@ end
 
 local function rowButton(self)
     local item = self:GetParent().item
-    if not item then return end
+    if not item or UI.tab == "HISTORY" then return end
     if UI.tab == "BUY" then
         local S = ns.Sniper
         local b = S.buying
@@ -301,7 +327,7 @@ end
 
 local function rowEnter(self)
     local item = self.item
-    if not item then return end
+    if not item or UI.tab == "HISTORY" then return end
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:SetItemByID(item.key)
     if UI.tab == "SELL" then
@@ -374,10 +400,12 @@ function UI:Create()
     frame.tabBuy = button(frame, 110, "BUY", function() UI.tab = "BUY"; UI:Render() end)
     frame.tabBuy:SetPoint("TOPLEFT", 10, -34)
     frame.tabSell = button(frame, 110, "SELL", function() UI.tab = "SELL"; UI:Render() end)
+    frame.tabHist = button(frame, 80, "HISTORY", function() UI.tab = "HISTORY"; UI:Render() end)
     frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", 6, 0)
     -- Minimum profit per deal: anything that makes less is never shown.
     local lbl = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    lbl:SetPoint("LEFT", frame.tabSell, "RIGHT", 14, 0)
+    frame.tabHist:SetPoint("LEFT", frame.tabSell, "RIGHT", 6, 0)
+    lbl:SetPoint("LEFT", frame.tabHist, "RIGHT", 14, 0)
     lbl:SetText("Min profit per deal:")
     local function box(anchor, x, suffix)
         local e = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
@@ -511,7 +539,7 @@ function UI:SetMinProfit(copper)
         frame.minS:SetText(tostring(math.floor(copper / 100)))
         frame.minC:SetText(tostring(copper % 100))
     end
-    self:Notice(("Minimum profit per deal: %s. Smaller deals are not shown."):format(ns.Seller.short(copper)))
+    self:Notice(("Minimum profit per deal: %s. Smaller deals are not shown."):format(ns.Seller.short(copper)), true)
     self:Dirty()
 end
 
@@ -523,7 +551,7 @@ function UI:SetVendorOnly(on)
     local S = ns.Sniper
     S.verified, S.background, S.lastScreen, S.lastBg = {}, nil, 0, 0
     self:Notice(on and "|cff33ff66Vendor-only mode:|r only items listed below what a vendor pays. Every deal is guaranteed profit."
-        or "|cffffd100Vendor + Flips mode:|r also shows auction house resale deals (not guaranteed).")
+        or "|cffffd100Vendor + Flips mode:|r also shows auction house resale deals (not guaranteed).", true)
     ns.Print(self.notice.text)
     self:Dirty()
 end

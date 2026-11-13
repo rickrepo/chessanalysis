@@ -507,7 +507,7 @@ local function recordFlip(deal, units, spent, proof)
     local s = Sniper.stats
     s.bought, s.spent = s.bought + units, s.spent + spent
     s.expected = s.expected + (deal.units > 0 and floor(deal.profit / deal.units) or 0) * units
-    say(("|cff33ff66Purchase confirmed:|r %d x %s for %s. Collect it from the mailbox; the SELL tab shows what to do.")
+    say(("|cff33ff66Bought:|r %d x %s for %s. It is in your mailbox; opening a mailbox moves it to your bags.")
         :format(units, nameOf(deal.key), money(spent)))
 end
 
@@ -524,7 +524,7 @@ function Sniper:Buy(key)
         -- hold the click and send it the moment the server is free.
         if deal.commodity and not self.noDefer then
             self.queued = { key = key, at = GetTime() }
-            say("Buying as soon as the auction house answers...")
+            if ns.UI then ns.UI:Notice("Buying as soon as the auction house answers...", true) end
             return dirty()
         end
         say("The Auction House is busy, click again in a second.")

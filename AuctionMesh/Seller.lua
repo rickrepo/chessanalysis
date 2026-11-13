@@ -209,7 +209,11 @@ function Seller:CollectMail()
             local _, _, _, _, moneyAmt, cod, _, hasItem = GetInboxHeaderInfo(i)
             if (cod or 0) == 0 then
                 if invoice == "buyer" and hasItem then
-                    AutoLootMailItem(i); C_Timer.After(0.4, step); return
+                    -- Say what is being taken, so an empty-looking mailbox is never a mystery.
+                    local nm, _, _, cnt = GetInboxItem(i, 1)
+                    AutoLootMailItem(i)
+                    say(("|cff4d99ffCollected from mailbox:|r %s x %s is now in your bags."):format(tostring(cnt or 1), tostring(nm or "item")))
+                    C_Timer.After(0.4, step); return
                 elseif invoice == "seller" and (moneyAmt or 0) > 0 then
                     TakeInboxMoney(i); C_Timer.After(0.4, step); return
                 end

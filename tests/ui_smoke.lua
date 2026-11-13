@@ -183,7 +183,7 @@ click(1); advance(0.5)
 check(rowsText()[1]:find("%[Confirm%]"), "Buy asks the server for the real total, then shows Confirm")
 click(1); advance(1)
 check(gold == 3200 - 36 and AuctionMeshDB.flips[2770] and AuctionMeshDB.flips[2770].units == 12 and AuctionMeshDB.flips[2770].cost == 3, "confirmed: 12 bought for exactly 36c and recorded")
-check(chat[#chat]:find("Purchase confirmed"), "chat says Purchase confirmed")
+check(chat[#chat]:find("Bought: 12 x"), "chat says Bought: 12 x ...")
 -- price changes under us: someone buys the cheap linen first
 LIST[2589][1][2] = 2
 click(1); advance(0.5)
@@ -319,6 +319,16 @@ check(vd and vd.rate and vd.rate > 100 and vd.eta and vd.eta < 60, ("units are l
 UI.tab = "BUY"; UI.notice = nil; UI:Render()
 r = rowsText(); for _, l in ipairs(r) do if l:find("Light Leather") then print("     " .. l) end end
 S.verified[2318] = nil; ns.Deals.cfg.requireTurnover = false
+
+print("history")
+UI.tab = "HISTORY"; UI.notice = nil; UI:Render()
+local hist, seen = AuctionMeshDB.history or {}, {}
+for _, h in ipairs(hist) do local m = strip(h.m); for _, w in ipairs({ "Bought:", "Collected from mailbox:", "Posted", "Sold vendor flips", "Nothing bought, nothing spent" }) do if m:find(w, 1, true) then seen[w] = true end end end
+check(seen["Bought:"] and seen["Collected from mailbox:"] and seen["Posted"] and seen["Sold vendor flips"] and seen["Nothing bought, nothing spent"],
+    "HISTORY lists purchases, mailbox pick-ups, posts, vendor sales and cancelled buys")
+local hr = rowsTextHist and rowsTextHist() or nil
+for i = 1, math.min(4, #hist) do print("     " .. strip(hist[i].m)) end
+UI.tab = "BUY"
 
 print("timers")
 S:RebuildBackground(); UI.tab = "BUY"; S.searching = nil; S.last = nil; S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)
