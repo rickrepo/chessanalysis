@@ -20,7 +20,9 @@ ns.Sniper = Sniper
 
 local floor, min = math.floor, math.min
 local VERIFIED_TTL = 45           -- a verified deal is trusted this long, then re-checked
-local CHECK_AGAIN = 60            -- don't re-check the same candidate sooner
+local CHECK_AGAIN = 30            -- don't re-check the same candidate sooner
+local WATCH_SIZE = 30             -- how many items are watched continuously
+local WATCH_MIN = 15              -- never re-read the same item sooner than this
 local SEARCH_TIMEOUT = 6
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
 
@@ -211,30 +213,36 @@ end
 -- profession goods whose market price we haven't looked at recently.
 function Sniper:NextCheck()
     if self.priority then local k = self.priority; self.priority = nil; return k end
-    local now = GetTime()
     for _, c in ipairs(self.candidates or {}) do
         if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then return c.key end
     end
+    -- The watch list, round and round. A snipe only exists for a minute or
+    -- two after someone posts it, so the same few items are re-read constantly.
     local q = self.background
-    while q and q.i <= #q do
+    if not q or #q == 0 then return nil end
+    for _ = 1, #q do
+        if q.i > #q then q.i = 1; q.rounds = (q.rounds or 0) + 1 end
         local k = q[q.i]
         q.i = q.i + 1
-        if self:Since(k) > Deals.cfg.fairMaxAge then return k end
+        if not self.isItem[k] and self:Since(k) > WATCH_MIN then return k end
     end
     return nil
 end
 
+-- The watch list: the WATCH_SIZE most-listed materials you can afford. The
+-- busiest markets get the most new listings, so that is where mistakes appear.
 function Sniper:RebuildBackground()
-    if not Deals.cfg.flips then self.background = nil; return end
     local budget, now = self:Budget(), GetServerTime()
+    local scope = ns.Swarm and ns.Swarm.ScopeClasses and ns.Swarm:ScopeClasses() or PROFESSION
     local list = {}
     for key, t in pairs(Store.t) do
-        if key > 0 and Store.p[key] <= budget and now - t <= Deals.cfg.maxAge
-            and now - (Store.ft[key] or 0) > Deals.cfg.fairMaxAge and PROFESSION[classOf(key) or -1] then
+        if key > 0 and Store.p[key] <= budget and now - t <= 2 * 3600 and not self.isItem[key]
+            and scope[classOf(key) or -1] then
             list[#list + 1] = key
         end
     end
-    table.sort(list, function(a, b) return Store.q[a] > Store.q[b] end) -- liquid markets first
+    table.sort(list, function(a, b) return Store.q[a] > Store.q[b] end)
+    for i = #list, WATCH_SIZE + 1, -1 do list[i] = nil end
     list.i = 1
     self.background = list
 end
@@ -249,7 +257,7 @@ end
 
 function Sniper:HasWork()
     local q = self.background
-    return self.priority ~= nil or self:Pending() > 0 or (q ~= nil and q.i <= #q)
+    return self.priority ~= nil or self:Pending() > 0 or (q ~= nil and #q > 0)
 end
 
 function Sniper:Busy() return self.searching ~= nil or self.buying ~= nil end
@@ -267,7 +275,9 @@ function Sniper:Tick()
     local now = GetTime()
     if self.searching and now - self.searching.at > SEARCH_TIMEOUT then self.searching = nil end
     if now - (self.lastScreen or 0) > 5 then self:Screen(); self.lastScreen = now end
-    if now - (self.lastBg or 0) > 20 then self:RebuildBackground(); self.lastBg = now end
+    -- Re-pick the watch list every 5 minutes (or right away while it is still empty).
+    local bg = self.background
+    if now - (self.lastBg or 0) > ((bg and #bg > 0) and 300 or 5) then self:RebuildBackground(); self.lastBg = now end
     local s = self.searching
     if s and s.needMore and ns.Gate:Ready() then
         local kind = s.needMore

@@ -51,10 +51,18 @@ Swarm.serverTime = function() return GetServerTime() end
 -- enchanting...), reagents, consumables, gems and enhancements. Gear, recipes,
 -- pets and the rest can't be deals here, so scanning them is wasted queries.
 local SCOPES = {
+    mats = { 7 },                 -- crafting materials only: the highest-volume market on a new realm
     money = { 7, 5, 0, 3, 8 },
     all = { 0, 1, 2, 3, 4, 5, 7, 8, 9, 12, 15, 16, 17, 19, 20 }, -- skips WoW Token (18)
 }
-Swarm.scope = "money"
+Swarm.scope = "mats"
+
+-- Set of item classes in the current scope (used by the sniper's watch list).
+function Swarm:ScopeClasses()
+    local set = {}
+    for _, c in ipairs(SCOPES[self.scope] or SCOPES.mats) do set[c] = true end
+    return set
+end
 
 function Swarm.unitId(classID, subClassID) return classID * 256 + (subClassID or 255) end
 function Swarm.unitParts(u)
@@ -64,7 +72,7 @@ end
 
 function Swarm:BuildUnits()
     local list, AH = {}, C_AuctionHouse
-    for _, c in ipairs(SCOPES[self.scope] or SCOPES.money) do
+    for _, c in ipairs(SCOPES[self.scope] or SCOPES.mats) do
         local subs = AH.GetAuctionItemSubClasses and AH.GetAuctionItemSubClasses(c)
         if subs and #subs > 0 then
             for _, s in ipairs(subs) do list[#list + 1] = self.unitId(c, s) end

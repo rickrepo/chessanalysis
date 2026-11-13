@@ -35,9 +35,17 @@ Only deals that were just checked against the live listings appear here, with th
 * A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
 * The **Mode** button at the bottom switches between **Vendor only** (every deal is guaranteed) and **Vendor + Flips**. `/amesh vendor` does the same. In vendor-only mode no flip checks are made, so more of the search budget goes to vendor deals.
 
-### What gets scanned
+### What gets watched
 
-Only stackable goods that players burn through on a new realm: **trade goods** (cloth, ore, herbs, leather, cooking, enchanting materials…), **reagents**, **consumables**, **gems** and **enhancements**. Trade goods go first. Gear, recipes, pets and everything else are skipped, because they can't be deals here. That's a fraction of the auction house, so it's scanned much faster and with far fewer requests. A category is re-scanned after 15 minutes. `/amesh scope all` scans everything; `/amesh scope money` goes back.
+A snipe only exists for a minute or two after someone posts it. So AuctionMesh doesn't try to cover the whole auction house:
+
+1. Once every 15 minutes it browses the **crafting materials** categories (cloth, ore, herbs, leather, cooking, enchanting…). That's a handful of requests.
+2. From that it picks the **30 most-listed materials you can afford**. The busiest markets get the most new listings, so that's where underpriced ones appear.
+3. It re-reads the full listing of those 30, round and round, each about every 40 seconds. The moment a cheap listing shows up, it appears on the BUY tab.
+
+The top of the window shows **MAKE NOW: +X**, the total profit of every deal you could buy this second. Each row shows its own profit in large type next to the Buy button.
+
+`/amesh scope money` widens the scope to reagents, consumables, gems and enhancements; `/amesh scope all` covers everything; `/amesh scope mats` goes back.
 
 ### Where the prices come from
 

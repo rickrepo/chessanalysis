@@ -16,7 +16,7 @@
 --        units would remain, they undercut us and ours never sell.
 --     4. What we buy is at most `share` (25%) of the wall's size: small
 --        outliers only, never a market that simply is cheap.
---     5. One item never takes more than `maxSpend` (50%) of our gold.
+--     5. One item never takes more than `maxSpend` (50%) of our gold (80% while under 1g).
 --     6. Profit after the 5% AH cut and the deposit is at least `margin` (40%).
 --     7. If we have market-price history, the resale price is capped by its average.
 --     8. If real sales are on record (sale invoices, ours or friends'), the
@@ -136,7 +136,9 @@ local function flipDeal(rows, o, cfg)
     for i = 1, k do units, cost = units + rows[i].qty, cost + rows[i].qty * rows[i].price end
     if units > floor(depth * cfg.share) then return nil, wall end                 -- rule 4
     local need = cost + units * dep
-    if need > o.budget or need > floor(o.gold * cfg.maxSpend) then return nil, wall end -- rules 3, 5
+    -- Rule 5. Under 1 gold the cap is 80%: half of a few silver buys nothing.
+    local cap = (o.gold < 10000) and math.max(cfg.maxSpend, 0.8) or cfg.maxSpend
+    if need > o.budget or need > floor(o.gold * cap) then return nil, wall end -- rules 3, 5
     local profit = units * net - cost
     if profit < cfg.minProfit then return nil, wall end
     return { kind = "FLIP", units = units, cost = cost, deposit = units * dep, profit = profit, sell = sell,

@@ -149,7 +149,7 @@ local function rowsText()
     local out = {}
     for i = 1, #frames do
         local f = frames[i]
-        if rawget(f, "detail") and f._shown and rawget(f, "item") then out[#out + 1] = strip(f.name._text) .. " | " .. strip(f.state._text) .. " | " .. strip(f.detail._text) .. " | [" .. (f.btn._shown and f.btn._text or "") .. "]" end
+        if rawget(f, "detail") and f._shown and rawget(f, "item") then out[#out + 1] = strip(f.name._text) .. " | " .. strip(f.state._text) .. " | " .. strip(f.detail._text) .. " | " .. strip(f.profit._text) .. " | [" .. (f.btn._shown and f.btn._text or "") .. "]" end
     end
     return out
 end
@@ -170,9 +170,10 @@ check(W and W:IsShown() and UI.tab == "BUY", "window opens by itself on the BUY 
 local r = rowsText()
 for _, l in ipairs(r) do print("     " .. l) end
 check(#r == 2, "exactly the 2 real deals are listed (the 500-unit trap is not)")
-check(r[1] and r[1]:find("Copper Ore") and r[1]:find("SAFE  Buy 12 for 36c  >  vendor pays 60c  >  %+24c"), "vendor deal first, exact quantity, total and profit")
-check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c  >  resell at 77c each"), "flip shows exact buy and resale price")
+check(r[1] and r[1]:find("Copper Ore") and r[1]:find("SAFE  Buy 12 for 36c, vendor pays 60c | +24c", 1, true), "vendor deal first, exact quantity, total and profit")
+check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c, relist at 77c", 1, true) and r[2]:find("| +3s12c |", 1, true), "flip shows exact buy and resale price")
 check(S.verified[300] == nil, "Peacebloom (500 cheap units) correctly rejected")
+check(strip(AuctionMeshFrame.headline._text):find("MAKE NOW: +3s36c  (2 deals)", 1, true), "big headline: MAKE NOW: +3s36c (2 deals)")
 check(morePages >= 3, "partial results: the rest of each listing was requested before judging")
 
 print("buying")
@@ -249,6 +250,14 @@ GetInboxInvoiceInfo = function() return "seller", "Linen Cloth", "Buyer", 462, 0
 Se:RecordSale(1); Se:RecordSale(1)
 check(ns.Store.sa[200] == 77 and ns.Store.sn[200] == 6, "sale invoice read once: buyers paid 77c each for 6")
 check(chat[#chat]:find("Sold: 6 x Linen Cloth at 77c each"), "chat reports the real sale")
+
+print("watch list")
+local n0 = #sent
+advance(45)
+local c200 = 0
+for i = n0 + 1, #sent do if sent[i] == "search200" then c200 = c200 + 1 end end
+check(c200 >= 2, ("the same material is re-read continuously (%d times in 45s, was once per 20 min)"):format(c200))
+check(strip(AuctionMeshFrame.status._text or ""):find("Watching the") ~= nil or UI.tab ~= "BUY", "status says what is being watched")
 
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

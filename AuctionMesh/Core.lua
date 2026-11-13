@@ -11,7 +11,7 @@ end
 local say = ns.Print
 
 -- New realm: profession goods are where the early money is, so the swarm scans them first.
-local DEFAULTS = { channel = "", password = "", route = "channel", focus = "tradegoods", scope = "money",
+local DEFAULTS = { channel = "", password = "", route = "channel", focus = "tradegoods", scope = "mats",
     snipeAuto = true, margin = 40, minProfit = 20, flips = true, autoOpen = true, autoScan = true }
 
 local function money(c)
@@ -133,7 +133,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         Comm:Init()
         Scanner:Init()
         Swarm:Init()
-        if db.cfg.v ~= 3 then db.cfg.v, db.cfg.focus, db.cfg.scope = 3, "tradegoods", "money" end
+        if (db.cfg.v or 0) < 4 then db.cfg.v, db.cfg.focus, db.cfg.scope = 4, "tradegoods", "mats" end
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)
         Deals.cfg.margin, Deals.cfg.minProfit = db.cfg.margin / 100, db.cfg.minProfit
@@ -209,13 +209,15 @@ SlashCmdList.AUCTIONMESH = function(input)
         if m then cfg.minProfit = m; Deals.cfg.minProfit = m end
         say("Minimum profit per deal: " .. money(cfg.minProfit))
     elseif cmd == "scope" then
-        if rest == "all" or rest == "money" then
+        if rest == "all" or rest == "money" or rest == "mats" then
             cfg.scope, Swarm.scope = rest, rest
             Swarm.units = {}
             if Swarm.active then Swarm:BuildUnits() end
         end
-        say(cfg.scope == "all" and "Scanning the whole auction house." or
-            "Scanning only money-makers: trade goods, reagents, consumables, gems, enhancements. (/amesh scope all for everything)")
+        say(cfg.scope == "all" and "Scope: the whole auction house."
+            or cfg.scope == "money" and "Scope: trade goods, reagents, consumables, gems, enhancements."
+            or "Scope: crafting materials only. (/amesh scope money or all for more)")
+        Sniper.lastBg = 0
     elseif cmd == "swarm" then
         if Swarm.active then cfg.autoScan = false; Swarm:Stop("Scanning off.") else cfg.autoScan = true; Swarm:Start() end
     elseif cmd == "step" then

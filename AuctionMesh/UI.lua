@@ -62,12 +62,13 @@ local function fillBuy(r, d, short)
     r.state:SetText("")
     local each = d.units > 0 and d.profit / d.units or 0
     if d.kind == "VENDOR" then
-        r.detail:SetText(("%sSAFE|r  Buy %d for %s  >  vendor pays %s  >  %s+%s|r"):format(
-            GREEN, units, short(total), short(d.sell * units), GREEN, short(each * units)))
+        r.detail:SetText(("%sSAFE|r  Buy %d for %s, vendor pays %s"):format(GREEN, units, short(total), short(d.sell * units)))
+        r.profit:SetText(GREEN .. "+" .. short(each * units) .. "|r")
     else
-        local proof = d.sold and ("(buyers paid %s)"):format(short(d.sold)) or ("(%d listed at %s+)"):format(d.depth or 0, short(d.wall or 0))
-        r.detail:SetText(("%sFLIP|r  Buy %d for %s  >  resell at %s each  >  %s+%s|r %s%s|r"):format(
-            GOLD, units, short(total), short(d.sell), GREEN, short(d.profit), GREY, proof))
+        local proof = d.sold and ("buyers paid %s"):format(short(d.sold)) or ("%d listed at %s+"):format(d.depth or 0, short(d.wall or 0))
+        r.detail:SetText(("%sFLIP|r  Buy %d for %s, relist at %s %s(%s)|r"):format(
+            GOLD, units, short(total), short(d.sell), GREY, proof))
+        r.profit:SetText(GREEN .. "+" .. short(d.profit) .. "|r")
     end
     local b = S.buying
     if b and b.key == d.key then
@@ -106,6 +107,11 @@ local function fillSell(r, e, short)
     local text, button = STATE[e.action](e, ready, busy)
     r.state:SetText(text)
     local paid, sell, _, profit, live = Se:Numbers(e)
+    if profit and e.action ~= "HOLD" then
+        r.profit:SetText((profit >= 0 and GREEN .. "+" or RED) .. short(profit * e.count) .. "|r")
+    else
+        r.profit:SetText("")
+    end
     local paidText = paid and short(paid) or (ORANGE .. "unknown|r")
     if e.action == "HOLD" then
         r.detail:SetText(("Paid %s each  >  market is lower right now"):format(paidText))
@@ -130,6 +136,10 @@ local function buyStatus(n)
             or "Prices are up to date."
     elseif ns.Store.n == 0 then
         parts[#parts + 1] = "No price data yet."
+    end
+    local q = S.background
+    if q and #q > 0 then
+        parts[#parts + 1] = ("Watching the %d most-traded materials, re-reading each about every %ds."):format(#q, math.max(15, math.floor(#q * 1.3)))
     end
     local pending = S:Pending()
     if pending > 0 then parts[#parts + 1] = ("Checking %d possible deal(s)..."):format(pending) end
@@ -156,6 +166,22 @@ function UI:Render()
     frame.tabSell:SetEnabled(self.tab ~= "SELL")
 
     local list = self.tab == "BUY" and deals or entries
+    if self.tab == "BUY" then
+        local total = 0
+        for _, d in ipairs(deals) do total = total + d.profit end
+        frame.headline:SetText(#deals > 0
+            and ("%sMAKE NOW: +%s|r  %s(%d deal%s)|r"):format(GREEN, short(total), GREY, #deals, #deals == 1 and "" or "s")
+            or (GREY .. "MAKE NOW: nothing yet|r"))
+    else
+        local inv, back = 0, 0
+        for _, e in ipairs(entries) do
+            local paid, _, net = Se:Numbers(e)
+            if paid and e.action ~= "HOLD" then inv, back = inv + paid * e.count, back + net * e.count end
+        end
+        frame.headline:SetText(#entries > 0
+            and ("%sCOMING IN: +%s|r  %swhen these are sold|r"):format(back >= inv and GREEN or RED, short(back - inv), GREY)
+            or (GREY .. "Nothing to sell|r"))
+    end
     local status = self.tab == "BUY" and buyStatus(#deals) or Se:Instructions(entries)
     local n = self.notice
     if n and GetTime() < n.till then
@@ -258,7 +284,7 @@ end
 function UI:Create()
     if frame then return end
     frame = CreateFrame("Frame", "AuctionMeshFrame", UIParent, "BackdropTemplate")
-    frame:SetSize(WIDTH, 112 + ROWS * ROW_H)
+    frame:SetSize(WIDTH, 140 + ROWS * ROW_H)
     frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
         insets = { left = 3, right = 3, top = 3, bottom = 3 } })
@@ -291,7 +317,12 @@ function UI:Create()
     log:SetPoint("TOPRIGHT", -10, -34)
 
     frame.status = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    frame.status:SetPoint("TOPLEFT", 12, -62)
+    -- The one number that matters, big.
+    frame.headline = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    frame.headline:SetPoint("TOPLEFT", 12, -62)
+    frame.headline:SetWidth(WIDTH - 24)
+    frame.headline:SetJustifyH("LEFT")
+    frame.status:SetPoint("TOPLEFT", 12, -90)
     frame.status:SetWidth(WIDTH - 24)
     frame.status:SetHeight(26)
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
@@ -299,7 +330,7 @@ function UI:Create()
     for i = 1, ROWS do
         local r = CreateFrame("Frame", nil, frame)
         r:SetSize(WIDTH - 20, ROW_H - 2)
-        r:SetPoint("TOPLEFT", 10, -92 - (i - 1) * ROW_H)
+        r:SetPoint("TOPLEFT", 10, -120 - (i - 1) * ROW_H)
         r.bg = r:CreateTexture(nil, "BACKGROUND")
         r.bg:SetAllPoints()
         r.bg:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.03 or 0.07)
@@ -314,7 +345,10 @@ function UI:Create()
         r.state:SetWidth(170); r.state:SetJustifyH("LEFT"); r.state:SetWordWrap(false)
         r.detail = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         r.detail:SetPoint("BOTTOMLEFT", 40, 4)
-        r.detail:SetWidth(WIDTH - 20 - 40 - 76); r.detail:SetJustifyH("LEFT"); r.detail:SetWordWrap(false)
+        r.detail:SetWidth(WIDTH - 20 - 40 - 170); r.detail:SetJustifyH("LEFT"); r.detail:SetWordWrap(false)
+        r.profit = r:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        r.profit:SetPoint("RIGHT", -78, 0)
+        r.profit:SetWidth(96); r.profit:SetJustifyH("RIGHT"); r.profit:SetWordWrap(false)
         r.btn = button(r, 68, "Buy", rowButton)
         r.btn:SetPoint("RIGHT", -4, 0)
         r:EnableMouse(true)
