@@ -1,0 +1,237 @@
+-- AuctionMesh Diag: shareable debug log + one gate for every auction house request.
+--
+-- Log
+--   Every C_AuctionHouse call (ours AND the Blizzard AH window's), every AH
+--   error / throttle event, and what AuctionMesh was trying to do, with
+--   millisecond timestamps. Kept in SavedVariables (last 800 lines).
+--   /amesh log  opens a window: Ctrl+A, Ctrl+C, paste it to Claude.
+--
+-- Gate
+--   The AH server handles one request at a time. All AuctionMesh requests
+--   (searches, browse pages, posts, purchases) go through Gate:Ready()/Use():
+--     * waits until the client says the AH is ready AND the server has answered
+--       our previous request (THROTTLED_MESSAGE_SENT / RESPONSE_RECEIVED)
+--     * keeps a minimum spacing between requests (0.6s to start)
+--     * on "Internal auction error" or a dropped message: pause 5s and widen
+--       the spacing (up to 3s); it relaxes again after a minute without errors.
+local ADDON, ns = ...
+ns = ns or {}
+
+local Diag = {}
+ns.Diag = Diag
+
+local MAX_LINES = 800
+local buf, n = {}, 0 -- in-memory ring, flushed to SavedVariables on logout
+
+local function stamp()
+    local t = GetTime and GetTime() or 0
+    return ("%s %.3f"):format(date and date("%H:%M:%S") or "", t)
+end
+
+function ns.Log(fmt, ...)
+    local ok, line = pcall(string.format, fmt, ...)
+    if not ok then line = tostring(fmt) end
+    n = n + 1
+    buf[n] = stamp() .. "  " .. line
+    if n > MAX_LINES * 1.25 then
+        local keep = {}
+        for i = n - MAX_LINES + 1, n do keep[#keep + 1] = buf[i] end
+        buf, n = keep, #keep
+    end
+end
+local Log = ns.Log
+
+-- Compact description of API arguments (itemKeys, item locations, query tables).
+local function describe(v, depth)
+    local t = type(v)
+    if t == "table" then
+        if v.itemID then
+            return ("key{%s/%s/%s/%s}"):format(v.itemID, v.itemLevel or 0, v.itemSuffix or 0, v.battlePetSpeciesID or 0)
+        end
+        if v.GetBagAndSlot then
+            local ok, b, s = pcall(v.GetBagAndSlot, v)
+            return ok and ("loc{%s:%s}"):format(tostring(b), tostring(s)) or "loc{?}"
+        end
+        if (depth or 0) > 1 then return "{...}" end
+        local parts = {}
+        for k, x in pairs(v) do
+            parts[#parts + 1] = tostring(k) .. "=" .. describe(x, (depth or 0) + 1)
+            if #parts >= 6 then parts[#parts + 1] = "..."; break end
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    return tostring(v)
+end
+
+local function args(...)
+    local out = {}
+    for i = 1, select("#", ...) do out[i] = describe((select(i, ...))) end
+    return table.concat(out, ", ")
+end
+
+---------------------------------------------------------------- the gate
+
+local Gate = { interval = 0.6, nextAt = 0, outstanding = 0, changedAt = 0, lastError = 0, errors = 0 }
+ns.Gate = Gate
+
+function Gate:Ready()
+    local now = GetTime()
+    -- Safety: if the server never confirmed, don't wait forever.
+    if self.outstanding > 0 and now - self.changedAt > 5 then self.outstanding = 0 end
+    if self.errors > 0 and now - self.lastError > 60 then
+        self.errors, self.interval = 0, 0.6
+        Log("GATE relaxed: spacing back to 0.6s")
+    end
+    return now >= self.nextAt and self.outstanding <= 0 and C_AuctionHouse.IsThrottledMessageSystemReady()
+end
+
+-- Call right before sending a request.
+function Gate:Use(what)
+    self.nextAt = GetTime() + self.interval
+    Log("SEND %s", what)
+end
+
+function Gate:Penalize(why)
+    local now = GetTime()
+    self.errors, self.lastError = self.errors + 1, now
+    self.interval = math.min(3, self.interval * 1.5)
+    self.nextAt = now + 5
+    Log("GATE backoff (%s): pause 5s, spacing now %.2fs", why, self.interval)
+end
+
+---------------------------------------------------------------- hooks & events
+
+local HOOKED = {
+    "SendSearchQuery", "SendSellSearchQuery", "SendBrowseQuery", "RequestMoreBrowseResults",
+    "RefreshCommoditySearchResults", "RefreshItemSearchResults", "RequestMoreItemSearchResults",
+    "RequestMoreCommoditySearchResults", "ReplicateItems", "PostItem", "PostCommodity",
+    "ConfirmPostItem", "ConfirmPostCommodity", "StartCommoditiesPurchase", "ConfirmCommoditiesPurchase",
+    "CancelCommoditiesPurchase", "PlaceBid", "CancelAuction", "QueryOwnedAuctions", "QueryBids",
+}
+
+local EVENTS = {
+    "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "UI_ERROR_MESSAGE", "AUCTION_HOUSE_SHOW_ERROR",
+    "AUCTION_HOUSE_SHOW_NOTIFICATION", "AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION",
+    "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT",
+    "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED", "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED",
+    "AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED", "AUCTION_HOUSE_THROTTLED_SYSTEM_READY",
+    "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE", "COMMODITY_PURCHASE_SUCCEEDED",
+    "COMMODITY_PURCHASE_FAILED", "COMMODITY_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_UPDATED",
+    "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "REPLICATE_ITEM_LIST_UPDATE", "ADDON_ACTION_BLOCKED",
+    "ADDON_ACTION_FORBIDDEN",
+}
+
+local function isAHError(msg)
+    if not msg then return false end
+    msg = tostring(msg)
+    return (ERR_AUCTION_DATABASE_ERROR and msg == ERR_AUCTION_DATABASE_ERROR)
+        or msg:lower():find("auction") ~= nil
+end
+
+local function onEvent(_, event, ...)
+    if event == "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT" then
+        Gate.outstanding, Gate.changedAt = Gate.outstanding + 1, GetTime()
+    elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED" then
+        Gate.outstanding, Gate.changedAt = math.max(0, Gate.outstanding - 1), GetTime()
+    elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
+        Gate.outstanding, Gate.changedAt = math.max(0, Gate.outstanding - 1), GetTime()
+        Gate:Penalize("message dropped")
+    elseif event == "UI_ERROR_MESSAGE" then
+        local _, msg = ...
+        if not isAHError(msg) and not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
+        if isAHError(msg) then Gate:Penalize(tostring(msg)) end
+    elseif event == "AUCTION_HOUSE_SHOW_ERROR" then
+        Gate:Penalize("show error " .. tostring((...)))
+    elseif (event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN") and (...) ~= ADDON then
+        return
+    end
+    -- Search result events are frequent: log them briefly.
+    Log("EVENT %s(%s) outstanding=%d", event, args(...), Gate.outstanding)
+end
+
+function Diag:Init()
+    AuctionMeshDB.log = AuctionMeshDB.log or {}
+    -- Start a new session block, keeping the previous session for comparison.
+    local old = AuctionMeshDB.log
+    buf, n = {}, 0
+    for i = math.max(1, #old - 300), #old do n = n + 1; buf[n] = old[i] end
+    local _, build, _, toc = GetBuildInfo()
+    Log("==== session start: AuctionMesh %s, build %s, interface %s, realm %s, copperValues=%s, step=%s",
+        C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or "?",
+        tostring(build), tostring(toc), tostring(GetRealmName and GetRealmName()),
+        tostring(C_AuctionHouse.SupportsCopperValues and C_AuctionHouse.SupportsCopperValues()),
+        tostring(ns.Deals and ns.Deals.cfg.step))
+    for _, name in ipairs(HOOKED) do
+        if C_AuctionHouse[name] then
+            hooksecurefunc(C_AuctionHouse, name, function(...)
+                Log("CALL %s(%s) ready=%s", name, args(...), tostring(C_AuctionHouse.IsThrottledMessageSystemReady()))
+            end)
+        end
+    end
+    local f = CreateFrame("Frame")
+    for _, e in ipairs(EVENTS) do pcall(f.RegisterEvent, f, e) end
+    f:SetScript("OnEvent", onEvent)
+end
+
+function Diag:Save()
+    local out = {}
+    for i = math.max(1, n - MAX_LINES + 1), n do out[#out + 1] = buf[i] end
+    AuctionMeshDB.log = out
+end
+
+function Diag:Text()
+    local from = math.max(1, n - MAX_LINES + 1)
+    return table.concat(buf, "\n", from, n)
+end
+
+function Diag:Clear()
+    buf, n = {}, 0
+    Log("==== log cleared")
+end
+
+---------------------------------------------------------------- copy window
+
+local win
+function Diag:Show()
+    if not win then
+        win = CreateFrame("Frame", "AuctionMeshLogFrame", UIParent, "BackdropTemplate")
+        win:SetSize(720, 460)
+        win:SetPoint("CENTER")
+        win:SetFrameStrata("DIALOG")
+        win:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+        win:SetBackdropColor(0, 0, 0, 0.95)
+        win:SetMovable(true); win:EnableMouse(true); win:RegisterForDrag("LeftButton")
+        win:SetScript("OnDragStart", win.StartMoving)
+        win:SetScript("OnDragStop", win.StopMovingOrSizing)
+        local title = win:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOPLEFT", 10, -10)
+        title:SetText("AuctionMesh log: click in the box, Ctrl+A then Ctrl+C, and paste it to Claude")
+        local close = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", 0, 0)
+        local scroll = CreateFrame("ScrollFrame", "AuctionMeshLogScroll", win, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 10, -32)
+        scroll:SetPoint("BOTTOMRIGHT", -30, 40)
+        local edit = CreateFrame("EditBox", nil, scroll)
+        edit:SetMultiLine(true)
+        edit:SetFontObject(ChatFontSmall or GameFontHighlightSmall)
+        edit:SetWidth(670)
+        edit:SetAutoFocus(false)
+        edit:SetScript("OnEscapePressed", function() win:Hide() end)
+        scroll:SetScrollChild(edit)
+        win.edit = edit
+        local sel = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+        sel:SetSize(110, 22); sel:SetPoint("BOTTOMLEFT", 10, 10); sel:SetText("Select all")
+        sel:SetScript("OnClick", function() edit:SetFocus(); edit:HighlightText() end)
+        local clr = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+        clr:SetSize(110, 22); clr:SetPoint("LEFT", sel, "RIGHT", 8, 0); clr:SetText("Clear log")
+        clr:SetScript("OnClick", function() Diag:Clear(); edit:SetText(Diag:Text()) end)
+    end
+    win.edit:SetText(self:Text())
+    win:Show()
+    win.edit:SetFocus()
+    win.edit:HighlightText()
+end
+
+return Diag

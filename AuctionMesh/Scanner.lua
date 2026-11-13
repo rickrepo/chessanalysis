@@ -109,6 +109,7 @@ function Scanner:FullScan(force)
     end
     scan = { phase = "wait", started = GetTime(), lastGrowth = GetTime(), count = 0 }
     Sync:AnnounceScan(1)
+    if ns.Gate then ns.Gate:Use("full scan ReplicateItems") end
     C_AuctionHouse.ReplicateItems()
     say("Full scan requested; waiting for the server's auction list...")
     scan.ticker = C_Timer.NewTicker(0.5, function() Scanner:PollReplicate() end)

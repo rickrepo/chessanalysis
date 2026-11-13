@@ -117,6 +117,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         local seeded = importSeed(realm)
         Sync.lastSeen = r.lastSeen or 0
 
+        ns.Diag:Init()
         Comm.realm = realm
         Comm.me = UnitName("player") .. "-" .. realm
         Comm.paused = function() return InCombatLockdown() end
@@ -147,6 +148,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "PLAYER_LOGOUT" then
         local db, realm = AuctionMeshDB, realmKey()
         local r = db.realms and db.realms[realm]
+        ns.Diag:Save()
         if r and Store.t then
             r.lastSeen = GetServerTime()
             exportForCompanion(db, realm)
@@ -161,7 +163,9 @@ SlashCmdList.AUCTIONMESH = function(input)
     local cmd, rest = (input or ""):match("^(%S*)%s*(.-)$")
     cmd = cmd:lower()
     local cfg = AuctionMeshDB.cfg
-    if cmd == "bag" then
+    if cmd == "log" then
+        if rest == "clear" then ns.Diag:Clear(); say("Log cleared.") else ns.Diag:Show() end
+    elseif cmd == "bag" then
         if rest == "restore" then Seller:Restore() else Seller:Toggle() end
     elseif cmd == "track" then
         -- /amesh track [item link] [cost per unit in copper]
@@ -222,6 +226,6 @@ SlashCmdList.AUCTIONMESH = function(input)
             say(("swarm %s: %d/%d categories fresh, %d peers scanning, you did %d units / %d queries"):format(
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
-        say("Commands: /amesh bag [restore] | track <item> [cost] | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <item>")
+        say("Commands: /amesh log [clear] | bag [restore] | track <item> [cost] | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <item>")
     end
 end

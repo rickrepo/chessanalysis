@@ -246,7 +246,7 @@ function Seller:Tick()
         if S.searching and S.searching.key == self.pending.key then S.searching = nil end
         self.pending = nil
     end
-    if self:Busy() or self.pending or S.searching or S.buying or not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
+    if self:Busy() or self.pending or S.searching or S.buying or not ns.Gate:Ready() then return end
     local Sw = ns.Swarm
     if Sw and Sw.active and Sw.current and Sw.current.phase == "query" then return end
     local key = self:NextToPrice()
@@ -282,6 +282,8 @@ function Seller:OnResults(key, rows, commodity)
     local qty = max(commodity and min(bagCount[key] or 0, f.units or 0) or 1, 1)
     local depEach = self:DepositEach(key, commodity, qty)
     local price, why = Deals.postPrice(rows, f.cost or 0, f.sell or 0, nil, depEach)
+    ns.Log("PRICE %s: lowest=%s cost=%s deposit/unit=%s -> %s (%s)", tostring(key), tostring(rows[1] and rows[1].price),
+        tostring(f.cost), tostring(depEach), tostring(price), tostring(why))
     if price then
         self.prices[key] = { price = price, qty = qty, commodity = commodity, why = why, at = GetTime(),
                              deposit = depEach * qty }
@@ -301,7 +303,7 @@ end
 function Seller:Post(key)
     if self.posting then say("Still posting the last item, one moment..."); return end
     local AH = C_AuctionHouse
-    if not AH.IsThrottledMessageSystemReady() then
+    if not ns.Gate:Ready() then
         say("The Auction House is busy, press again in a second.")
         self.quietUntil = GetTime() + 1.5
         return
@@ -320,6 +322,7 @@ function Seller:Post(key)
         or AH.CalculateItemDeposit(loc, DURATION, qty)) or 0
     if deposit > GetMoney() then say("Not enough gold for the deposit (" .. money(deposit) .. ")."); return end
 
+    ns.Gate:Use(("post %dx %s @%d (deposit %d, commodity=%s, step=%d)"):format(qty, tostring(key), p.price, deposit, tostring(p.commodity), Deals.cfg.step))
     self.posting = { key = key, qty = qty, before = bagCount[key] or 0, price = p.price,
                      deposit = deposit, why = p.why, at = GetTime() }
     self.quietUntil = GetTime() + 2
@@ -330,6 +333,7 @@ function Seller:Post(key)
         ok = pcall(AH.PostItem, loc, DURATION, 1, nil, p.price)
     end
     if not ok then
+        ns.Log("POST refused by client for %s", tostring(key))
         self.posting = nil
         say("The game refused that post. " .. nameOf(key) .. " stays in your Flip Bag.")
         return
@@ -353,6 +357,7 @@ function Seller:CheckPosted()
     local gone = q.before - (bagCount[q.key] or 0)
     if gone <= 0 then return end
     self.posting = nil
+    ns.Log("POST confirmed by bags: %s -%d", tostring(q.key), gone)
     self.ForgetUnits(q.key, min(gone, q.qty))
     self.prices[q.key] = nil
     say(("Posted %dx %s at %s each, deposit %s (%s)."):format(min(gone, q.qty), nameOf(q.key), money(q.price), money(q.deposit), q.why))
@@ -360,6 +365,7 @@ end
 
 function Seller:OnError(msg)
     if not self.posting then return end
+    ns.Log("POST error for %s: %s", tostring(self.posting.key), tostring(msg))
     self.posting = nil
     self.quietUntil = GetTime() + 2
     say("Post failed: " .. tostring(msg) .. ". Item kept in the Flip Bag; press again in a moment.")

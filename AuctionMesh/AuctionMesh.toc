@@ -8,6 +8,7 @@
 ## IconTexture: Interface\Icons\INV_Misc_Coin_02
 
 Seed.lua
+Diag.lua
 Codec.lua
 Store.lua
 Comm.lua

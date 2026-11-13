@@ -124,9 +124,10 @@ Sync.OPS[87] = function(_, msg, sender) Swarm:OnNote(msg, sender) end -- 'W'
 -- Default executor: browse one class/subclass with the real AH API.
 -- Tests replace Swarm.exec with a fake.
 Swarm.exec = {
-    ready = function() return C_AuctionHouse.IsThrottledMessageSystemReady() end,
+    ready = function() return ns.Gate:Ready() end,
     start = function(u)
         local c, s = Swarm.unitParts(u)
+        ns.Gate:Use(("swarm browse class %d sub %s"):format(c, tostring(s)))
         C_AuctionHouse.SendBrowseQuery({
             searchString = "",
             sorts = { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } },
@@ -135,7 +136,7 @@ Swarm.exec = {
         })
     end,
     full = function() return C_AuctionHouse.HasFullBrowseResults() end,
-    more = function() C_AuctionHouse.RequestMoreBrowseResults() end,
+    more = function() ns.Gate:Use("swarm next page"); C_AuctionHouse.RequestMoreBrowseResults() end,
     gotResults = function() return Swarm.resultsSeen end,
 }
 

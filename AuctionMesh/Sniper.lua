@@ -100,6 +100,7 @@ end
 local SORTS
 function Sniper:Search(key)
     SORTS = SORTS or { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } }
+    ns.Gate:Use("search " .. tostring(key) .. (self.priority == key and " (clicked)" or ""))
     C_AuctionHouse.SendSearchQuery(C_AuctionHouse.MakeItemKey(key), SORTS, true)
     self.searching = { key = key, at = GetTime() }
     self.checkedAt[key] = GetTime()
@@ -214,7 +215,7 @@ function Sniper:Tick()
     if now - (self.lastScreen or 0) > 2 then self:Screen(); self.lastScreen = now end
     if now - (self.lastBg or 0) > 15 then self:RebuildBackground(); self.lastBg = now end
     if self.dirty then self:Render() end
-    if self:Busy() or not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
+    if self:Busy() or not ns.Gate:Ready() then return end
     if ns.Seller and ns.Seller:Busy() then return end -- never search while you're posting
     local S = ns.Swarm
     if S and S.active and S.current and S.current.phase == "query" then return end
@@ -270,12 +271,19 @@ function Sniper:Buy(key)
     if GetTime() - deal.at > VERIFIED_TTL then self.priority = key; self.verified[key] = nil; self.dirty = true; return end
     if deal.commodity then
         self.buying = { key = key, units = deal.units, max = floor(deal.cost * 1.02) + 1, phase = "quote", deal = deal, at = GetTime() }
+        if not ns.Gate:Ready() then self.buying = nil; say("The Auction House is busy, click again in a second."); return end
+        ns.Gate:Use(("buy start %dx %s, checked cost %d"):format(deal.units, tostring(key), deal.cost))
         C_AuctionHouse.StartCommoditiesPurchase(key, deal.units)
     else
         local row = table.remove(deal.buys, 1)
         local n = table.remove(deal.counts, 1)
         if not row or not row.id then self.verified[key] = nil; self.dirty = true; return end
         if row.buyout > GetMoney() then say("Not enough gold for that listing."); return end
+        if not ns.Gate:Ready() then
+            table.insert(deal.buys, 1, row); table.insert(deal.counts, 1, n)
+            say("The Auction House is busy, click again in a second."); return
+        end
+        ns.Gate:Use(("buyout auction %s of %s for %d"):format(tostring(row.id), tostring(key), row.buyout))
         C_AuctionHouse.PlaceBid(row.id, row.buyout)
         recordFlip(deal, n, row.buyout)
         deal.units, deal.cost = deal.units - n, deal.cost - row.buyout
@@ -288,6 +296,7 @@ function Sniper:Confirm()
     local b = self.buying
     if not b or b.phase ~= "confirm" then return end
     b.phase = "wait"
+    ns.Gate:Use(("buy confirm %dx %s total %s"):format(b.units, tostring(b.key), tostring(b.total)))
     C_AuctionHouse.ConfirmCommoditiesPurchase(b.key, b.units)
     self.dirty = true
 end
@@ -295,6 +304,7 @@ end
 function Sniper:OnPriceQuote(unitPrice, total)
     local b = self.buying
     if not b or b.phase ~= "quote" then return end
+    ns.Log("QUOTE %s: %s total vs max %s", tostring(b.key), tostring(total), tostring(b.max))
     if total <= b.max and total <= GetMoney() then
         b.phase, b.total = "confirm", total
     else

@@ -24,7 +24,8 @@ C_AuctionHouse = { IsThrottledMessageSystemReady = function() return ready end,
 AuctionHouseFrame = { IsShown = function() return true end }
 MerchantFrame = { IsShown = function() return true end }
 local printed = {}
-local ns = { Print = function(m) printed[#printed + 1] = m; print("  > " .. m) end, Sniper = { depositOf = function() return 3 end } }
+local ns = { Print = function(m) printed[#printed + 1] = m; print("  > " .. m) end, Sniper = { depositOf = function() return 3 end },
+  Log = function() end, Gate = { Ready = function() return ready end, Use = function() end } }
 for _, f in ipairs({ "Deals", "Seller" }) do assert(loadfile("AuctionMesh/" .. f .. ".lua"))("AuctionMesh", ns) end
 local S = ns.Seller
 local function ok(c, l) print((c and "ok   " or "FAIL ") .. l) end

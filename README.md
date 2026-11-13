@@ -37,6 +37,10 @@ The game requires one click or keypress per auction posted, so posting can't be 
 * An item leaves the Flip Bag only once your bags show it actually went. A rejected post keeps the item, and the chat says why.
 * Auto-vendoring only sells stacks that fit inside the number you bought, never copies you already owned.
 
+**Sharing a debug log:** type `/amesh log`, click in the box, press Ctrl+A then Ctrl+C, and paste it to Claude. It records every auction house call (AuctionMesh's and the game's own AH window), every AH error and throttle event, and what AuctionMesh decided (prices, posts, purchases), with timestamps. It keeps the last 800 lines, including the end of your previous session. `/amesh log clear` starts it fresh. The log is also saved in `WTF/Account/<ACCOUNT>/SavedVariables/AuctionMesh.lua`.
+
+**One gate for every AH request.** Searches, browse pages, posts and purchases wait their turn. Each waits until the server has answered the previous one, with at least 0.6s between requests. After an "Internal auction error" or a dropped request, it pauses 5s and spaces requests further apart (up to 3s), then relaxes again after a minute without errors.
+
 **Missing items?** `/amesh bag restore` rebuilds the Flip Bag from your purchase log (purchases from the last 3 days that are still in your bags). For anything else, drag the item from your bags onto the Flip Bag, or use `/amesh track [item link] [cost in copper]`.
 
 Settings: `/amesh margin 30` (flip profit %), `/amesh minprofit 20` (minimum copper per deal), `/amesh snipe` (toggle the window).
@@ -107,7 +111,7 @@ The server and every client use the same conflict rule: the newer timestamp wins
 2. Everyone in the group runs the same command once: `/amesh channel <SecretName> <password>`. Or use `/amesh guild` to go over guild chat instead.
 3. At the AH, run `/amesh swarm`. Price lines show up in item tooltips. `/amesh` on its own shows status and statistics.
 
-Commands: `/amesh bag [restore] | track <item> [cost] | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <itemID|link>`
+Commands: `/amesh log [clear] | bag [restore] | track <item> [cost] | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <itemID|link>`
 
 ## Tests
 
