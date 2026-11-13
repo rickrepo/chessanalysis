@@ -76,7 +76,7 @@ ItemLocation = { CreateFromBagAndSlot = function() return {} end }
 GetCursorInfo = function() end
 
 -- Fake world: items, bags, mailbox and auction house.
-local ITEMS = { [100] = { "Copper Ore", 5 }, [200] = { "Linen Cloth", 2 }, [300] = { "Peacebloom", 2 } }
+local ITEMS = { [2770] = { "Copper Ore", 5 }, [2589] = { "Linen Cloth", 2 }, [2447] = { "Peacebloom", 2 } }
 C_Item = {
     GetItemInfo = function(k) local it = ITEMS[k]; if it then return it[1], nil, 1, 1, 1, "", "", 200, "", 1, it[2], 7, 1 end end,
     GetItemInfoInstant = function(k) return k, "", "", "", 1, 7, 1 end,
@@ -159,9 +159,9 @@ check(W == nil, "no window until it is needed")
 
 print("at the auction house")
 -- Copper Ore: listed under vendor price (5c). Linen: 6 outliers under a deep market. Peacebloom: 500 cheap units (trap).
-LIST[100] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
-LIST[200] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
-LIST[300] = { { 20, 500 }, { 78, 100 }, { 80, 300 } }
+LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+LIST[2589] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
+LIST[2447] = { { 20, 500 }, { 78, 100 }, { 80, 300 } }
 for id, rows in pairs(LIST) do ns.Store:Put(id, rows[1][1], 500, GetServerTime()) end
 AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW")
 advance(12)
@@ -172,7 +172,7 @@ for _, l in ipairs(r) do print("     " .. l) end
 check(#r == 2, "exactly the 2 real deals are listed (the 500-unit trap is not)")
 check(r[1] and r[1]:find("Copper Ore") and r[1]:find("SAFE  Buy 12 for 36c, vendor pays 60c | +24c", 1, true), "vendor deal first, exact quantity, total and profit")
 check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c, relist at 77c", 1, true) and r[2]:find("| +3s12c |", 1, true), "flip shows exact buy and resale price")
-check(S.verified[300] == nil, "Peacebloom (500 cheap units) correctly rejected")
+check(S.verified[2447] == nil, "Peacebloom (500 cheap units) correctly rejected")
 check(strip(AuctionMeshFrame.headline._text):find("MAKE NOW: +3s36c  (2 deals)", 1, true), "big headline: MAKE NOW: +3s36c (2 deals)")
 check(morePages >= 3, "partial results: the rest of each listing was requested before judging")
 
@@ -180,12 +180,12 @@ print("buying")
 click(1); advance(0.5)
 check(rowsText()[1]:find("%[Confirm%]"), "Buy asks the server for the real total, then shows Confirm")
 click(1); advance(1)
-check(gold == 3200 - 36 and AuctionMeshDB.flips[100] and AuctionMeshDB.flips[100].units == 12 and AuctionMeshDB.flips[100].cost == 3, "confirmed: 12 bought for exactly 36c and recorded")
+check(gold == 3200 - 36 and AuctionMeshDB.flips[2770] and AuctionMeshDB.flips[2770].units == 12 and AuctionMeshDB.flips[2770].cost == 3, "confirmed: 12 bought for exactly 36c and recorded")
 check(chat[#chat]:find("Purchase confirmed"), "chat says Purchase confirmed")
 -- price changes under us: someone buys the cheap linen first
-LIST[200][1][2] = 2
+LIST[2589][1][2] = 2
 click(1); advance(0.5)
-check(S.buying == nil and AuctionMeshDB.flips[200] == nil and gold == 3200 - 36, "listing changed before the buy: cancelled, nothing spent")
+check(S.buying == nil and AuctionMeshDB.flips[2589] == nil and gold == 3200 - 36, "listing changed before the buy: cancelled, nothing spent")
 advance(3)
 
 print("selling")
@@ -194,26 +194,26 @@ r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
 check(#r == 1 and r[1]:find("Copper Ore x12 | In your mailbox") and r[1]:find("Paid 3c  >  Sell 5c  >  %+2c each"), "SELL tab: paid, sell, profit, and where the item is")
 AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
 MailFrame:Show(); fire("MAIL_SHOW"); advance(2)
-check(bags[1] and bags[1].itemID == 100 and rowsText()[1]:find("Sell to any vendor"), "mailbox collected automatically; now says Sell to any vendor")
+check(bags[1] and bags[1].itemID == 2770 and rowsText()[1]:find("Sell to any vendor"), "mailbox collected automatically; now says Sell to any vendor")
 MailFrame:Hide(); fire("MAIL_CLOSED")
 MerchantFrame:Show(); fire("MERCHANT_SHOW"); advance(3)
-check(gold == 3200 - 36 + 60 and AuctionMeshDB.flips[100] == nil, "vendor sold them automatically: +24c real profit, list cleared")
+check(gold == 3200 - 36 + 60 and AuctionMeshDB.flips[2770] == nil, "vendor sold them automatically: +24c real profit, list cleared")
 MerchantFrame:Hide(); fire("MERCHANT_CLOSED")
 
 print("posting a flip")
-LIST[200] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
-ns.Store:Put(200, 20, 906, GetServerTime())
+LIST[2589] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
+ns.Store:Put(2589, 20, 906, GetServerTime())
 AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(12)
 UI.tab = "BUY"; UI:Render()
 check(rowsText()[1] and rowsText()[1]:find("Linen Cloth"), "linen flip found again")
 click(1); advance(0.5); click(1); advance(1)
-check(AuctionMeshDB.flips[200] and AuctionMeshDB.flips[200].units == 6, "flip bought and recorded")
+check(AuctionMeshDB.flips[2589] and AuctionMeshDB.flips[2589].units == 6, "flip bought and recorded")
 MailFrame:Show(); fire("MAIL_SHOW"); advance(2); MailFrame:Hide(); fire("MAIL_CLOSED")
 UI.tab = "SELL"; UI:Render(); advance(6)
 r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
 check(r[1] and r[1]:find("Ready to post") and r[1]:find("Paid 20c  >  Sell 77c  >  %+52c each") and r[1]:find("%[Post%]"), "ready to post with live price and profit after cut + deposit")
 click(1); advance(1)
-check(posted[1] and posted[1].qty == 6 and posted[1].price == 77 and AuctionMeshDB.flips[200] == nil, "one click posted all 6 at 77c; removed after bags confirmed")
+check(posted[1] and posted[1].qty == 6 and posted[1].price == 77 and AuctionMeshDB.flips[2589] == nil, "one click posted all 6 at 77c; removed after bags confirmed")
 
 print("listings you can't buy (the Zesty Clam case from the real log)")
 ITEMS[500] = { "Zesty Clam Meat", 500 }
@@ -235,29 +235,31 @@ check(#rowsText() == 0 and S.verified[500] == nil, "the fake deal does not come 
 
 print("vendor-only mode")
 UI:SetVendorOnly(true)
-LIST[200] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
-LIST[100] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
-ns.Store:Put(100, 3, 512, GetServerTime()); ns.Store:Put(200, 20, 906, GetServerTime())
+LIST[2589] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
+LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+ns.Store:Put(2770, 3, 512, GetServerTime()); ns.Store:Put(2589, 20, 906, GetServerTime())
 S.checkedAt = {}; advance(10)
 r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
 check(#r == 1 and r[1]:find("Copper Ore") and r[1]:find("SAFE"), "vendor-only: the guaranteed deal is shown, the flip is not")
-S.priority = 200; advance(3)
-check(S.verified[200] == nil, "vendor-only: a flip is rejected even when checked")
+S.priority = 2589; advance(3)
+check(S.verified[2589] == nil, "vendor-only: a flip is rejected even when checked")
 UI:SetVendorOnly(false)
 
 print("real sale")
 GetInboxInvoiceInfo = function() return "seller", "Linen Cloth", "Buyer", 462, 0, 6, 23, nil, nil, nil, 6 end
 Se:RecordSale(1); Se:RecordSale(1)
-check(ns.Store.sa[200] == 77 and ns.Store.sn[200] == 6, "sale invoice read once: buyers paid 77c each for 6")
+check(ns.Store.sa[2589] == 77 and ns.Store.sn[2589] == 6, "sale invoice read once: buyers paid 77c each for 6")
 check(chat[#chat]:find("Sold: 6 x Linen Cloth at 77c each"), "chat reports the real sale")
 
 print("watch list")
+S:RebuildBackground()
+check(S.background[1] == 2589 and S.background.staples >= 30, "staple low-level materials (Linen Cloth first) are always on the watch list")
 local n0 = #sent
-advance(45)
+advance(130)
 local c200 = 0
-for i = n0 + 1, #sent do if sent[i] == "search200" then c200 = c200 + 1 end end
-check(c200 >= 2, ("the same material is re-read continuously (%d times in 45s, was once per 20 min)"):format(c200))
-check(strip(AuctionMeshFrame.status._text or ""):find("Watching the") ~= nil or UI.tab ~= "BUY", "status says what is being watched")
+for i = n0 + 1, #sent do if sent[i] == "search2589" then c200 = c200 + 1 end end
+check(c200 >= 2, ("the same material is re-read continuously (%d times in about 2 minutes, was once per 20 min)"):format(c200))
+check(strip(AuctionMeshFrame.status._text or ""):find("Watching %d+ materials") ~= nil or UI.tab ~= "BUY", "status says what is being watched")
 
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

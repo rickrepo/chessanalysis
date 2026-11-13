@@ -139,7 +139,7 @@ local function buyStatus(n)
     end
     local q = S.background
     if q and #q > 0 then
-        parts[#parts + 1] = ("Watching the %d most-traded materials, re-reading each about every %ds."):format(#q, math.max(15, math.floor(#q * 1.3)))
+        parts[#parts + 1] = ("Watching %d materials (cloth, ore, herbs, leather, enchanting first), each re-read about every %ds."):format(#q, math.max(15, math.floor(#q * 1.3)))
     end
     local pending = S:Pending()
     if pending > 0 then parts[#parts + 1] = ("Checking %d possible deal(s)..."):format(pending) end

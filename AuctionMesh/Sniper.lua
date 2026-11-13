@@ -21,7 +21,22 @@ ns.Sniper = Sniper
 local floor, min = math.floor, math.min
 local VERIFIED_TTL = 45           -- a verified deal is trusted this long, then re-checked
 local CHECK_AGAIN = 30            -- don't re-check the same candidate sooner
-local WATCH_SIZE = 30             -- how many items are watched continuously
+local WATCH_SIZE = 40             -- how many items are watched continuously
+
+-- Staple low-level profession materials (what players levelling 1-40 and their
+-- professions 1-150 burn through, per current WoW Forever gold guides: cloth,
+-- ore, herbs, leather, then iron and silk). Always watched first.
+local STAPLES = {
+    2589, 2592, 4306, 2996, 2997,              -- Linen, Wool, Silk Cloth; Bolts of Linen / Woolen
+    2770, 2771, 2772, 2840, 3576, 2841,        -- Copper, Tin, Iron Ore; Copper, Tin, Bronze Bar
+    2835, 2836, 2838,                          -- Rough, Coarse, Heavy Stone
+    2318, 2319, 4234, 783, 4232,               -- Light, Medium, Heavy Leather; Light, Medium Hide
+    2447, 765, 2449, 785, 2450, 2453, 3820,    -- Peacebloom, Silverleaf, Earthroot, Mageroyal, Briarthorn, Bruiseweed, Stranglekelp
+    2452, 3355, 3356, 3357,                    -- Swiftthistle, Wild Steelbloom, Kingsblood, Liferoot
+    10940, 10938, 10939, 10978,                -- Strange Dust, Lesser / Greater Magic Essence, Small Glimmering Shard
+    774, 818, 1210,                            -- Malachite, Tigerseye, Shadowgem
+}
+Sniper.STAPLES = STAPLES
 local WATCH_MIN = 15              -- never re-read the same item sooner than this
 local SEARCH_TIMEOUT = 6
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
@@ -234,15 +249,26 @@ end
 function Sniper:RebuildBackground()
     local budget, now = self:Budget(), GetServerTime()
     local scope = ns.Swarm and ns.Swarm.ScopeClasses and ns.Swarm:ScopeClasses() or PROFESSION
-    local list = {}
+    local list, seen = {}, {}
+    -- Staples first. Ones whose known lowest price is above your gold are skipped.
+    for _, key in ipairs(STAPLES) do
+        local p = Store.p[key]
+        if not self.isItem[key] and (not p or p <= budget) then list[#list + 1] = key; seen[key] = true end
+    end
+    list.staples = #list
+    -- Then the most-listed other materials you can afford.
+    local rest = {}
     for key, t in pairs(Store.t) do
-        if key > 0 and Store.p[key] <= budget and now - t <= 2 * 3600 and not self.isItem[key]
+        if key > 0 and not seen[key] and Store.p[key] <= budget and now - t <= 2 * 3600 and not self.isItem[key]
             and scope[classOf(key) or -1] then
-            list[#list + 1] = key
+            rest[#rest + 1] = key
         end
     end
-    table.sort(list, function(a, b) return Store.q[a] > Store.q[b] end)
-    for i = #list, WATCH_SIZE + 1, -1 do list[i] = nil end
+    table.sort(rest, function(a, b) return Store.q[a] > Store.q[b] end)
+    for i = 1, #rest do
+        if #list >= WATCH_SIZE then break end
+        list[#list + 1] = rest[i]
+    end
     list.i = 1
     self.background = list
 end

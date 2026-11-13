@@ -40,8 +40,8 @@ Only deals that were just checked against the live listings appear here, with th
 A snipe only exists for a minute or two after someone posts it. So AuctionMesh doesn't try to cover the whole auction house:
 
 1. Once every 15 minutes it browses the **crafting materials** categories (cloth, ore, herbs, leather, cooking, enchanting…). That's a handful of requests.
-2. From that it picks the **30 most-listed materials you can afford**. The busiest markets get the most new listings, so that's where underpriced ones appear.
-3. It re-reads the full listing of those 30, round and round, each about every 40 seconds. The moment a cheap listing shows up, it appears on the BUY tab.
+2. The watch list holds 40 items. First come the **staple low-level materials** that players levelling 1-40 and their professions burn through: linen, wool and silk cloth; copper, tin and iron ore and their bars; stone; light, medium and heavy leather; the early herbs; strange dust and the early essences; the first gems. The remaining slots go to the most-listed other materials you can afford.
+3. It re-reads the full listing of those 40, round and round, each about every 50 seconds. The moment a cheap listing shows up, it appears on the BUY tab.
 
 The top of the window shows **MAKE NOW: +X**, the total profit of every deal you could buy this second. Each row shows its own profit in large type next to the Buy button.
 
