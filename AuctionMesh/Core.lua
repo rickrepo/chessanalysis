@@ -12,7 +12,7 @@ local say = ns.Print
 
 -- New realm: profession goods are where the early money is, so the swarm scans them first.
 local DEFAULTS = { channel = "", password = "", route = "channel", focus = "tradegoods", scope = "mats",
-    snipeAuto = true, margin = 40, minProfit = 50, flips = true, autoOpen = true, autoScan = true }
+    snipeAuto = true, margin = 20, minProfit = 50, flips = true, autoOpen = true, autoScan = true }
 
 local function money(c)
     if C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then return C_CurrencyInfo.GetCoinTextureString(c) end
@@ -134,7 +134,9 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         Scanner:Init()
         Swarm:Init()
         if (db.cfg.v or 0) < 4 then db.cfg.v, db.cfg.focus, db.cfg.scope = 4, "tradegoods", "mats" end
-        if (db.cfg.v or 0) < 5 then db.cfg.v = 5; if db.cfg.minProfit < 50 then db.cfg.minProfit = 50 end end
+        if (db.cfg.v or 0) < 6 then db.cfg.margin = 20 end -- tuned from a real market log
+        if (db.cfg.v or 0) < 5 then if db.cfg.minProfit < 50 then db.cfg.minProfit = 50 end end
+        db.cfg.v = 6
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)

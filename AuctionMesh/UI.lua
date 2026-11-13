@@ -66,6 +66,7 @@ local function fillBuy(r, d, short)
         r.profit:SetText(GREEN .. "+" .. short(each * units) .. "|r")
     else
         local proof = d.sold and ("buyers paid %s"):format(short(d.sold)) or ("%d listed at %s+"):format(d.depth or 0, short(d.wall or 0))
+        if d.partial then proof = proof .. (", %d cheap left"):format(d.partial) end
         r.detail:SetText(("%sFLIP|r  Buy %d for %s, relist at %s %s(%s)|r"):format(
             GOLD, units, short(total), short(d.sell), GREY, proof))
         r.profit:SetText(GREEN .. "+" .. short(d.profit) .. "|r")

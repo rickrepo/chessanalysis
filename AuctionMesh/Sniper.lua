@@ -47,6 +47,28 @@ local HOT_NAMES = {
     ["Commonplace Herb Seeds"] = true,
 }
 Sniper.HOT_NAMES = HOT_NAMES
+
+-- Goods NPC vendors sell in unlimited supply (food, drink, thread, dyes, flux,
+-- vials, spices...). Their auction price can never hold above the vendor's
+-- price, so they are never flipped. (Buying them BELOW what a vendor pays is still fine.)
+local VENDOR_SOLD = {}
+for _, id in ipairs({
+    117, 2287, 3770, 3771, 4599, 8952,           -- meats: Tough Jerky ... Roasted Quail
+    4540, 4541, 4542, 4544, 4601, 8950,          -- breads
+    2070, 414, 422, 1707, 3927, 8932,            -- cheeses
+    4536, 4537, 4538, 4539, 4602, 8953,          -- fruit
+    4604, 4605, 4606, 4607, 4608, 8948,          -- mushrooms
+    787, 4592, 4593, 4594, 21552, 8957,          -- fish
+    159, 1179, 1205, 1708, 1645, 8766,           -- drinks
+    2320, 2321, 4291, 8343, 14341,               -- threads
+    2324, 2604, 2605, 6260, 4340, 4341, 4342, 6261, 10290, -- bleach and dyes
+    2880, 3466, 3371, 3372, 8925, 18256,         -- flux, vials
+    2678, 2692, 3713, 159, 4289, 2665,           -- spices, salt
+    4470, 4471, 6217, 5956, 2901, 7005, 6256, 6530, 4399, 4400, -- tools and parts
+    2928, 2930, 3777, 5173, 8923, 8924,          -- rogue poison reagents
+    17020, 17021, 17026, 17028, 17029, 17030, 17031, 17032, 17033, 17034, 17035, 17036, 17037, 17038, 5565, 16583, 21177, -- class reagents
+}) do VENDOR_SOLD[id] = true end
+Sniper.VENDOR_SOLD = VENDOR_SOLD
 Sniper.STAPLES = STAPLES
 local WATCH_MIN = 15              -- never re-read the same item sooner than this
 local SEARCH_TIMEOUT = 6
@@ -151,6 +173,7 @@ function Sniper:Evaluate(key, rows, commodity)
         avg = (avg and n and n >= Deals.cfg.minSamples) and avg or nil,
         deposit = self.depositOf(key, commodity),
         sold = (Store:Sold(key, GetServerTime(), 48 * 3600)),
+        noFlip = VENDOR_SOLD[key],
     })
     if wall then Sync:ObserveFair(key, wall) end
     if self.buying and self.buying.key == key then

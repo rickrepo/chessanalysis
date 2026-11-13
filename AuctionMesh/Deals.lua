@@ -12,12 +12,15 @@
 --     2. There is a "wall": at least `depthUnits` units, in at least 2 price
 --        rows, listed within 25% of each other. That is the real market price.
 --        One lonely expensive listing is NOT a market price.
---     3. We can afford to buy EVERY unit below our resale price. If cheap
---        units would remain, they undercut us and ours never sell.
---     4. What we buy is at most `share` (25%) of the wall's size: small
---        outliers only, never a market that simply is cheap.
---     5. One item never takes more than `maxSpend` (50%) of our gold (80% while under 1g).
---     6. Profit after the 5% AH cut and the deposit is at least `margin` (40%).
+--     3. We buy EVERY unit below our resale price. If cheap units would
+--        remain, they undercut us and ours never sell. Exception: when the
+--        whole cheap pile is at most 10% of the market, a small purse may buy
+--        part of it; the few leftovers get bought up quickly.
+--     4. What we buy is at most `share` (50%) of the wall's size: outliers
+--        only, never a market that simply is cheap.
+--     5. One item never takes more than `maxSpend` (50%) of our gold (all of it while under 1g).
+--     6. Profit after the 5% AH cut and the deposit is at least `margin` (20%).
+--     9. Never goods that NPC vendors sell in unlimited supply.
 --     7. If we have market-price history, the resale price is capped by its average.
 --     8. If real sales are on record (sale invoices, ours or friends'), the
 --        resale price is capped by what buyers actually paid.
@@ -32,7 +35,7 @@ ns.Deals = Deals
 local floor, min, max, ceil = math.floor, math.min, math.max, math.ceil
 
 Deals.cfg = {
-    margin = 0.40,        -- FLIP: profit must be >= 40% of what we pay
+    margin = 0.20,        -- FLIP: profit must be >= 20% of what we pay (after cut and deposit)
     vendorMargin = 0.10,  -- SAFE: guaranteed, so 10% is enough
     minProfit = 50,       -- ignore deals that make less than this in total (set in the window)
     cut = 0.05,           -- auction house cut on sales
@@ -41,7 +44,8 @@ Deals.cfg = {
     band = 1.25,          -- wall = listings within 25% of each other
     depthUnits = 10,      -- wall needs at least this many units...
     depthRows = 2,        -- ...in at least this many price rows
-    share = 0.25,         -- we buy at most 25% of the wall's size
+    share = 0.50,         -- we buy at most half of the wall's size
+    partialShare = 0.10,  -- a pile this small vs the market may be bought in part
     maxSpend = 0.5,       -- at most half our gold on one flip
     minSamples = 4,       -- average needs this many samples before we trust it
     fairMaxAge = 20 * 60, -- a wall price older than this is re-checked
@@ -118,6 +122,7 @@ local function flipDeal(rows, o, cfg)
     if not wi then return nil, nil, "too few listings to know the real price" end
     local dep = o.deposit or 0
     if dep == math.huge then return nil, wall, "posting fee not known yet" end
+    if o.noFlip then return nil, wall, "sold by NPC vendors, so it can't be resold for more" end
     local ref = wall
     if o.avg and o.avg > 0 and o.avg < ref then ref = o.avg end -- rule 7
     if o.sold and o.sold > 0 and o.sold < ref then ref = o.sold end -- rule 8
@@ -144,17 +149,35 @@ local function flipDeal(rows, o, cfg)
         return nil, wall, ("%d cheap units is too many to clear (market has %d)"):format(units, depth)
     end
     local need = cost + units * dep
+    local partial
     -- Rule 5. Under 1 gold the cap is 80%: half of a few silver buys nothing.
-    local cap = (o.gold < 10000) and math.max(cfg.maxSpend, 0.8) or cfg.maxSpend
-    if need > o.budget or need > floor(o.gold * cap) then
-        return nil, wall, ("good deal but costs $%d, more than you can spend"):format(need)
+    local cap = (o.gold < 10000) and 1 or cfg.maxSpend -- under 1g you may go all in on one deal
+    local limit = min(o.budget, floor(o.gold * cap))
+    if need > limit then
+        -- Small purse: buy part of the pile, but only when the whole pile is tiny
+        -- next to the market (<= partialShare), so the leftovers sell out quickly
+        -- instead of sitting under our listing.
+        if units > floor(depth * cfg.partialShare) then
+            return nil, wall, ("good deal but costs $%d, more than you can spend"):format(need)
+        end
+        local left, u, c = limit, 0, 0
+        for i = 1, k do
+            local n = min(rows[i].qty, floor(left / (rows[i].price + dep)))
+            if n <= 0 then break end
+            u, c, left = u + n, c + n * rows[i].price, left - n * (rows[i].price + dep)
+            if n < rows[i].qty then break end
+        end
+        if u == 0 then
+            return nil, wall, ("good deal but one costs $%d, more than you have"):format(rows[1].price + dep)
+        end
+        partial, units, cost = units - u, u, c
     end
     local profit = units * net - cost
     if profit < cfg.minProfit then
         return nil, wall, ("profit $%d is under your $%d minimum"):format(profit, cfg.minProfit)
     end
     return { kind = "FLIP", units = units, cost = cost, deposit = units * dep, profit = profit, sell = sell,
-             wall = wall, depth = depth, sold = o.sold, buys = {}, counts = {} }, wall
+             wall = wall, depth = depth, sold = o.sold, partial = partial, buys = {}, counts = {} }, wall
 end
 
 -- Full evaluation of one item's live listings (ascending by unit price, own

@@ -25,10 +25,11 @@ Only deals that were just checked against the live listings appear here, with th
 * **FLIP** means a few units are listed far below the real market. It has good odds but is not guaranteed, because someone still has to buy from you. A flip is only shown when **all** of these hold:
   1. It's a stackable good. Gear is never flipped, because item levels make prices incomparable.
   2. There's a real market price: at least 10 units, at 2 or more prices, within 25% of each other. One lonely expensive listing doesn't count.
-  3. You can afford **every** cheap unit. If cheap ones were left over they would undercut you, so there are never partial buys.
-  4. The cheap units are at most 25% of the size of the real market.
-  5. It uses at most half your gold.
-  6. Profit is at least 40% after the 5% AH cut and the deposit.
+  3. You buy **every** cheap unit, so none are left to undercut you. One exception for a small purse: if the whole cheap pile is at most 10% of the real market, you may buy the part you can afford (the row says how many cheap ones are left).
+  4. The cheap units are at most half the size of the real market.
+  5. It uses at most half your gold (all of it while you have under 1 gold).
+  6. Profit is at least 20% after the 5% AH cut and the deposit (`/amesh margin 30` changes it).
+  9. Never goods that NPC vendors sell in unlimited supply (food, drink, thread, dyes, vials…), because their price can't hold above the vendor's.
   7. If there's market-price history (readings at least 30 minutes apart), the resale price can't exceed its average.
   8. If real sales are on record, the resale price can't exceed what buyers actually paid.
 * **Buy** asks the server for the real total; then you press **Confirm**. If the total is even 1c above what was checked, the purchase is cancelled and the deal is re-checked.
