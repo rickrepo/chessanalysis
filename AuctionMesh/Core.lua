@@ -72,6 +72,15 @@ local function addTooltip(tooltip, itemID)
         tooltip:AddDoubleLine("|cff33ff99AH|r market price",
             ("%s  |cffaaaaaa(full listing, %s ago)|r"):format(money(Store.fp[itemID]), ago(now - Store.ft[itemID])), 1, 1, 1, 1, 1, 1)
     end
+    do
+        local t24 = Store:Trend(itemID, now, 24)
+        local lo, hi, n = Store:Range(itemID, now, 7 * 24)
+        if n and n > 1 then
+            tooltip:AddDoubleLine("|cff33ff99AH|r 7-day range",
+                ("%s - %s  |cffaaaaaa(%s in 24h, %d records)|r"):format(money(lo), money(hi),
+                    t24 and ("%+d%%"):format(floor(t24 * 100 + 0.5)) or "trend n/a", n), 1, 1, 1, 1, 1, 1)
+        end
+    end
     if Store.st[itemID] then
         tooltip:AddDoubleLine("|cff33ff99AH|r buyers paid",
             ("%s  |cffaaaaaa(%d sold, last %s ago)|r"):format(money(Store.sa[itemID]), Store.sn[itemID], ago(now - Store.st[itemID])), 1, 1, 1, 1, 1, 1)
@@ -121,6 +130,8 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         local r = db.realms[realm]
         Store:Attach(r)
         local pruned = Store:Prune(GetServerTime() - Sync.cfg.maxAge)
+        local hItems, hRecords = Store:TrimHistory(GetServerTime())
+        ns.historyNote = ("price history: %d items, %d hourly records"):format(hItems, hRecords)
         local seeded = importSeed(realm)
         Sync.lastSeen = r.lastSeen or 0
 
@@ -260,6 +271,20 @@ SlashCmdList.AUCTIONMESH = function(input)
         local p, q, t = Store:Get(id or 0)
         if p then say(("%s: %s, %d listed, %s ago"):format(rest, money(p), q, ago(GetServerTime() - t)))
         else say("No mesh data for " .. rest) end
+    elseif cmd == "trends" then
+        -- biggest 24h moves among items with price history
+        local now, list = GetServerTime(), {}
+        for key in pairs(Store.hist) do
+            local tr = Store:Trend(key, now, 24) or Store:Trend(key, now, 6)
+            if tr then list[#list + 1] = { key = key, tr = tr } end
+        end
+        table.sort(list, function(a, b) return math.abs(a.tr) > math.abs(b.tr) end)
+        if #list == 0 then say("No trends yet: the price history needs a few hours of readings.") end
+        for i = 1, math.min(10, #list) do
+            local e = list[i]
+            say(("%s%+d%%|r  %s  now %s"):format(e.tr >= 0 and "|cff33ff66" or "|cffff4040", floor(e.tr * 100 + 0.5),
+                Sniper.nameOf(e.key), money(Store.fp[e.key] or 0)))
+        end
     elseif cmd == "status" then
         local cs, ss = Comm.stats, Sync.stats
         local chatType, target = Comm:Route()
@@ -276,7 +301,7 @@ SlashCmdList.AUCTIONMESH = function(input)
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
     else
-        say("/amesh = open the window | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
+        say("/amesh = open the window | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
         say("Sharing: /amesh channel <name> [password] | guild | sync.   Scanning: /amesh scope money/all | swarm | focus <types>")
     end
 end

@@ -3,7 +3,7 @@
 ## AllowLoadGameType: forever, standard
 ## Notes: Shared AH prices between friends + a simple sniper for vendor and resale flips.
 ## Author: AuctionMesh
-## Version: 3.3.0
+## Version: 3.4.0
 ## SavedVariables: AuctionMeshDB
 ## IconTexture: Interface\Icons\INV_Misc_Coin_02
 

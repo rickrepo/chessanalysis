@@ -204,6 +204,7 @@ function Diag:Init()
         tostring(build), tostring(toc), tostring(GetRealmName and GetRealmName()),
         tostring(C_AuctionHouse.SupportsCopperValues and C_AuctionHouse.SupportsCopperValues()),
         tostring(ns.Deals and ns.Deals.cfg.step))
+    if ns.historyNote then Log(ns.historyNote) end
     for _, name in ipairs(HOOKED) do
         if C_AuctionHouse[name] then
             hooksecurefunc(C_AuctionHouse, name, function(...)

@@ -77,6 +77,13 @@ d = ev({ { price = 30, qty = 11 }, { price = 42, qty = 335 }, { price = 44, qty 
 check(d and d.units == 11 and d.sell == 41, "real log: Coarse Stone 11@30 under 42c -> deal (+" .. tostring(d and d.profit) .. "c)")
 check(ev({ { price = 23, qty = 316 }, { price = 24, qty = 314 }, { price = 25, qty = 1853 } }, { budget = 400, deposit = 1 }) == nil, "real log: Linen 23c vs 24c market -> no deal")
 check(ev({ { price = 5, qty = 1985 }, { price = 22, qty = 29 }, { price = 25, qty = 18 } }, { budget = 400, deposit = 1 }) == nil, "real log: 1985 units at 5c is the real price, not a deal")
+-- trend, from the price history database
+local _, _, wt = ev(with({ { price = 20, qty = 40 } }), { trend = -0.18 })
+check(wt and wt:find("falling fast %(%-18%% in 6h%)"), "market fell 18% in 6h -> no flip into a falling price")
+d = ev(with({ { price = 20, qty = 40 } }), { trend = -0.05 })
+check(d and d.sell == math.floor(78 * 0.95) - 1, "market drifting down 5% -> planned resale lowered by the same 5% (" .. tostring(d and d.sell) .. "c)")
+d = ev(with({ { price = 20, qty = 40 } }), { trend = 0.20 })
+check(d and d.sell == 77, "rising market -> resale stays at today's price, no optimism added")
 -- liquidity
 local _, _, w1 = ev(with({ { price = 20, qty = 40 } }), { rate = false })
 check(w1 and w1:find("measuring how fast"), "no volume data yet -> no deal, keeps watching")
@@ -134,6 +141,26 @@ S:Put(12, 99999, 5, t); S:Put(13, 10, 5, t - 7200)
 local vend = { [10] = 100, [13] = 1000 }
 local c = D.candidates(S, 3200, t, function(k) return vend[k] end)
 check(#c == 2 and c[1].key == 10 and c[1].kind == "VENDOR" and c[2].key == 11, "screen: vendor candidates first; skips unaffordable and stale")
+
+print("price history database")
+S:Attach({})
+local H = 3600
+local t0 = 1763000000 - (1763000000 % H)
+for i = 0, 30 do S:PutFair(50, 1000 - i * 10, t0 + i * H) end       -- falls 10c an hour for 30 hours
+local now = t0 + 30 * H
+check(#S.hist[50] == 31 * 3, "one record per item per hour (31 hours -> 31 records)")
+S:PutFair(50, 695, now + 600)
+check(#S.hist[50] == 31 * 3 and S.hist[50][#S.hist[50] - 1] == 695, "a second reading in the same hour replaces that hour's record")
+check(S:PriceAt(50, now, 6) == 760 and S:PriceAt(50, now, 24) == 940, "can look up the price 6h and 24h ago")
+local t6, t24 = S:Trend(50, now + 600, 6), S:Trend(50, now + 600, 24)
+check(t6 and math.abs(t6 - (695 - 760) / 760) < 1e-9 and t24 < t6, ("trend: %d%% over 6h, %d%% over 24h"):format(t6 * 100, t24 * 100))
+local lo, hi, n = S:Range(50, now, 24)
+check(lo == 695 and hi == 940 and n == 25, "24h range and record count")
+check(S:Trend(51, now, 6) == nil, "no history -> no trend claimed")
+for i = 0, 400 do S:PutFair(52, 500, t0 + i * H) end
+check(#S.hist[52] == 168 * 3, "history is capped at 7 days of hourly records per item")
+local items, records = S:TrimHistory(t0 + 400 * H + 10 * 24 * H)
+check(S.hist[52] == nil and S.hist[50] == nil and items == 0, "records older than 7 days are dropped at login")
 
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

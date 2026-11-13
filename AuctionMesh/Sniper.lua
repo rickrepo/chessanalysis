@@ -194,6 +194,7 @@ function Sniper:Evaluate(key, rows, commodity)
         sold = (Store:Sold(key, GetServerTime(), 48 * 3600)),
         noFlip = VENDOR_SOLD[key],
         rate = (Store:Rate(key, 100)),
+        trend = Store:Trend(key, GetServerTime(), 6),
     })
     if wall then Sync:ObserveFair(key, wall) end
     if self.buying and self.buying.key == key then

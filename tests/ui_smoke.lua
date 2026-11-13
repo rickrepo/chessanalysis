@@ -341,7 +341,7 @@ print("log resets on reload")
 local before = select(2, ns.Diag:Text():gsub("\n", "")) + 1
 ns.Diag:Save(); ns.Diag:Init()
 local after = ns.Diag:Text()
-check(before > 50 and select(2, after:gsub("\n", "")) == 0 and after:find("session start"), ("log had %d lines; after a reload it holds only the new session line"):format(before))
+check(before > 50 and select(2, after:gsub("\n", "")) <= 1 and after:find("session start"), ("log had %d lines; after a reload it holds only the new session header"):format(before))
 check(#ns.Diag:Text(true) > 1000, "the previous session is still available with /amesh log old")
 
 print("history")

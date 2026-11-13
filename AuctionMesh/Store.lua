@@ -46,7 +46,8 @@ function Store:Attach(realmTable)
     -- Market history: a = time-weighted average of the market price, an = samples,
     -- at = time of last sample. fp/ft = "fair" price from a depth check (what
     -- the item really sells for once the cheap outliers are gone) and its time.
-    for _, k in ipairs({ "a", "an", "at", "fp", "ft", "sa", "sn", "st", "vu", "vs" }) do realmTable[k] = realmTable[k] or {} end
+    for _, k in ipairs({ "a", "an", "at", "fp", "ft", "sa", "sn", "st", "vu", "vs", "hist" }) do realmTable[k] = realmTable[k] or {} end
+    self.hist = realmTable.hist -- the price history database (see Record)
     self.a, self.an, self.at = realmTable.a, realmTable.an, realmTable.at
     self.fp, self.ft = realmTable.fp, realmTable.ft
     -- Real sales (from sale invoices, ours and friends'): sa = average unit price
@@ -130,7 +131,85 @@ function Store:PutFair(key, fair, t)
     if ot and ot >= t then return false end
     self.fp[key], self.ft[key] = fair, t
     self:Sample(key, fair, t) -- history is built only from market prices read off full live listings
+    self:Record(key, fair, t)
     return true
+end
+
+---------------------------------------------------------------- price history database
+-- One record per item per hour, kept for 7 days: the market price (read from
+-- a full live listing, yours or a friend's) and the trading volume at the time.
+-- Stored flat for size: hist[key] = { hour, price, unitsPerHour, hour, price, ... }
+-- where hour = serverTime / 3600. About 3 numbers per item-hour.
+local H_KEEP = 7 * 24
+
+function Store:Record(key, price, t)
+    local hour = floor(t / 3600)
+    local h = self.hist[key]
+    if not h then h = {}; self.hist[key] = h end
+    local n = #h
+    local rate = self:Rate(key, 100)
+    rate = rate and floor(rate + 0.5) or -1 -- -1 = volume not known yet
+    if n >= 3 and h[n - 2] == hour then
+        h[n - 1], h[n] = price, rate           -- same hour: keep the latest reading
+    elseif n >= 3 and h[n - 2] > hour then
+        return                                  -- an older reading arriving late: ignore
+    else
+        h[n + 1], h[n + 2], h[n + 3] = hour, price, rate
+        while #h > H_KEEP * 3 do table.remove(h, 1); table.remove(h, 1); table.remove(h, 1) end
+    end
+end
+
+-- Price `hoursAgo` hours back: the record closest to that time, accepted when
+-- it is between half and one-and-a-half times that far back. Returns price, ageHours.
+function Store:PriceAt(key, now, hoursAgo)
+    local h = self.hist[key]
+    if not h then return nil end
+    local want, best, bestD, bestAge = floor(now / 3600) - hoursAgo, nil, math.huge, nil
+    local cur = floor(now / 3600)
+    for i = 1, #h, 3 do
+        local age = cur - h[i]
+        if age >= hoursAgo * 0.5 and age <= hoursAgo * 1.5 then
+            local d = math.abs(h[i] - want)
+            if d < bestD then best, bestD, bestAge = h[i + 1], d, age end
+        end
+    end
+    return best, bestAge
+end
+
+-- Trend: fractional change of the market price over about `hours` hours
+-- (-0.12 = fell 12%). nil when there is no record that far back or no current price.
+function Store:Trend(key, now, hours)
+    local cur, ft = self.fp[key], self.ft[key]
+    if not cur or not ft or now - ft > 2 * 3600 then return nil end
+    local old = self:PriceAt(key, now, hours)
+    if not old or old <= 0 then return nil end
+    return (cur - old) / old
+end
+
+-- Lowest and highest market price over the last `hours` hours, and how many records.
+function Store:Range(key, now, hours)
+    local h = self.hist[key]
+    if not h then return nil end
+    local cur, lo, hi, n = floor(now / 3600), nil, nil, 0
+    for i = 1, #h, 3 do
+        if cur - h[i] <= hours then
+            local p = h[i + 1]
+            lo = (not lo or p < lo) and p or lo
+            hi = (not hi or p > hi) and p or hi
+            n = n + 1
+        end
+    end
+    return lo, hi, n
+end
+
+-- Drops history older than 7 days (called once at login).
+function Store:TrimHistory(now)
+    local cut, items, records = floor(now / 3600) - H_KEEP, 0, 0
+    for key, h in pairs(self.hist) do
+        while #h >= 3 and h[1] < cut do table.remove(h, 1); table.remove(h, 1); table.remove(h, 1) end
+        if #h == 0 then self.hist[key] = nil else items = items + 1; records = records + #h / 3 end
+    end
+    return items, records
 end
 
 -- A real sale: `qty` units sold for `unit` copper each at time t.

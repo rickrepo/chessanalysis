@@ -98,6 +98,20 @@ Compared with re-reading 50 items one by one, this covers every crafting materia
 
 The game's full-download scan (`/amesh scan`, one request for the entire auction house, allowed once per 15 minutes) is still available.
 
+### The price history database
+
+AuctionMesh keeps a database of price history inside its own saved data (an addon can't query an outside database while you play, so this is the only place it can be used for decisions).
+
+* **What is stored:** one record per item per hour, for 7 days: the market price read from a full live listing, and the trading volume at the time. Readings shared by friends on your channel are recorded too, so the database fills faster with more people.
+* **How it is used:**
+  * a deal on an item whose market price fell 10% or more in about 6 hours is refused ("price is falling fast");
+  * a slower decline lowers the planned resale price by the same amount;
+  * a rising price changes nothing (no optimism is added).
+* **Where you see it:** the MARKET column on the BUY tab shows the 24-hour change next to the price; hovering a deal shows the 6h and 24h change and the 24h range; item tooltips show the 7-day range; `/amesh trends` lists the ten biggest movers.
+* **Size:** about three numbers per item-hour, only for items that have had a full reading. It is trimmed to 7 days at login.
+
+It needs a few hours of readings before trends appear. The optional central server still stores only the latest price per item; adding history there is a possible next step if you run it.
+
 ### Where the prices come from
 
 The game's addon API has no realm-wide sales history. It offers two real sources, and AuctionMesh uses only those:

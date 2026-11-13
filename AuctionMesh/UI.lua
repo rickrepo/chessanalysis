@@ -111,7 +111,8 @@ local function fillBuy(r, d, short)
         r.detail:SetText(("%sSAFE|r  Buy %d for %s, vendor pays %s"):format(GREEN, units, short(total), short(d.sell * units)))
         r.profit:SetText(GREEN .. "+" .. short(each * units) .. "|r")
     else
-        r.c[2]:SetText(short(d.wall or d.sell))
+        local tr = ns.Store:Trend(d.key, GetServerTime(), 24) or d.trend
+        r.c[2]:SetText(short(d.wall or d.sell) .. (tr and ((tr >= 0 and GREEN or RED) .. (" %+d%%|r"):format(floor(tr * 100 + 0.5))) or ""))
         r.c[3]:SetText(GREEN .. pct(unit, d.sell) .. "|r")
         r.c[4]:SetText(d.rate and ((d.rate >= 60 and GREEN or GOLD) .. ("%d/h|r"):format(floor(d.rate))) or (GREY .. "n/a|r"))
         local proof = d.sold and ("buyers paid %s"):format(short(d.sold)) or ("%d listed at %s+"):format(d.depth or 0, short(d.wall or 0))
@@ -400,6 +401,18 @@ local function rowEnter(self)
         if d.kind == "FLIP" then
             GameTooltip:AddLine(("%sLive market: %d units listed from %s. Posting fee %s (kept aside, returned on sale).|r"):format(GREY,
                 d.depth or 0, ns.Seller.short(d.wall or 0), ns.Seller.short(d.deposit or 0)))
+            do  -- what the price history database knows
+                local St, now = ns.Store, GetServerTime()
+                local t6, t24 = St:Trend(d.key, now, 6), St:Trend(d.key, now, 24)
+                local lo, hi, n = St:Range(d.key, now, 24)
+                if n and n > 1 then
+                    GameTooltip:AddLine(("%sPrice history: %s in 6h, %s in 24h; 24h range %s to %s (%d records).|r"):format(GREY,
+                        t6 and ("%+d%%"):format(floor(t6 * 100 + 0.5)) or "n/a", t24 and ("%+d%%"):format(floor(t24 * 100 + 0.5)) or "n/a",
+                        ns.Seller.short(lo), ns.Seller.short(hi), n))
+                else
+                    GameTooltip:AddLine(GREY .. "Price history: still collecting (needs a few hours of readings).|r")
+                end
+            end
             GameTooltip:AddLine(d.sold and (GREEN .. "Real sales on record: buyers paid " .. ns.Seller.short(d.sold) .. " each.|r")
                 or (GREY .. "No recorded sale of this item yet.|r"))
         end

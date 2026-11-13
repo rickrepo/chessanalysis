@@ -21,6 +21,9 @@
 --     5. One item never takes more than `maxSpend` (50%) of our gold (all of it while under 1g).
 --     6. Profit after the 5% AH cut and the deposit is at least `margin` (20%).
 --     9. Never goods that NPC vendors sell in unlimited supply.
+--    11. Trend: the price history database must not show the market price in
+--        free fall (10% or more in ~6h); a slower decline lowers the planned
+--        resale price by the same amount.
 --    10. Liquidity: the item must have been SEEN selling (units leaving the
 --        cheap end of the listing between two readings), fast enough that
 --        what we buy sells within `maxSellMinutes`.
@@ -58,6 +61,7 @@ Deals.cfg = {
     depositIsCost = false,-- true = count the posting fee as lost (pessimistic)
     requireTurnover = true, -- flips only on items we have SEEN selling
     maxSellMinutes = 60,  -- what we buy must sell within this time at the measured rate
+    trendSkip = 0.10,     -- market price fell this much in ~6h: no flips on that item
 }
 
 -- Round down to a price the auction house accepts.
@@ -141,6 +145,14 @@ local function flipDeal(rows, o, cfg)
     local ref = wall
     if o.avg and o.avg > 0 and o.avg < ref then ref = o.avg end -- rule 7
     if o.sold and o.sold > 0 and o.sold < ref then ref = o.sold end -- rule 8
+    -- Rule 11, trend (from the price history database). o.trend is the market
+    -- price change over the last ~6 hours. A price in free fall is not a flip:
+    -- by the time ours sells, "market" is lower. A slow decline is priced in by
+    -- assuming it continues: we plan to sell at today's price minus the same drop.
+    if o.trend and o.trend <= -cfg.trendSkip then
+        return nil, wall, ("price is falling fast (%d%% in 6h): not buying into a drop"):format(floor(o.trend * 100 + 0.5))
+    end
+    if o.trend and o.trend < 0 then ref = floor(ref * (1 + o.trend)) end
     -- Rule 3: the resale price is set by the first row we do NOT buy.
     local k, sell, gross, maxBuy
     for _ = 1, wi do
@@ -216,7 +228,7 @@ local function flipDeal(rows, o, cfg)
         return nil, wall, ("profit $%d is under your $%d minimum"):format(profit, cfg.minProfit)
     end
     return { kind = "FLIP", units = units, cost = cost, deposit = dep, profit = profit, sell = sell,
-             wall = wall, depth = depth, sold = o.sold, partial = partial, rate = o.rate, eta = eta,
+             wall = wall, depth = depth, sold = o.sold, partial = partial, rate = o.rate, eta = eta, trend = o.trend,
              buys = {}, counts = {} }, wall
 end
 
