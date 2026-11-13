@@ -1,0 +1,17 @@
+## Interface: 16001, 120000, 120001, 120005
+## Title: AuctionMesh
+## AllowLoadGameType: forever, standard
+## Notes: Real-time shared auction house price mesh between trusted players.
+## Author: AuctionMesh
+## Version: 1.0.0
+## SavedVariables: AuctionMeshDB
+## IconTexture: Interface\Icons\INV_Misc_Coin_02
+
+Seed.lua
+Codec.lua
+Store.lua
+Comm.lua
+Sync.lua
+Scanner.lua
+Swarm.lua
+Core.lua
