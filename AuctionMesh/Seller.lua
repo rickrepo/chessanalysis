@@ -31,7 +31,7 @@ local PRICE_TTL = 90        -- a computed post price is trusted this long
 local HOLD_TTL = 600        -- re-check held items after this
 local PRICE_TIMEOUT = 6
 local LAST_BAG = 5          -- 0-4 bags + reagent bag
-local COLS, SLOT, PAD, MAXSLOTS = 6, 40, 4, 30
+local COLS, TILE_W, TILE_H, PAD, MAXSLOTS = 3, 156, 48, 4, 24
 
 local COLORS = {
     VENDOR = { 0.2, 1, 0.4, "|cff33ff66" },
@@ -448,6 +448,40 @@ local function acceptDrop()
 end
 Seller.AcceptDrop = acceptDrop
 
+---------------------------------------------------------------- the numbers per item
+
+-- Short money text: 1g20s, 35s40c, 79c (colored like coins).
+local function short(c)
+    if not c then return "?" end
+    local neg = c < 0
+    c = math.abs(floor(c + 0.5))
+    local g, sv, cp = floor(c / 10000), floor(c / 100) % 100, c % 100
+    local out
+    if g > 0 then out = ("|cffffd700%dg|r|cffc7c7cf%02ds|r"):format(g, sv)
+    elseif sv > 0 then out = ("|cffc7c7cf%ds|r|cffeda55f%02dc|r"):format(sv, cp)
+    else out = ("|cffeda55f%dc|r"):format(cp) end
+    return (neg and "-" or "") .. out
+end
+Seller.short = short
+
+-- paid (per unit, nil if unknown), sell (per unit), net (what one unit puts in
+-- your pocket after the AH cut and deposit), profit (net - paid), live (true
+-- when sell comes from the current AH listings rather than the buy-time plan).
+function Seller:Numbers(e)
+    local f = e.f
+    local paid = (not f.unknownCost) and f.cost or nil
+    if f.kind == "VENDOR" then
+        return paid, f.sell or 0, f.sell or 0, paid and ((f.sell or 0) - paid), true
+    end
+    local p = self.prices[e.key]
+    local live = p and p.price and true or false
+    local sell = live and p.price or (f.sell or 0)
+    local dep = (live and p.deposit and p.qty and p.qty > 0) and math.ceil(p.deposit / p.qty)
+        or (AuctionMeshDB.deposits and AuctionMeshDB.deposits[e.key]) or 0
+    local net = floor(sell * (1 - Deals.cfg.cut)) - dep
+    return paid, sell, net, paid and (net - paid), live
+end
+
 ---------------------------------------------------------------- Flip Bag window
 
 local frame, slots = nil, {}
@@ -529,22 +563,33 @@ function Seller:CreateWindow()
     frame.help = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.help:SetPoint("TOPLEFT", 10, -28)
     frame.help:SetJustifyH("LEFT")
-    frame.help:SetWidth(COLS * (SLOT + PAD) + 4)
+    frame.help:SetWidth(COLS * (TILE_W + PAD) - PAD)
     frame.help:SetSpacing(2)
 
     for i = 1, MAXSLOTS do
         local b = CreateFrame("Button", nil, frame)
-        b:SetSize(SLOT, SLOT)
+        b:SetSize(TILE_W, TILE_H)
         b.border = b:CreateTexture(nil, "BACKGROUND")
         b.border:SetAllPoints()
+        b.bg = b:CreateTexture(nil, "BORDER")
+        b.bg:SetPoint("TOPLEFT", 2, -2); b.bg:SetPoint("BOTTOMRIGHT", -2, 2)
+        b.bg:SetColorTexture(0.08, 0.08, 0.1, 1)
         b.icon = b:CreateTexture(nil, "ARTWORK")
-        b.icon:SetPoint("TOPLEFT", 2, -2); b.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+        b.icon:SetSize(TILE_H - 8, TILE_H - 8)
+        b.icon:SetPoint("LEFT", 4, 0)
         b.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-        b.badge = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        b.badge:SetPoint("TOP", 0, -1)
-        b.badge:SetFont(b.badge:GetFont(), 9, "OUTLINE")
         b.count = b:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
-        b.count:SetPoint("BOTTOMRIGHT", -2, 2)
+        b.count:SetPoint("BOTTOMRIGHT", b.icon, "BOTTOMRIGHT", 1, 1)
+        local x = TILE_H - 1
+        b.badge = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        b.badge:SetPoint("TOPLEFT", x, -4)
+        b.paid = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        b.paid:SetPoint("TOPLEFT", x, -18)
+        b.sell = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        b.sell:SetPoint("TOPLEFT", x, -31)
+        for _, fs in ipairs({ b.badge, b.paid, b.sell }) do
+            fs:SetWidth(TILE_W - x - 4); fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
+        end
         b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
         b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         b:SetScript("OnClick", slotClick)
@@ -571,6 +616,7 @@ function Seller:Render()
     frame.help:SetText(self:Instructions(entries))
     local top = 32 + frame.help:GetStringHeight()
     local shown = min(#entries, MAXSLOTS)
+    local invested, back, unknown = 0, 0, 0
     for i = 1, MAXSLOTS do
         local b, e = slots[i], entries[i]
         b.entry = e
@@ -578,29 +624,57 @@ function Seller:Render()
             local c = COLORS[e.action]
             local col, row = (i - 1) % COLS, floor((i - 1) / COLS)
             b:ClearAllPoints()
-            b:SetPoint("TOPLEFT", 10 + col * (SLOT + PAD), -top - row * (SLOT + PAD))
+            b:SetPoint("TOPLEFT", 10 + col * (TILE_W + PAD), -top - row * (TILE_H + PAD))
             b.border:SetColorTexture(c[1], c[2], c[3], 1)
             b.icon:SetTexture(C_Item.GetItemIconByID(e.key) or 134400)
-            local p = self.prices[e.key]
-            local busy = e.action == "AH" and self.pending and self.pending.key == e.key
-            b.badge:SetText(c[4] .. (busy and "..." or e.action) .. "|r")
             b.count:SetText(e.count > 1 and e.count or "")
+            local busy = e.action == "AH" and self.pending and self.pending.key == e.key
+            local label = (e.action == "AH" and "POST ON AH") or (e.action == "VENDOR" and "SELL TO VENDOR")
+                or (e.action == "MAIL" and "IN MAILBOX") or "HOLD"
+            b.badge:SetText(c[4] .. (busy and "checking price..." or label) .. "|r")
+
+            local paid, sell, net, profit, live = self:Numbers(e)
+            b.paid:SetText("Paid " .. (paid and short(paid) or "|cffff8040unknown|r"))
+            local profitText = ""
+            if profit then
+                profitText = "  " .. (profit >= 0 and "|cff33ff66+" or "|cffff4040") .. short(profit) .. "|r"
+            end
+            if e.action == "HOLD" then
+                b.sell:SetText("|cffff4040Market below your cost|r")
+            else
+                b.sell:SetText("Sell " .. short(sell) .. ((e.f.kind == "FLIP" and not live) and "|cffaaaaaa?|r" or "") .. profitText)
+            end
+            if paid then
+                invested = invested + paid * e.count
+                back = back + net * e.count
+            else
+                unknown = unknown + 1
+            end
             -- Dim AH items whose price isn't ready yet.
+            local p = self.prices[e.key]
             local ready = e.action ~= "AH" or (p and p.price and GetTime() - p.at < PRICE_TTL)
             b.icon:SetDesaturated(e.action == "MAIL" or e.action == "HOLD" or (ahOpen() and not ready))
             b:Show()
         end
     end
     local rows = math.max(1, math.ceil(shown / COLS))
-    local h = top + rows * (SLOT + PAD) + 34
-    frame:SetSize(COLS * (SLOT + PAD) + 16, h)
+    local h = top + rows * (TILE_H + PAD) + 40
+    frame:SetSize(COLS * (TILE_W + PAD) - PAD + 20, h)
     frame.post:ClearAllPoints()
-    frame.post:SetPoint("BOTTOMRIGHT", -8, 7)
+    frame.post:SetPoint("BOTTOMRIGHT", -8, 8)
     frame.post:SetShown(ahOpen())
     frame.footer:ClearAllPoints()
-    frame.footer:SetPoint("BOTTOMLEFT", 10, 12)
-    local extra = #entries > MAXSLOTS and ("+" .. (#entries - MAXSLOTS) .. " more  ") or ""
-    frame.footer:SetText(extra .. (ahOpen() and "" or "/amesh bag to toggle"))
+    frame.footer:SetPoint("BOTTOMLEFT", 10, 13)
+    frame.footer:SetFontObject("GameFontHighlightSmall")
+    local text = ""
+    if shown > 0 then
+        local profit = back - invested
+        text = ("Paid %s  ->  back %s  =  %s%s|r"):format(short(invested), short(back),
+            profit >= 0 and "|cff33ff66+" or "|cffff4040", short(profit))
+        if unknown > 0 then text = text .. ("  |cffaaaaaa(%d unknown cost)|r"):format(unknown) end
+    end
+    local extra = #entries > MAXSLOTS and ("  +" .. (#entries - MAXSLOTS) .. " more") or ""
+    frame.footer:SetText(text .. extra)
 end
 
 function Seller:Toggle()

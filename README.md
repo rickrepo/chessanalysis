@@ -21,7 +21,17 @@ Open the auction house and the **Snipes** window appears next to it. Each row is
 
 ## The Flip Bag (selling what you bought)
 
-A bag-style window (`/amesh bag`, or the **Flip Bag** button on the Snipes window) that shows every item you bought to flip. Each item has a colored badge, and the text at the top always tells you the next step:
+A bag-style window (`/amesh bag`, or the **Flip Bag** button on the Snipes window) that shows every item you bought to flip. Each tile shows **what you paid**, **what it sells for**, and **profit per item** (after the 5% AH cut and the deposit):
+
+```
+[icon] POST ON AH          [icon] SELL TO VENDOR
+  20   Paid 20c              10   Paid 5c
+       Sell 99c  +71c             Sell 13c  +8c
+
+Paid 4s50c  ->  back 19s50c  =  +15s00c
+```
+
+A grey **?** after the sell price means it's the price planned at purchase. It turns into the live price once the AH is open and the current listings have been checked. The bottom line totals everything. Each tile has a colored border, and the text at the top always tells you the next step:
 
 | Badge | Meaning | What happens |
 |---|---|---|
