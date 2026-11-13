@@ -43,6 +43,12 @@ function Store:Attach(realmTable)
     realmTable.q = realmTable.q or {}
     realmTable.t = realmTable.t or {}
     self.p, self.q, self.t = realmTable.p, realmTable.q, realmTable.t
+    -- Market history: a = time-weighted average of the lowest price, an = samples,
+    -- at = time of last sample. fp/ft = "fair" price from a depth check (what
+    -- the item really sells for once the cheap outliers are gone) and its time.
+    for _, k in ipairs({ "a", "an", "at", "fp", "ft" }) do realmTable[k] = realmTable[k] or {} end
+    self.a, self.an, self.at = realmTable.a, realmTable.an, realmTable.at
+    self.fp, self.ft = realmTable.fp, realmTable.ft
     self:Rehash()
 end
 
@@ -85,7 +91,51 @@ function Store:Put(key, price, qty, t)
         self.n = self.n + 1
     end
     self.p[key], self.q[key], self.t[key] = price, qty, t
+    self:Sample(key, price, t)
     return true
+end
+
+-- Time-weighted moving average of the lowest price (half-life ~2.8h).
+-- One sample can move it at most toward 0.5x..2x of the current average, so a
+-- single snipe-priced listing or a troll listing can't wreck the average.
+local TAU = 4 * 3600
+function Store:Sample(key, price, t)
+    local a = self.a[key]
+    if not a then
+        self.a[key], self.an[key], self.at[key] = price, 1, t
+        return
+    end
+    local dt = t - self.at[key]
+    if dt <= 0 then return end
+    local w = 1 - math.exp(-dt / TAU)
+    if w < 0.05 then w = 0.05 end
+    local x = price
+    if x < a * 0.5 then x = a * 0.5 elseif x > a * 2 then x = a * 2 end
+    self.a[key] = floor(a + w * (x - a) + 0.5)
+    self.an[key] = self.an[key] + 1
+    self.at[key] = t
+end
+
+function Store:PutFair(key, fair, t)
+    local ot = self.ft[key]
+    if ot and ot >= t then return false end
+    self.fp[key], self.ft[key] = fair, t
+    return true
+end
+
+-- The price we expect to resell at: the lower of a fresh fair price and a
+-- trusted average (in a brand-new game prices fall fast, so lower is safer).
+-- Returns ref, source ("fair" | "avg" | "both") or nil when nothing is known.
+function Store:Reference(key, now, fairMaxAge, minSamples)
+    local ref, src
+    local ft = self.ft[key]
+    if ft and now - ft <= fairMaxAge then ref, src = self.fp[key], "fair" end
+    local a, n = self.a[key], self.an[key]
+    if a and n and n >= minSamples then
+        if not ref or a < ref then ref = a end
+        src = src and "both" or "avg"
+    end
+    return ref, src
 end
 
 function Store:Remove(key)
@@ -96,6 +146,7 @@ function Store:Remove(key)
     self.cnt[b] = self.cnt[b] - 1
     self.n = self.n - 1
     self.p[key], self.q[key], self.t[key] = nil, nil, nil
+    self.a[key], self.an[key], self.at[key], self.fp[key], self.ft[key] = nil, nil, nil, nil, nil
 end
 
 -- Drops records older than cutoff. Returns number removed.

@@ -146,6 +146,7 @@ function Swarm:Step()
 
     if not cur then
         local u = self:PickUnit()
+        self.idle = (u == nil)
         if not u then return end
         self.claims[u] = { by = Comm.me, at = clock }
         note(1, u)
@@ -156,8 +157,10 @@ function Swarm:Step()
 
     if cur.phase == "claimed" then
         if clock - cur.at < self.cfg.claimWait or not ex.ready() then return end
+        if ns.Sniper and not ns.Sniper:YieldTo("swarm") then return end
         self.resultsSeen = false
         ex.start(cur.unit)
+        ns.lastQuery = "swarm"
         self.stats.queries = self.stats.queries + 1
         cur.phase, cur.at = "query", clock
     elseif cur.phase == "query" then
@@ -172,7 +175,7 @@ function Swarm:Step()
             note(2, cur.unit)
             self.stats.units = self.stats.units + 1
             self.current = nil
-        elseif ex.ready() then
+        elseif ex.ready() and not (ns.Sniper and ns.Sniper:Busy()) then
             self.resultsSeen = false
             ex.more()
             self.stats.pages = self.stats.pages + 1

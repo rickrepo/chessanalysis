@@ -10,6 +10,7 @@
 --                                            (bitmask) to <requester>"
 --   C <kind> <time>                         full-scan coordination
 --                                            kind 1 = starting, 2 = finished
+--   F <base> {zig(key) fair 0 age}*          fair resale prices from depth checks
 --
 -- Live path: scans -> Observe() -> only net-new data is queued -> coalesced
 -- for 150 ms -> packed ~18 records per 255-byte message -> LIVE lane. If an
@@ -48,6 +49,7 @@ Sync.serverTime = function() return GetServerTime() end
 Sync.clock = function() return GetTime() end
 Sync.after = function(s, fn) C_Timer.After(s, fn) end
 
+Sync.fairPending = {} -- key -> true (fair prices from our depth checks awaiting flush)
 Sync.pending = {}     -- key -> true (our net-new records awaiting flush)
 Sync.npending = 0
 Sync.heardAt = {}     -- key -> clock() when someone else broadcast its current version
@@ -157,8 +159,44 @@ local function newSource(keys, n, opts)
 end
 Sync._newSource = newSource
 
+-- A depth check (full search of one item) found what the item really sells for.
+function Sync:ObserveFair(key, fair)
+    if not fair or fair <= 0 then return end
+    if Store:PutFair(key, fair, self.serverTime()) then
+        self.fairPending[key] = true
+        self:ScheduleFlush()
+    end
+end
+
+function Sync:FlushFair()
+    if not next(self.fairPending) then return end
+    local b = Codec.newDelta(self.serverTime(), "F")
+    for key in pairs(self.fairPending) do
+        local f, t = Store.fp[key], Store.ft[key]
+        if f and not b:add(key, f, 0, t) then
+            Comm:Enqueue(Comm.LIVE, b:finish())
+            b = Codec.newDelta(self.serverTime(), "F")
+            b:add(key, f, 0, t)
+        end
+    end
+    local m = b:finish()
+    if m then Comm:Enqueue(Comm.LIVE, m) end
+    self.fairPending = {}
+end
+
+function Sync:OnFair(msg, sender)
+    local now = self.serverTime()
+    Codec.decodeDelta(msg, function(key, f, _, t)
+        if f > 0 and f < 1e13 and t <= now + 300 and t >= now - self.cfg.maxAge then
+            Store:PutFair(key, f, t)
+            self.fairPending[key] = nil
+        end
+    end)
+end
+
 function Sync:Flush()
     self.flushArmed = false
+    self:FlushFair()
     if self.npending <= 0 then return end
     local keys, n = {}, 0
     for key in pairs(self.pending) do n = n + 1; keys[n] = key end
@@ -348,6 +386,7 @@ local OPS = {
     [72] = Sync.OnHello,    -- H
     [83] = Sync.OnClaim,    -- S
     [67] = Sync.OnScanNote, -- C
+    [70] = Sync.OnFair,     -- F
 }
 
 Sync.OPS = OPS -- other modules (Swarm) register their opcodes here

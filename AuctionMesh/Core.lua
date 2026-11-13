@@ -1,6 +1,6 @@
 -- AuctionMesh Core: wiring, saved data, seed import/export, tooltip, slash commands.
 local ADDON, ns = ...
-local Codec, Store, Comm, Sync, Scanner, Swarm = ns.Codec, ns.Store, ns.Comm, ns.Sync, ns.Scanner, ns.Swarm
+local Codec, Store, Comm, Sync, Scanner, Swarm, Sniper, Deals = ns.Codec, ns.Store, ns.Comm, ns.Sync, ns.Scanner, ns.Swarm, ns.Sniper, ns.Deals
 
 local floor = math.floor
 
@@ -9,7 +9,9 @@ function ns.Print(msg)
 end
 local say = ns.Print
 
-local DEFAULTS = { channel = "", password = "", route = "channel", focus = "" }
+-- New realm: profession goods are where the early money is, so the swarm scans them first.
+local DEFAULTS = { channel = "", password = "", route = "channel", focus = "tradegoods reagents professions recipes",
+    snipeAuto = true, margin = 30, minProfit = 20 }
 
 local function money(c)
     if C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then return C_CurrencyInfo.GetCoinTextureString(c) end
@@ -57,9 +59,19 @@ end
 local function addTooltip(tooltip, itemID)
     if not itemID then return end
     local p, q, t = Store:Get(itemID)
-    if not p then return end
+    if not p then
+        local note = Sniper.FlipNote(itemID)
+        if note then tooltip:AddLine(note) end
+        return
+    end
     tooltip:AddDoubleLine("|cff33ff99Mesh|r min buyout",
         ("%s  |cffaaaaaa(%d listed, %s ago)|r"):format(money(p), q, ago(GetServerTime() - t)), 1, 1, 1, 1, 1, 1)
+    local a, n = Store.a[itemID], Store.an[itemID]
+    if a and n and n >= 2 then
+        tooltip:AddDoubleLine("|cff33ff99Mesh|r average", money(a), 1, 1, 1, 1, 1, 1)
+    end
+    local note = Sniper.FlipNote(itemID)
+    if note then tooltip:AddLine(note) end
 end
 
 local function hookTooltips()
@@ -114,6 +126,8 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         Scanner:Init()
         Swarm:Init()
         Swarm:SetFocus(db.cfg.focus)
+        Deals.cfg.margin, Deals.cfg.minProfit = db.cfg.margin / 100, db.cfg.minProfit
+        Sniper:Init(function() return AuctionMeshDB.cfg.snipeAuto end)
         hookTooltips()
 
         -- Channels can't be joined reliably in the first seconds after login.
@@ -142,7 +156,18 @@ SlashCmdList.AUCTIONMESH = function(input)
     local cmd, rest = (input or ""):match("^(%S*)%s*(.-)$")
     cmd = cmd:lower()
     local cfg = AuctionMeshDB.cfg
-    if cmd == "swarm" then
+    if cmd == "snipe" then
+        if Sniper.active then Sniper:Stop(); cfg.snipeAuto = false; say("Sniper off (won't auto-open).")
+        else cfg.snipeAuto = true; Sniper:Start() end
+    elseif cmd == "margin" then
+        local m = tonumber(rest)
+        if m then cfg.margin = m; Deals.cfg.margin = m / 100 end
+        say(("Flip margin: %d%% profit after the 5%% AH cut (vendor flips use %d%%)."):format(cfg.margin, Deals.cfg.vendorMargin * 100))
+    elseif cmd == "minprofit" then
+        local m = tonumber(rest)
+        if m then cfg.minProfit = m; Deals.cfg.minProfit = m end
+        say("Minimum profit per deal: " .. money(cfg.minProfit))
+    elseif cmd == "swarm" then
         if Swarm.active then Swarm:Stop("Swarm off.") else Swarm:Start() end
     elseif cmd == "step" then
         Swarm:ManualStep()
@@ -185,6 +210,6 @@ SlashCmdList.AUCTIONMESH = function(input)
             say(("swarm %s: %d/%d categories fresh, %d peers scanning, you did %d units / %d queries"):format(
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
-        say("Commands: /amesh swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <item>")
+        say("Commands: /amesh snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <item>")
     end
 end

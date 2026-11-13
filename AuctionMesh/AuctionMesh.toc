@@ -1,7 +1,7 @@
 ## Interface: 16001, 120000, 120001, 120005
 ## Title: AuctionMesh
 ## AllowLoadGameType: forever, standard
-## Notes: Real-time shared auction house price mesh between trusted players.
+## Notes: Shared AH prices between friends + a simple sniper for vendor and resale flips.
 ## Author: AuctionMesh
 ## Version: 1.0.0
 ## SavedVariables: AuctionMeshDB
@@ -14,4 +14,6 @@ Comm.lua
 Sync.lua
 Scanner.lua
 Swarm.lua
+Deals.lua
+Sniper.lua
 Core.lua

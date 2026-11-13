@@ -84,14 +84,14 @@ function Codec.record(key, price, qty, age)
     return concat(buf, "", 1, n)
 end
 
--- Delta message builder: "D" .. uint(baseTime) .. record*
+-- Delta message builder: "D" .. uint(baseTime) .. record*  (op "F" reuses it for fair prices, qty = 0)
 -- Reuse one builder per batch; call :add() until it returns false (full),
 -- then :finish() and start a new one.
 local Builder = {}
 Builder.__index = Builder
 
-function Codec.newDelta(baseTime)
-    local head = "D" .. Codec.uint(baseTime)
+function Codec.newDelta(baseTime, op)
+    local head = (op or "D") .. Codec.uint(baseTime)
     return setmetatable({ parts = { head }, n = 1, len = #head, base = baseTime, count = 0 }, Builder)
 end
 

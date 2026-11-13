@@ -304,5 +304,65 @@ check(fresh == 100, "every peer sees all 100 categories as fresh")
 local _, _, flist = swarmRun(3, { "7:1 7:2 7:3 7:4 7:5 7:6 7:7 7:8 7:9 7:10" })
 check(flist[1].ns.Swarm.stats.units > 0, "focused player participates")
 
+------------------------------------------------------------------ 7. deals / sniper math
+print("deals")
+do
+    local ns = {}
+    assert(loadfile("AuctionMesh/Store.lua"))("AuctionMesh", ns)
+    assert(loadfile("AuctionMesh/Deals.lua"))("AuctionMesh", ns)
+    local D, S = ns.Deals, ns.Store
+    local budget = 3200 -- 32 silver
+
+    -- Commodity: 40 cheap units at 20c, then the real market around 80c.
+    local rows = { { price = 20, qty = 40 }, { price = 78, qty = 100 }, { price = 80, qty = 300 }, { price = 85, qty = 500 } }
+    local deal = D.evaluate(rows, nil, nil, budget)
+    check(deal and deal.kind == "FLIP" and deal.units == 40 and deal.cost == 800,
+        ("flip: buys the 40 underpriced units for 8s (got %s units, cost %s)"):format(deal and deal.units, deal and deal.cost))
+    check(deal and deal.sell == 79, "flip: relists 1c under the fair price (80c -> 79c)")
+    check(deal and deal.profit == 40 * (math.floor(79 * 0.95) - 20), "flip: profit counts the 5% AH cut")
+
+    -- Budget caps the buy.
+    local d2 = D.evaluate({ { price = 20, qty = 1000 }, { price = 80, qty = 5000 } }, nil, nil, budget)
+    check(d2 and d2.units == 160 and d2.cost <= budget, "flip: never spends more than the 32s budget")
+
+    -- Vendor flip: listed under vendor price, no AH history needed.
+    local d3 = D.evaluate({ { price = 50, qty = 10 } }, nil, 100, budget)
+    check(d3 and d3.kind == "VENDOR" and d3.units == 10 and d3.profit == 500, "vendor: 10 units at 50c that vendor for 1s = +5s")
+    check(D.evaluate({ { price = 95, qty = 10 } }, nil, 100, budget) == nil, "vendor: 5% profit is below the 10% bar, skipped")
+
+    -- Fairly priced market: nothing to buy.
+    check(D.evaluate({ { price = 78, qty = 100 }, { price = 80, qty = 300 } }, nil, nil, budget) == nil, "no deal in a fairly priced market")
+
+    -- Average below fair: the lower one is used (prices fall fast on a new realm).
+    local d4 = D.evaluate(rows, 50, nil, budget)
+    check(d4 and d4.sell == 49, "uses the lower of fair price and average as resale price")
+
+    -- Gear: whole listings only; skip a stack we can't afford, take a cheaper single after it.
+    local gear = { { price = 1000, qty = 1, whole = true, buyout = 1000 }, { price = 1100, qty = 5, whole = true, buyout = 5500 },
+                   { price = 1150, qty = 1, whole = true, buyout = 1150 } }
+    local d5 = D.evaluate(gear, nil, 2000, budget)
+    check(d5 and d5.units == 2 and d5.cost == 2150, "gear: buys whole listings it can afford, skips the 5-stack it can't")
+
+    -- Moving average resists one troll / snipe listing.
+    S:Attach({})
+    local t = 1763000000
+    for i = 0, 5 do S:Put(1, 1000, 10, t + i * 3600) end
+    S:Put(1, 1, 10, t + 6 * 3600 + 60)
+    check(S.a[1] >= 500, ("average survives a 1c listing (avg now %d)"):format(S.a[1]))
+
+    -- Screening: vendor first, budget-aware, ignores stale data.
+    S:Attach({})
+    local now = t
+    S:Put(10, 50, 20, now)        -- vendors for 100: vendor deal
+    for i = 1, 5 do S:Sample(11, 1000, now - 20000 + i * 3600) end
+    S:Put(11, 100, 5, now)        -- average ~1000, listed at 1s: flip
+    S:Put(12, 99999, 5, now)      -- unaffordable
+    S:Put(13, 10, 5, now - 7200)  -- stale
+    local vend = { [10] = 100, [13] = 1000 }
+    local c = D.candidates(S, budget, now, function(k) return vend[k] end)
+    check(#c == 2 and c[1].key == 10 and c[1].kind == "VENDOR" and c[2].key == 11 and c[2].kind == "FLIP",
+        "screen: vendor deal first, then flip; skips unaffordable and stale")
+end
+
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)
