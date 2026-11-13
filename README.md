@@ -35,6 +35,10 @@ Only deals that were just checked against the live listings appear here, with th
 * A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
 * **Flips: ON/OFF** at the bottom switches to SAFE deals only.
 
+### What gets scanned
+
+Only stackable goods that players burn through on a new realm: **trade goods** (cloth, ore, herbs, leather, cooking, enchanting materials…), **reagents**, **consumables**, **gems** and **enhancements**. Trade goods go first. Gear, recipes, pets and everything else are skipped, because they can't be deals here. That's a fraction of the auction house, so it's scanned much faster and with far fewer requests. A category is re-scanned after 15 minutes. `/amesh scope all` scans everything; `/amesh scope money` goes back.
+
 ### Where the prices come from
 
 The game's addon API has no realm-wide sales history. It offers two real sources, and AuctionMesh uses only those:

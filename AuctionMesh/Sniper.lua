@@ -22,7 +22,7 @@ local floor, min = math.floor, math.min
 local VERIFIED_TTL = 45           -- a verified deal is trusted this long, then re-checked
 local CHECK_AGAIN = 60            -- don't re-check the same candidate sooner
 local SEARCH_TIMEOUT = 6
-local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true, [9] = true, [19] = true }
+local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
 
 Sniper.verified = {}   -- key -> deal (+ key, at, commodity)
 Sniper.isItem = {}     -- key -> true for non-stackable items (never deal candidates)
