@@ -21,6 +21,9 @@
 --     5. One item never takes more than `maxSpend` (50%) of our gold (all of it while under 1g).
 --     6. Profit after the 5% AH cut and the deposit is at least `margin` (20%).
 --     9. Never goods that NPC vendors sell in unlimited supply.
+--    10. Liquidity: the item must have been SEEN selling (units leaving the
+--        cheap end of the listing between two readings), fast enough that
+--        what we buy sells within `maxSellMinutes`.
 --     7. If we have market-price history, the resale price is capped by its average.
 --     8. If real sales are on record (sale invoices, ours or friends'), the
 --        resale price is capped by what buyers actually paid.
@@ -53,6 +56,8 @@ Deals.cfg = {
     screenRatio = 0.6,    -- screening: lowest price must be <= 60% of the reference
     flips = true,         -- false = SAFE deals only
     depositIsCost = false,-- true = count the posting fee as lost (pessimistic)
+    requireTurnover = true, -- flips only on items we have SEEN selling
+    maxSellMinutes = 60,  -- what we buy must sell within this time at the measured rate
 }
 
 -- Round down to a price the auction house accepts.
@@ -182,13 +187,37 @@ local function flipDeal(rows, o, cfg)
         end
         partial, units, cost = units - u, u, c
     end
+    -- Rule 10, liquidity: only items that are actually trading. o.rate is the
+    -- measured units sold per hour (nil = not watched long enough yet).
+    local eta
+    if cfg.requireTurnover then
+        if not o.rate then return nil, wall, "price gap found; measuring how fast it sells first" end
+        if o.rate <= 0 then return nil, wall, "price gap, but none have sold while watching: not a popular item" end
+        eta = units / o.rate * 60
+        if eta > cfg.maxSellMinutes then
+            -- buy fewer if a smaller lot would sell in time (only for tiny piles, like any part-buy)
+            local fit = floor(o.rate * cfg.maxSellMinutes / 60)
+            if fit < 1 or (units + (partial or 0)) > floor(depth * cfg.partialShare) then
+                return nil, wall, ("sells too slowly (about %d an hour): %d would take %d min"):format(floor(o.rate), units, floor(eta))
+            end
+            local u, c = 0, 0
+            for i = 1, k do
+                local n = min(rows[i].qty, fit - u)
+                if n <= 0 then break end
+                u, c = u + n, c + n * rows[i].price
+            end
+            partial, units, cost = (partial or 0) + units - u, u, c
+            eta = units / o.rate * 60
+        end
+    end
     local dep = depFor(units)
     local profit = units * gross - cost - (asCost and dep or 0)
     if profit < cfg.minProfit then
         return nil, wall, ("profit $%d is under your $%d minimum"):format(profit, cfg.minProfit)
     end
     return { kind = "FLIP", units = units, cost = cost, deposit = dep, profit = profit, sell = sell,
-             wall = wall, depth = depth, sold = o.sold, partial = partial, buys = {}, counts = {} }, wall
+             wall = wall, depth = depth, sold = o.sold, partial = partial, rate = o.rate, eta = eta,
+             buys = {}, counts = {} }, wall
 end
 
 -- Full evaluation of one item's live listings (ascending by unit price, own

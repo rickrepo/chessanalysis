@@ -5,7 +5,11 @@ assert(loadfile("AuctionMesh/Deals.lua"))("AuctionMesh", ns)
 local D, S = ns.Deals, ns.Store
 local pass, fail = 0, 0
 local function check(c, l) if c then pass = pass + 1; print("  ok   " .. l) else fail = fail + 1; print("  FAIL " .. l) end end
-local function ev(rows, o) o.commodity = o.commodity ~= false; o.budget = o.budget or 3200; return D.evaluate(rows, o) end
+local function ev(rows, o)
+    o.commodity = o.commodity ~= false; o.budget = o.budget or 3200
+    if o.rate == nil then o.rate = 100000 elseif o.rate == false then o.rate = nil end -- liquid unless the test says otherwise
+    return D.evaluate(rows, o)
+end
 local market = { { price = 78, qty = 100 }, { price = 80, qty = 300 }, { price = 85, qty = 500 } }
 local function with(cheap) local r = {}; for _, x in ipairs(cheap) do r[#r + 1] = x end; for _, x in ipairs(market) do r[#r + 1] = x end; return r end
 
@@ -73,6 +77,17 @@ d = ev({ { price = 30, qty = 11 }, { price = 42, qty = 335 }, { price = 44, qty 
 check(d and d.units == 11 and d.sell == 41, "real log: Coarse Stone 11@30 under 42c -> deal (+" .. tostring(d and d.profit) .. "c)")
 check(ev({ { price = 23, qty = 316 }, { price = 24, qty = 314 }, { price = 25, qty = 1853 } }, { budget = 400, deposit = 1 }) == nil, "real log: Linen 23c vs 24c market -> no deal")
 check(ev({ { price = 5, qty = 1985 }, { price = 22, qty = 29 }, { price = 25, qty = 18 } }, { budget = 400, deposit = 1 }) == nil, "real log: 1985 units at 5c is the real price, not a deal")
+-- liquidity
+local _, _, w1 = ev(with({ { price = 20, qty = 40 } }), { rate = false })
+check(w1 and w1:find("measuring how fast"), "no volume data yet -> no deal, keeps watching")
+local _, _, w2 = ev(with({ { price = 20, qty = 40 } }), { rate = 0 })
+check(w2 and w2:find("not a popular item"), "nothing sold while watching -> not a popular item, no deal")
+d = ev(with({ { price = 20, qty = 40 } }), { rate = 60 })
+check(d and d.units == 40 and math.floor(d.eta) == 40, "sells 60 an hour: 40 units clear in 40 min -> deal")
+d = ev(with({ { price = 20, qty = 40 } }), { rate = 20 })
+check(d and d.units == 20 and d.partial == 20, "sells 20 an hour: buy only the 20 that sell within the hour")
+local _, _, w3 = ev(with({ { price = 20, qty = 200 } }), { rate = 20, budget = 100000 })
+check(w3 and w3:find("sells too slowly"), "big pile on a slow item -> no deal")
 -- with 2 silver
 d = ev({ { price = 115, qty = 5 }, { price = 184, qty = 26 }, { price = 185, qty = 9 }, { price = 187, qty = 16 }, { price = 188, qty = 86 }, { price = 189, qty = 75 } }, { budget = 200, deposit = 1 })
 check(d and d.units == 1 and d.cost == 115 and d.partial == 4 and d.profit >= 50, "2s purse, real log: Liferoot 5@1s15c under 1s84c -> buy the 1 you can afford (+" .. tostring(d and d.profit) .. "c)")

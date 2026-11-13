@@ -17,6 +17,23 @@ Open the auction house. One window opens next to it and price scanning starts by
    FLIP  Buy 6 for 1s20c  >  resell at 77c each  >  +3s12c (not guaranteed)
 ```
 
+### The layout
+
+The window is laid out like a trading screen. The top strip shows **BALANCE**, **IN POSITIONS** (gold tied up in items you hold) and **OPEN P/L** (expected profit on them). Both tabs use the same columns:
+
+```
+ ITEM            BUY          MARKET   SPREAD   VOLUME    PROFIT
+ Light Leather   4 @ 10c      30c      +190%    2857/h    +68c   [ Buy ]
+   FLIP  Buy 4 for 40c, relist at 29c (750 listed at 30c+, sells in ~1 min)
+
+ ITEM            QTY          COST     MARKET   STATUS    P / L
+ Wool Cloth      1            34c      1s60c    READY     +1s18c [ Post ]
+```
+
+* **SPREAD** is the gap between what you pay and what you sell for.
+* **VOLUME** is units sold per hour, measured by watching the listing. Vendor deals say "instant".
+* On the PORTFOLIO tab, a `*` after MARKET means the price is the plan from when you bought; it becomes the live price once checked.
+
 ### BUY tab
 
 Only deals that were just checked against the live listings appear here, with the exact quantity and the exact total you'll pay. Nothing is shown from an estimate.
@@ -29,6 +46,7 @@ Only deals that were just checked against the live listings appear here, with th
   4. The cheap units are at most half the size of the real market.
   5. It uses at most half your gold (all of it while you have under 1 gold).
   6. Profit is at least 20% after the 5% AH cut (`/amesh margin 30` changes it). The posting fee is kept aside, not subtracted, because it comes back on sale.
+  10. **Volume.** The item must have been seen selling. The watch list re-reads each listing about once a minute; units that disappear from the cheap end between two readings were bought by someone. A flip is offered only when, at that measured rate, what you buy would sell within 60 minutes. Until an item has been watched for about two minutes it shows "measuring how fast it sells"; if nothing sold, "not a popular item".
   9. Never goods that NPC vendors sell in unlimited supply (food, drink, thread, dyes, vials…), because their price can't hold above the vendor's.
   7. If there's market-price history (readings at least 30 minutes apart), the resale price can't exceed its average.
   8. If real sales are on record, the resale price can't exceed what buyers actually paid.
@@ -69,7 +87,7 @@ The game's addon API has no realm-wide sales history. It offers two real sources
 
 Item tooltips show all three: cheapest listing, market price from the full listing, and what buyers paid.
 
-### SELL tab
+### PORTFOLIO tab (selling)
 
 Everything you bought is listed here, with what you paid, what it sells for, the profit per item, and the one thing to do with it:
 

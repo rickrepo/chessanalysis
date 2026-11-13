@@ -146,11 +146,12 @@ fire("ADDON_LOADED", "AuctionMesh")
 fire("PLAYER_LOGIN")
 local UI, S, Se = ns.UI, ns.Sniper, ns.Seller
 AuctionMeshDB.cfg.minProfit, ns.Deals.cfg.minProfit = 20, 20 -- the walkthrough uses small deals
+ns.Deals.cfg.requireTurnover = false -- the fake auction house has no other buyers until the "volume" section
 local function rowsText()
     local out = {}
     for i = 1, #frames do
         local f = frames[i]
-        if rawget(f, "detail") and f._shown and rawget(f, "item") then out[#out + 1] = strip(f.name._text) .. " | " .. strip(f.state._text) .. " | " .. strip(f.detail._text) .. " | " .. strip(f.profit._text) .. " | [" .. (f.btn._shown and f.btn._text or "") .. "]" end
+        if rawget(f, "detail") and f._shown and rawget(f, "item") then out[#out + 1] = strip(f.name._text) .. " | " .. strip(f.state._text) .. " | " .. strip(f.c[1]._text) .. " / " .. strip(f.c[2]._text) .. " / " .. strip(f.c[3]._text) .. " / " .. strip(f.c[4]._text) .. " | " .. strip(f.detail._text) .. " | " .. strip(f.profit._text) .. " | [" .. (f.btn._shown and f.btn._text or "") .. "]" end
     end
     return out
 end
@@ -297,6 +298,27 @@ check(wd and wd.units == 2 and wd.cost == 68 and wd.deposit == 100, "Wool 8@34c 
 check(wd and wd.profit == 2 * math.floor(133 * 0.95) - 68, "profit does not subtract the fee, because it is returned on sale (+" .. tostring(wd and wd.profit) .. "c)")
 C_AuctionHouse.CalculateCommodityDeposit = realDep; S.ClearFees()
 S.verified[2592] = nil; UI:SetMinProfit(20); AuctionMeshDB.flips[2589] = nil
+
+print("volume: only items that are actually selling")
+ns.Deals.cfg.requireTurnover = true
+UI:SetVendorOnly(false); UI.notice = nil; S.verified, S.checkedAt, S.floor, S.book = {}, {}, {}, {}
+ns.Store.vu, ns.Store.vs = {}, {}
+ITEMS[2318] = { "Light Leather", 2 }
+LIST[2318] = { { 10, 4 }, { 30, 200 }, { 31, 300 }, { 32, 400 } }
+ns.Store:Put(2318, 10, 904, GetServerTime()); gold = 900
+S.priority = 2318; advance(3)
+check(S.verified[2318] == nil and tostring(S.last.reason):find("measuring how fast"), "first reading: price gap seen, but no deal until volume is measured")
+-- nobody buys for two minutes
+advance(60); S.checkedAt = {}; S.priority = 2318; advance(3); advance(60); S.checkedAt = {}; S.priority = 2318; advance(3)
+check(S.verified[2318] == nil and tostring(S.last.reason):find("not a popular item"), "nothing sold while watching: rejected as not a popular item")
+-- now other players buy 150 from the market price level over the next minutes
+LIST[2318][2][2] = 50
+advance(60); S.checkedAt = {}; S.priority = 2318; advance(3)
+local vd = S.verified[2318]
+check(vd and vd.rate and vd.rate > 100 and vd.eta and vd.eta < 60, ("units are leaving the listing: deal accepted, about %d/h, sells in ~%d min"):format(vd and vd.rate or 0, vd and vd.eta or 0))
+UI.tab = "BUY"; UI.notice = nil; UI:Render()
+r = rowsText(); for _, l in ipairs(r) do if l:find("Light Leather") then print("     " .. l) end end
+S.verified[2318] = nil; ns.Deals.cfg.requireTurnover = false
 
 print("timers")
 S:RebuildBackground(); UI.tab = "BUY"; S.searching = nil; S.last = nil; S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)

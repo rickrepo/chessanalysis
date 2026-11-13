@@ -78,6 +78,8 @@ Sniper.verified = {}   -- key -> deal (+ key, at, commodity)
 Sniper.isItem = {}     -- key -> true for non-stackable items (never deal candidates)
 Sniper.own = {}        -- key -> { [unitPrice] = qty } of your own active auctions (from the server)
 Sniper.floor = {}      -- key -> { price, at }: the server refused to sell below this price
+Sniper.book = {}       -- key -> { x = price level, cum = units at or below x, at } from the last reading
+Sniper.bought = {}     -- key -> units we bought since the last reading (not counted as demand)
 Sniper.checkedAt = {}  -- key -> GetTime() of our last live check
 Sniper.vendor = {}     -- key -> vendor sell price (false = cannot be vendored)
 Sniper.stats = { checks = 0, deals = 0, bought = 0, spent = 0, expected = 0 }
@@ -170,6 +172,7 @@ function Sniper:Evaluate(key, rows, commodity)
         return dirty()
     end
     local avg, n = Store.a[key], Store.an[key]
+    self:Turnover(key, rows)
     local feePer, feeMin = self.depositInfo(key, commodity)
     local deal, wall, reason = Deals.evaluate(rows, {
         budget = self:Budget(), gold = GetMoney(), commodity = commodity,
@@ -178,6 +181,7 @@ function Sniper:Evaluate(key, rows, commodity)
         deposit = feePer, depositMin = feeMin,
         sold = (Store:Sold(key, GetServerTime(), 48 * 3600)),
         noFlip = VENDOR_SOLD[key],
+        rate = (Store:Rate(key, 100)),
     })
     if wall then Sync:ObserveFair(key, wall) end
     if self.buying and self.buying.key == key then
@@ -191,8 +195,9 @@ function Sniper:Evaluate(key, rows, commodity)
             if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
         end
         self.verified[key] = deal
-        ns.Log("DEAL %s %s: buy %d for %d, sell %d each, profit %d (rows: %s)", deal.kind, tostring(key), deal.units,
-            deal.cost, deal.sell, deal.profit, self.RowsText(rows))
+        ns.Log("DEAL %s %s: buy %d for %d, sell %d each, profit %d, sells %s/h, eta %s min (rows: %s)", deal.kind, tostring(key),
+            deal.units, deal.cost, deal.sell, deal.profit, tostring(deal.rate and floor(deal.rate)), tostring(deal.eta and floor(deal.eta)),
+            self.RowsText(rows))
     else
         self.verified[key] = nil
         if #rows == 0 then reason = "none listed" end
@@ -217,6 +222,34 @@ function Sniper:PeekNext()
         if not self.isItem[q[i]] and self:Since(q[i]) > WATCH_MIN then return q[i], i end
         i = i + 1
     end
+end
+
+-- Trading volume. Between two readings of the same listing, units that
+-- disappeared from the cheap end (at or below the 3rd price level) were bought
+-- by someone. New cheap listings hide some sales, so this never overstates.
+function Sniper:Turnover(key, rows)
+    if #rows == 0 then return end
+    local now = GetTime()
+    local function cumAt(x)
+        local c = 0
+        for i = 1, #rows do
+            if rows[i].price > x then break end
+            c = c + rows[i].qty
+        end
+        return c
+    end
+    local prev = self.book[key]
+    if prev then
+        local dt = now - prev.at
+        if dt < 20 then return end -- same reading (the game sends results twice)
+        if dt <= 900 then
+            local gone = prev.cum - cumAt(prev.x) - (self.bought[key] or 0)
+            Store:AddTurnover(key, gone > 0 and gone or 0, dt)
+        end
+    end
+    self.bought[key] = nil
+    local x = rows[math.min(3, #rows)].price
+    self.book[key] = { x = x, cum = cumAt(x), at = now }
 end
 
 function Sniper.RowsText(rows)
@@ -593,6 +626,7 @@ function Sniper:OnPurchase(ok, why)
         local d = b.deal
         if b.item and b.vendor and b.vendor > 0 then d = setmetatable({ sell = b.vendor }, { __index = b.deal }) end
         recordFlip(d, b.units, spent, why)
+        self.bought[b.key] = (self.bought[b.key] or 0) + b.units
         if b.item then
             b.deal.units, b.deal.cost = b.deal.units - b.units, b.deal.cost - (b.total or 0)
             if #b.deal.buys > 0 then self.buying = nil; return dirty() end -- more listings in this deal

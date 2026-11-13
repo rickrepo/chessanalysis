@@ -46,12 +46,15 @@ function Store:Attach(realmTable)
     -- Market history: a = time-weighted average of the market price, an = samples,
     -- at = time of last sample. fp/ft = "fair" price from a depth check (what
     -- the item really sells for once the cheap outliers are gone) and its time.
-    for _, k in ipairs({ "a", "an", "at", "fp", "ft", "sa", "sn", "st" }) do realmTable[k] = realmTable[k] or {} end
+    for _, k in ipairs({ "a", "an", "at", "fp", "ft", "sa", "sn", "st", "vu", "vs" }) do realmTable[k] = realmTable[k] or {} end
     self.a, self.an, self.at = realmTable.a, realmTable.an, realmTable.at
     self.fp, self.ft = realmTable.fp, realmTable.ft
     -- Real sales (from sale invoices, ours and friends'): sa = average unit price
     -- actually paid by buyers, sn = units sold, st = time of the last sale.
     self.sa, self.sn, self.st = realmTable.sa, realmTable.sn, realmTable.st
+    -- Turnover (trading volume): vu = units seen leaving the cheap end of the
+    -- listing, vs = seconds we watched. Rate = vu / vs.
+    self.vu, self.vs = realmTable.vu, realmTable.vs
     self:Rehash()
 end
 
@@ -145,6 +148,20 @@ function Store:PutSold(key, unit, qty, t)
     return true
 end
 
+-- Adds one observation: `units` left the cheap end of the listing in `seconds`.
+function Store:AddTurnover(key, units, seconds)
+    local u, s = (self.vu[key] or 0) + units, (self.vs[key] or 0) + seconds
+    if s > 3600 then u, s = u * 0.5, s * 0.5 end -- recent hours weigh more
+    self.vu[key], self.vs[key] = u, s
+end
+
+-- Units sold per hour, or nil until the item has been watched for minSeconds.
+function Store:Rate(key, minSeconds)
+    local s = self.vs[key]
+    if not s or s < (minSeconds or 0) then return nil end
+    return self.vu[key] / s * 3600, s
+end
+
 -- Average real sale price if there was a sale within maxAge seconds, else nil.
 function Store:Sold(key, now, maxAge)
     local t = self.st[key]
@@ -176,6 +193,7 @@ function Store:Remove(key)
     self.p[key], self.q[key], self.t[key] = nil, nil, nil
     self.a[key], self.an[key], self.at[key], self.fp[key], self.ft[key] = nil, nil, nil, nil, nil
     self.sa[key], self.sn[key], self.st[key] = nil, nil, nil
+    self.vu[key], self.vs[key] = nil, nil
 end
 
 -- Drops records older than cutoff. Returns number removed.

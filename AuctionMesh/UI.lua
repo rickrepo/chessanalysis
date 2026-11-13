@@ -24,7 +24,16 @@ local UI = {}
 ns.UI = UI
 
 local floor, min = math.floor, math.min
-local ROWS, ROW_H, WIDTH = 8, 38, 520
+local ROWS, ROW_H, WIDTH = 8, 38, 720
+-- Column layout (x offset inside a row, width). Same grid for both tabs:
+--   BUY:  ITEM | BUY (qty @ price) | MARKET | SPREAD | VOLUME | PROFIT | [Buy]
+--   SELL: ITEM | QTY               | COST   | MARKET | STATUS | P/L    | [Post]
+local COLS = { { 40, 170 }, { 214, 110 }, { 328, 74 }, { 406, 66 }, { 476, 78 } }
+local HEAD = {
+    BUY = { "ITEM", "BUY", "MARKET", "SPREAD", "VOLUME", "PROFIT" },
+    SELL = { "ITEM", "QTY", "COST", "MARKET", "STATUS", "P / L" },
+}
+local CYAN = "|cff66ccff"
 UI.tab = "BUY"
 
 local GREEN, GOLD, BLUE, RED, GREY, ORANGE = "|cff33ff66", "|cffffd100", "|cff4d99ff", "|cffff4040", "|cffaaaaaa", "|cffff8040"
@@ -55,18 +64,32 @@ local function buyRows()
     return list
 end
 
+local function pct(buy, sell)
+    if not buy or buy <= 0 then return "" end
+    return ("%+d%%"):format(floor((sell - buy) / buy * 100 + 0.5))
+end
+
 local function fillBuy(r, d, short)
     local S = ns.Sniper
     local units, total = S.NextBuy(d)
     r.name:SetText(S.nameOf(d.key))
     r.state:SetText("")
     local each = d.units > 0 and d.profit / d.units or 0
+    local unit = units > 0 and floor(total / units + 0.5) or 0
+    r.c[1]:SetText(("%d @ %s"):format(units, short(unit)))
     if d.kind == "VENDOR" then
+        r.c[2]:SetText(short(d.sell))
+        r.c[3]:SetText(GREEN .. pct(unit, d.sell) .. "|r")
+        r.c[4]:SetText(GREEN .. "instant|r")
         r.detail:SetText(("%sSAFE|r  Buy %d for %s, vendor pays %s"):format(GREEN, units, short(total), short(d.sell * units)))
         r.profit:SetText(GREEN .. "+" .. short(each * units) .. "|r")
     else
+        r.c[2]:SetText(short(d.wall or d.sell))
+        r.c[3]:SetText(GREEN .. pct(unit, d.sell) .. "|r")
+        r.c[4]:SetText(d.rate and ((d.rate >= 60 and GREEN or GOLD) .. ("%d/h|r"):format(floor(d.rate))) or (GREY .. "n/a|r"))
         local proof = d.sold and ("buyers paid %s"):format(short(d.sold)) or ("%d listed at %s+"):format(d.depth or 0, short(d.wall or 0))
         if d.partial then proof = proof .. (", %d cheap left"):format(d.partial) end
+        if d.eta then proof = proof .. (", sells in ~%d min"):format(math.max(1, floor(d.eta + 0.5))) end
         r.detail:SetText(("%sFLIP|r  Buy %d for %s, relist at %s %s(%s)|r"):format(
             GOLD, units, short(total), short(d.sell), GREY, proof))
         r.profit:SetText(GREEN .. "+" .. short(d.profit) .. "|r")
@@ -110,6 +133,11 @@ local function fillSell(r, e, short)
     local text, button = STATE[e.action](e, ready, busy)
     r.state:SetText(text)
     local paid, sell, _, profit, live = Se:Numbers(e)
+    r.c[1]:SetText(tostring(e.count))
+    r.c[2]:SetText(paid and short(paid) or (ORANGE .. "?|r"))
+    r.c[3]:SetText(short(sell) .. ((e.f.kind == "FLIP" and not live) and (GREY .. "*|r") or ""))
+    r.c[4]:SetText(e.action == "AH" and (ready and (GOLD .. "READY|r") or (GREY .. "pricing|r"))
+        or e.action == "VENDOR" and (GREEN .. "VENDOR|r") or e.action == "MAIL" and (CYAN .. "MAIL|r") or (RED .. "WAIT|r"))
     if profit and e.action ~= "HOLD" then
         r.profit:SetText((profit >= 0 and GREEN .. "+" or RED) .. short(profit * e.count) .. "|r")
     else
@@ -182,9 +210,19 @@ function UI:Render()
     if not frame or not frame:IsShown() then return end
     local Se, short = ns.Seller, ns.Seller.short
     local deals, entries = buyRows(), Se:Entries()
-    frame.gold:SetText("Gold: " .. short(GetMoney()))
+    do  -- account strip: balance, money in open positions, open profit/loss
+        local inv, back = 0, 0
+        for _, e in ipairs(entries) do
+            local paid, _, net = Se:Numbers(e)
+            if paid then inv, back = inv + paid * e.count, back + net * e.count end
+        end
+        local pl = back - inv
+        frame.gold:SetText(("%sBALANCE|r %s    %sIN POSITIONS|r %s    %sOPEN P/L|r %s%s%s|r"):format(
+            GREY, short(GetMoney()), GREY, short(inv), GREY, pl >= 0 and GREEN or RED, pl >= 0 and "+" or "", short(pl)))
+    end
+    for i = 1, 6 do frame.head[i]:SetText(CYAN .. HEAD[self.tab][i] .. "|r") end
     frame.tabBuy:SetText(("BUY (%d)"):format(#deals))
-    frame.tabSell:SetText(("SELL (%d)"):format(#entries))
+    frame.tabSell:SetText(("PORTFOLIO (%d)"):format(#entries))
     frame.tabBuy:SetEnabled(self.tab ~= "BUY")
     frame.tabSell:SetEnabled(self.tab ~= "SELL")
 
@@ -308,11 +346,11 @@ end
 function UI:Create()
     if frame then return end
     frame = CreateFrame("Frame", "AuctionMeshFrame", UIParent, "BackdropTemplate")
-    frame:SetSize(WIDTH, 154 + ROWS * ROW_H)
+    frame:SetSize(WIDTH, 172 + ROWS * ROW_H)
     frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
         insets = { left = 3, right = 3, top = 3, bottom = 3 } })
-    frame:SetBackdropColor(0.04, 0.04, 0.06, 0.96)
+    frame:SetBackdropColor(0.02, 0.03, 0.05, 0.97)
     frame:SetFrameStrata("HIGH")
     frame:SetMovable(true); frame:EnableMouse(true); frame:RegisterForDrag("LeftButton")
     frame:SetClampedToScreen(true)
@@ -369,6 +407,18 @@ function UI:Create()
     frame.headline:SetWidth(WIDTH - 24)
     frame.headline:SetJustifyH("LEFT")
     frame.status:SetPoint("TOPLEFT", 12, -90)
+    -- column headings, on a thin rule like a quote board
+    frame.head = {}
+    for n = 1, 5 do
+        local f = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        f:SetPoint("TOPLEFT", 10 + COLS[n][1], -136)
+        frame.head[n] = f
+    end
+    frame.head[6] = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.head[6]:SetPoint("TOPRIGHT", -88, -136)
+    local rule = frame:CreateTexture(nil, "ARTWORK")
+    rule:SetColorTexture(0.4, 0.8, 1, 0.35)
+    rule:SetPoint("TOPLEFT", 10, -149); rule:SetPoint("TOPRIGHT", -10, -149); rule:SetHeight(1)
     frame.status:SetWidth(WIDTH - 24)
     frame.status:SetHeight(40)
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
@@ -376,25 +426,33 @@ function UI:Create()
     for i = 1, ROWS do
         local r = CreateFrame("Frame", nil, frame)
         r:SetSize(WIDTH - 20, ROW_H - 2)
-        r:SetPoint("TOPLEFT", 10, -134 - (i - 1) * ROW_H)
+        r:SetPoint("TOPLEFT", 10, -152 - (i - 1) * ROW_H)
         r.bg = r:CreateTexture(nil, "BACKGROUND")
         r.bg:SetAllPoints()
-        r.bg:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.03 or 0.07)
+        r.bg:SetColorTexture(0.4, 0.7, 1, (i % 2 == 0) and 0.03 or 0.07)
         r.icon = r:CreateTexture(nil, "ARTWORK")
         r.icon:SetSize(30, 30); r.icon:SetPoint("LEFT", 3, 0)
         r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
         r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         r.name:SetPoint("TOPLEFT", 40, -4)
-        r.name:SetWidth(210); r.name:SetJustifyH("LEFT"); r.name:SetWordWrap(false)
+        r.name:SetWidth(COLS[1][2]); r.name:SetJustifyH("LEFT"); r.name:SetWordWrap(false)
         r.state = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        r.state:SetPoint("TOPLEFT", 252, -5)
-        r.state:SetWidth(170); r.state:SetJustifyH("LEFT"); r.state:SetWordWrap(false)
+        r.state:SetPoint("BOTTOMRIGHT", -172, 4)
+        r.state:SetWidth(200); r.state:SetJustifyH("RIGHT"); r.state:SetWordWrap(false)
+        r.c = {}
+        for n = 2, 5 do
+            local f = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            f:SetPoint("TOPLEFT", COLS[n][1], -4)
+            f:SetWidth(COLS[n][2]); f:SetJustifyH("LEFT"); f:SetWordWrap(false)
+            r.c[n - 1] = f
+        end
         r.detail = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         r.detail:SetPoint("BOTTOMLEFT", 40, 4)
-        r.detail:SetWidth(WIDTH - 20 - 40 - 170); r.detail:SetJustifyH("LEFT"); r.detail:SetWordWrap(false)
+        r.detail:SetWidth(330); r.detail:SetJustifyH("LEFT"); r.detail:SetWordWrap(false)
+        r.detail:SetTextColor(0.72, 0.76, 0.82)
         r.profit = r:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         r.profit:SetPoint("RIGHT", -78, 0)
-        r.profit:SetWidth(96); r.profit:SetJustifyH("RIGHT"); r.profit:SetWordWrap(false)
+        r.profit:SetWidth(100); r.profit:SetJustifyH("RIGHT"); r.profit:SetWordWrap(false)
         r.btn = button(r, 68, "Buy", rowButton)
         -- Mouse on a Buy/Post button = you are about to click: background work
         -- stops so the auction house is free when you do.

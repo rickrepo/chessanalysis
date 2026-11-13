@@ -292,12 +292,22 @@ end
 
 function Seller:NextToPrice()
     local now = GetTime()
-    if self.priority then local k = self.priority; self.priority = nil; return k end
+    self.pricedAt = self.pricedAt or {}
+    local last = self.pricedAt
+    if self.priority then
+        local k = self.priority
+        self.priority = nil
+        if not last[k] or now - last[k] >= 5 then last[k] = now; return k end
+    end
     for key, f in pairs(flips()) do
         if f.kind == "FLIP" and (bagCount[key] or 0) > 0 then
             local p = self.prices[key]
             local ttl = (p and p.hold) and HOLD_TTL or PRICE_TTL
-            if not p or now - p.at >= ttl then return key end
+            -- at most one price check per item every 20s, whatever else happens
+            if (not p or now - p.at >= ttl) and (not last[key] or now - last[key] >= 20) then
+                last[key] = now
+                return key
+            end
         end
     end
 end
