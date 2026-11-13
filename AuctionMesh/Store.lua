@@ -43,12 +43,15 @@ function Store:Attach(realmTable)
     realmTable.q = realmTable.q or {}
     realmTable.t = realmTable.t or {}
     self.p, self.q, self.t = realmTable.p, realmTable.q, realmTable.t
-    -- Market history: a = time-weighted average of the lowest price, an = samples,
+    -- Market history: a = time-weighted average of the market price, an = samples,
     -- at = time of last sample. fp/ft = "fair" price from a depth check (what
     -- the item really sells for once the cheap outliers are gone) and its time.
-    for _, k in ipairs({ "a", "an", "at", "fp", "ft" }) do realmTable[k] = realmTable[k] or {} end
+    for _, k in ipairs({ "a", "an", "at", "fp", "ft", "sa", "sn", "st" }) do realmTable[k] = realmTable[k] or {} end
     self.a, self.an, self.at = realmTable.a, realmTable.an, realmTable.at
     self.fp, self.ft = realmTable.fp, realmTable.ft
+    -- Real sales (from sale invoices, ours and friends'): sa = average unit price
+    -- actually paid by buyers, sn = units sold, st = time of the last sale.
+    self.sa, self.sn, self.st = realmTable.sa, realmTable.sn, realmTable.st
     self:Rehash()
 end
 
@@ -91,7 +94,6 @@ function Store:Put(key, price, qty, t)
         self.n = self.n + 1
     end
     self.p[key], self.q[key], self.t[key] = price, qty, t
-    self:Sample(key, price, t)
     return true
 end
 
@@ -102,8 +104,6 @@ local TAU = 4 * 3600
 function Store:Sample(key, price, t)
     -- Prefer the real market price (from a live check) over the lowest listing,
     -- which may be the very outlier we want to snipe.
-    local ft = self.ft[key]
-    if ft and t - ft <= 1200 and self.fp[key] > price then price = self.fp[key] end
     local a = self.a[key]
     if not a then
         self.a[key], self.an[key], self.at[key] = price, 1, t
@@ -126,7 +126,29 @@ function Store:PutFair(key, fair, t)
     local ot = self.ft[key]
     if ot and ot >= t then return false end
     self.fp[key], self.ft[key] = fair, t
+    self:Sample(key, fair, t) -- history is built only from market prices read off full live listings
     return true
+end
+
+-- A real sale: `qty` units sold for `unit` copper each at time t.
+function Store:PutSold(key, unit, qty, t)
+    local ot = self.st[key]
+    if ot and t <= ot then return false end
+    local a, n = self.sa[key], self.sn[key] or 0
+    if a then
+        local w = qty / (qty + math.min(n, 3 * qty)) -- recent sales weigh more
+        self.sa[key] = floor(a + w * (unit - a) + 0.5)
+    else
+        self.sa[key] = unit
+    end
+    self.sn[key], self.st[key] = n + qty, t
+    return true
+end
+
+-- Average real sale price if there was a sale within maxAge seconds, else nil.
+function Store:Sold(key, now, maxAge)
+    local t = self.st[key]
+    if t and now - t <= maxAge then return self.sa[key], self.sn[key], t end
 end
 
 -- The price we expect to resell at: the lower of a fresh fair price and a
@@ -153,6 +175,7 @@ function Store:Remove(key)
     self.n = self.n - 1
     self.p[key], self.q[key], self.t[key] = nil, nil, nil
     self.a[key], self.an[key], self.at[key], self.fp[key], self.ft[key] = nil, nil, nil, nil, nil
+    self.sa[key], self.sn[key], self.st[key] = nil, nil, nil
 end
 
 -- Drops records older than cutoff. Returns number removed.

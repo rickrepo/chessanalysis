@@ -29,10 +29,20 @@ Only deals that were just checked against the live listings appear here, with th
   4. The cheap units are at most 25% of the size of the real market.
   5. It uses at most half your gold.
   6. Profit is at least 40% after the 5% AH cut and the deposit.
-  7. If there's price history (samples at least 30 minutes apart), the resale price can't exceed the average.
+  7. If there's market-price history (readings at least 30 minutes apart), the resale price can't exceed its average.
+  8. If real sales are on record, the resale price can't exceed what buyers actually paid.
 * **Buy** asks the server for the real total; then you press **Confirm**. If the total is even 1c above what was checked, the purchase is cancelled and the deal is re-checked.
 * A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
 * **Flips: ON/OFF** at the bottom switches to SAFE deals only.
+
+### Where the prices come from
+
+The game's addon API has no realm-wide sales history. It offers two real sources, and AuctionMesh uses only those:
+
+* **The complete live listing of an item.** Before judging a deal or pricing a post, the item is searched and every page of its listing is loaded. The "market price" is read from that full listing (rule 2 above). Price history is built only from these readings, at most one per 30 minutes, never from the single lowest price seen while browsing.
+* **Real sales.** When sale gold is taken from your mailbox, the sale invoice says what the buyer actually paid. That is recorded, shown in chat ("Sold: 6 x Linen Cloth at 77c each"), and shared with your friends. When a recent sale is on record, a flip's resale price can't exceed what buyers actually paid, and the deal row says "(buyers paid 77c)".
+
+Item tooltips show all three: cheapest listing, market price from the full listing, and what buyers paid.
 
 ### SELL tab
 

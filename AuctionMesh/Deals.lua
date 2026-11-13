@@ -18,7 +18,9 @@
 --        outliers only, never a market that simply is cheap.
 --     5. One item never takes more than `maxSpend` (50%) of our gold.
 --     6. Profit after the 5% AH cut and the deposit is at least `margin` (40%).
---     7. If we have price history, the resale price is capped by the average.
+--     7. If we have market-price history, the resale price is capped by its average.
+--     8. If real sales are on record (sale invoices, ours or friends'), the
+--        resale price is capped by what buyers actually paid.
 --
 -- All amounts are copper.
 local _, ns = ...
@@ -114,6 +116,7 @@ local function flipDeal(rows, o, cfg)
     if dep == math.huge then return nil, wall end
     local ref = wall
     if o.avg and o.avg > 0 and o.avg < ref then ref = o.avg end -- rule 7
+    if o.sold and o.sold > 0 and o.sold < ref then ref = o.sold end -- rule 8
     -- Rule 3: the resale price is set by the first row we do NOT buy.
     local k, sell, net
     for _ = 1, wi do
@@ -137,7 +140,7 @@ local function flipDeal(rows, o, cfg)
     local profit = units * net - cost
     if profit < cfg.minProfit then return nil, wall end
     return { kind = "FLIP", units = units, cost = cost, deposit = units * dep, profit = profit, sell = sell,
-             wall = wall, buys = {}, counts = {} }, wall
+             wall = wall, depth = depth, sold = o.sold, buys = {}, counts = {} }, wall
 end
 
 -- Full evaluation of one item's live listings (ascending by unit price, own
@@ -146,7 +149,8 @@ end
 --   o.budget     copper we may spend now
 --   o.gold       total copper we own (defaults to budget)
 --   o.vendor     vendor price per unit (nil if none)
---   o.avg        trusted average price (nil if no history)
+--   o.avg        trusted average market price (nil if no history)
+--   o.sold       average real sale price from recent invoices (nil if none)
 --   o.deposit    AH deposit per unit to relist (math.huge = unknown)
 --   o.commodity  true for stackable goods
 -- Returns deal or nil, and the wall price (market price) if one was found.

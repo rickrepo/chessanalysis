@@ -44,6 +44,9 @@ d = ev(with({ { price = 20, qty = 40 } }), { deposit = 10 })
 check(d and d.deposit == 400 and d.profit == d0.profit - 400, "deposit is subtracted from profit")
 check(ev(with({ { price = 20, qty = 40 } }), { deposit = 10, budget = 1100 }) == nil, "gold for the deposit must also be affordable")
 check(ev(with({ { price = 20, qty = 40 } }), { deposit = math.huge }) == nil, "unknown deposit -> no flip")
+d = ev(with({ { price = 20, qty = 40 } }), { sold = 60 })
+check(d and d.sell == 59 and d.sold == 60, "buyers really paid 60c: resale capped at 59c even though listings start at 78c")
+check(ev(with({ { price = 20, qty = 40 } }), { sold = 25 }) == nil, "buyers only ever paid 25c -> no deal")
 D.cfg.flips = false
 check(ev(with({ { price = 20, qty = 40 } }), {}) == nil and ev({ { price = 50, qty = 10 } }, { vendor = 100 }) ~= nil, "safe-only mode: no flips, vendor deals still found")
 D.cfg.flips = true
@@ -64,9 +67,17 @@ check(D.postPrice({ { price = 300, qty = 1 } }, 280, 300, cfg) == 300, "silver-o
 print("history and screening")
 S:Attach({})
 local t = 1763000000
-for i = 0, 5 do S:Put(1, 1000, 10, t + i * 3600) end
+for i = 0, 5 do S:PutFair(1, 1000, t + i * 3600) end
 S:Put(1, 1, 10, t + 6 * 3600 + 60)
-check(S.a[1] >= 500, ("average survives a 1c troll listing (avg %d)"):format(S.a[1]))
+check(S.a[1] == 1000 and S.an[1] == 6, "history is built from market prices only: a 1c troll listing doesn't touch it")
+S:PutFair(1, 5, t + 8 * 3600)
+check(S.a[1] >= 500, ("one bad market reading can move the average at most halfway (avg %d)"):format(S.a[1]))
+S:PutFair(2, 80, t); S:PutFair(2, 80, t + 60); S:PutFair(2, 80, t + 120)
+check(S.an[2] == 1, "three checks in two minutes count as one history sample")
+check(S:PutSold(3, 80, 10, t) and S:Sold(3, t + 100, 3600) == 80, "a real sale is recorded")
+S:PutSold(3, 60, 10, t + 50)
+check(S.sa[3] == 70 and S.sn[3] == 20, "sales average by units sold (80 and 60 -> 70)")
+check(S:Sold(3, t + 100000, 3600) == nil, "old sales are not used")
 S:Attach({})
 S:Put(10, 50, 20, t)
 for i = 1, 5 do S:Sample(11, 1000, t - 20000 + i * 3600) end

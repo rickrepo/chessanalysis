@@ -97,6 +97,7 @@ AutoLootMailItem = function(i) local m = table.remove(inbox, i); for s = 1, 16 d
 TakeInboxMoney = function() end
 
 local LIST = {}   -- itemID -> rows {price, qty}
+local full, morePages = {}, 0
 local sent, pendingBuy, posted = {}, nil, {}
 C_AuctionHouse = {
     IsThrottledMessageSystemReady = function() return true end,
@@ -107,9 +108,12 @@ C_AuctionHouse = {
         C_Timer.After(0.2, function() fire("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED") end) end,
     HasFullBrowseResults = function() return true end,
     GetBrowseResults = function() return {} end,
-    SendSearchQuery = function(key) sent[#sent + 1] = "search" .. key.itemID
+    HasFullCommoditySearchResults = function(id) return full[id] end,
+    RequestMoreCommoditySearchResults = function(id) morePages = morePages + 1; full[id] = true
+        C_Timer.After(0.2, function() fire("COMMODITY_SEARCH_RESULTS_UPDATED", id) end) end,
+    SendSearchQuery = function(key) sent[#sent + 1] = "search" .. key.itemID; full[key.itemID] = false
         C_Timer.After(0.2, function() fire("COMMODITY_SEARCH_RESULTS_UPDATED", key.itemID) end) end,
-    GetNumCommoditySearchResults = function(id) return LIST[id] and #LIST[id] or 0 end,
+    GetNumCommoditySearchResults = function(id) local n = LIST[id] and #LIST[id] or 0; return full[id] and n or math.min(n, 2) end,
     GetCommoditySearchResultInfo = function(id, i) local r = LIST[id][i]; return { unitPrice = r[1], quantity = r[2], numOwnerItems = 0 } end,
     CalculateCommodityDeposit = function(id, d, q) return 1 * q end,
     StartCommoditiesPurchase = function(id, q)
@@ -169,6 +173,7 @@ check(#r == 2, "exactly the 2 real deals are listed (the 500-unit trap is not)")
 check(r[1] and r[1]:find("Copper Ore") and r[1]:find("SAFE  Buy 12 for 36c  >  vendor pays 60c  >  %+24c"), "vendor deal first, exact quantity, total and profit")
 check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c  >  resell at 77c each"), "flip shows exact buy and resale price")
 check(S.verified[300] == nil, "Peacebloom (500 cheap units) correctly rejected")
+check(morePages >= 3, "partial results: the rest of each listing was requested before judging")
 
 print("buying")
 click(1); advance(0.5)
@@ -208,6 +213,12 @@ r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
 check(r[1] and r[1]:find("Ready to post") and r[1]:find("Paid 20c  >  Sell 77c  >  %+52c each") and r[1]:find("%[Post%]"), "ready to post with live price and profit after cut + deposit")
 click(1); advance(1)
 check(posted[1] and posted[1].qty == 6 and posted[1].price == 77 and AuctionMeshDB.flips[200] == nil, "one click posted all 6 at 77c; removed after bags confirmed")
+
+print("real sale")
+GetInboxInvoiceInfo = function() return "seller", "Linen Cloth", "Buyer", 462, 0, 6, 23, nil, nil, nil, 6 end
+Se:RecordSale(1); Se:RecordSale(1)
+check(ns.Store.sa[200] == 77 and ns.Store.sn[200] == 6, "sale invoice read once: buyers paid 77c each for 6")
+check(chat[#chat]:find("Sold: 6 x Linen Cloth at 77c each"), "chat reports the real sale")
 
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

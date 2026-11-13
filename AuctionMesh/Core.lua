@@ -65,11 +65,16 @@ local function addTooltip(tooltip, itemID)
         if note then tooltip:AddLine(note) end
         return
     end
-    tooltip:AddDoubleLine("|cff33ff99Mesh|r min buyout",
-        ("%s  |cffaaaaaa(%d listed, %s ago)|r"):format(money(p), q, ago(GetServerTime() - t)), 1, 1, 1, 1, 1, 1)
-    local a, n = Store.a[itemID], Store.an[itemID]
-    if a and n and n >= 2 then
-        tooltip:AddDoubleLine("|cff33ff99Mesh|r average", money(a), 1, 1, 1, 1, 1, 1)
+    local now = GetServerTime()
+    tooltip:AddDoubleLine("|cff33ff99AH|r cheapest listing",
+        ("%s  |cffaaaaaa(%d listed, %s ago)|r"):format(money(p), q, ago(now - t)), 1, 1, 1, 1, 1, 1)
+    if Store.ft[itemID] then
+        tooltip:AddDoubleLine("|cff33ff99AH|r market price",
+            ("%s  |cffaaaaaa(full listing, %s ago)|r"):format(money(Store.fp[itemID]), ago(now - Store.ft[itemID])), 1, 1, 1, 1, 1, 1)
+    end
+    if Store.st[itemID] then
+        tooltip:AddDoubleLine("|cff33ff99AH|r buyers paid",
+            ("%s  |cffaaaaaa(%d sold, last %s ago)|r"):format(money(Store.sa[itemID]), Store.sn[itemID], ago(now - Store.st[itemID])), 1, 1, 1, 1, 1, 1)
     end
     local note = Sniper.FlipNote(itemID)
     if note then tooltip:AddLine(note) end

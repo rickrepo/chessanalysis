@@ -222,6 +222,24 @@ function Seller:CollectMail()
     step()
 end
 
+-- Reads a "your auction sold" invoice: the price a buyer really paid.
+-- Called whenever sale gold is taken from the mailbox (by us or by you).
+function Seller:RecordSale(i)
+    if not GetInboxInvoiceInfo then return end
+    local kind, itemName, _, bid, _, _, _, _, _, _, count = GetInboxInvoiceInfo(i)
+    if kind ~= "seller" or not itemName or not bid or bid <= 0 then return end
+    local key = AuctionMeshDB.names and AuctionMeshDB.names[itemName]
+    if not key then return end
+    count = (count and count > 0) and count or 1
+    local sig, now = itemName .. ":" .. bid .. ":" .. count .. ":" .. i, GetTime()
+    if self.lastSale == sig and now - (self.lastSaleAt or -100) < 5 then return end -- same mail, taken twice
+    self.lastSale, self.lastSaleAt = sig, now
+    local unit = floor(bid / count)
+    ns.Log("SOLD %s x%d for %d each (invoice)", tostring(key), count, unit)
+    if ns.Sync then ns.Sync:ObserveSold(key, unit, count) end
+    say(("|cff33ff66Sold:|r %d x %s at %s each."):format(count, itemName, money(unit)))
+end
+
 -- Counts every item attached to mail in the inbox (nil until the mailbox is opened).
 function Seller:ScanMail()
     local shown, total = GetInboxNumItems()
@@ -404,6 +422,9 @@ function Seller:CheckPosted()
     if gone <= 0 then return end
     self.posting = nil
     ns.Log("POST confirmed by bags: %s -%d", tostring(q.key), gone)
+    -- Sale invoices only carry the item's name: remember which item it is.
+    AuctionMeshDB.names = AuctionMeshDB.names or {}
+    AuctionMeshDB.names[nameOf(q.key)] = q.key
     self.ForgetUnits(q.key, min(gone, q.qty))
     self.prices[q.key] = nil
     say(("Posted %dx %s at %s each, deposit %s (%s)."):format(min(gone, q.qty), nameOf(q.key), money(q.price), money(q.deposit), q.why))
@@ -549,6 +570,9 @@ end
 
 function Seller:Init()
     self:ScanBags()
+    if hooksecurefunc and TakeInboxMoney then
+        hooksecurefunc("TakeInboxMoney", function(i) Seller:RecordSale(i) end)
+    end
     local f = CreateFrame("Frame")
     for _, e in ipairs({ "MERCHANT_SHOW", "MERCHANT_CLOSED", "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED",
         "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "BAG_UPDATE_DELAYED", "UI_ERROR_MESSAGE" }) do

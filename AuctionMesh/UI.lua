@@ -59,8 +59,9 @@ local function fillBuy(r, d, short)
         r.detail:SetText(("%sSAFE|r  Buy %d for %s  >  vendor pays %s  >  %s+%s|r"):format(
             GREEN, units, short(total), short(d.sell * units), GREEN, short(each * units)))
     else
-        r.detail:SetText(("%sFLIP|r  Buy %d for %s  >  resell at %s each  >  %s+%s|r %s(not guaranteed)|r"):format(
-            GOLD, units, short(total), short(d.sell), GREEN, short(d.profit), GREY))
+        local proof = d.sold and ("(buyers paid %s)"):format(short(d.sold)) or ("(%d listed at %s+)"):format(d.depth or 0, short(d.wall or 0))
+        r.detail:SetText(("%sFLIP|r  Buy %d for %s  >  resell at %s each  >  %s+%s|r %s%s|r"):format(
+            GOLD, units, short(total), short(d.sell), GREEN, short(d.profit), GREY, proof))
     end
     local b = S.buying
     if b and b.key == d.key then
@@ -216,8 +217,10 @@ local function rowEnter(self)
     else
         local d = item
         if d.kind == "FLIP" then
-            GameTooltip:AddLine(("%sOther sellers start at %s. Deposit to relist: %s.|r"):format(GREY,
-                ns.Seller.short(d.wall or 0), ns.Seller.short(d.deposit or 0)))
+            GameTooltip:AddLine(("%sLive market: %d units listed from %s. Deposit to relist: %s.|r"):format(GREY,
+                d.depth or 0, ns.Seller.short(d.wall or 0), ns.Seller.short(d.deposit or 0)))
+            GameTooltip:AddLine(d.sold and (GREEN .. "Real sales on record: buyers paid " .. ns.Seller.short(d.sold) .. " each.|r")
+                or (GREY .. "No recorded sale of this item yet.|r"))
         end
     end
     GameTooltip:Show()

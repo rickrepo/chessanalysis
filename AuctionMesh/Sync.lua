@@ -10,7 +10,8 @@
 --                                            (bitmask) to <requester>"
 --   C <kind> <time>                         full-scan coordination
 --                                            kind 1 = starting, 2 = finished
---   F <base> {zig(key) fair 0 age}*          fair resale prices from depth checks
+--   F <base> {zig(key) fair 0 age}*          market prices read from full live listings
+--   R <base> {zig(key) unit qty age}*        real sales (from sale invoices)
 --
 -- Live path: scans -> Observe() -> only net-new data is queued -> coalesced
 -- for 150 ms -> packed ~18 records per 255-byte message -> LIVE lane. If an
@@ -182,6 +183,24 @@ function Sync:FlushFair()
     local m = b:finish()
     if m then Comm:Enqueue(Comm.LIVE, m) end
     self.fairPending = {}
+end
+
+-- A real sale read from a sale invoice. Shared so everyone learns true sale prices.
+function Sync:ObserveSold(key, unit, qty)
+    local t = self.serverTime()
+    if not Store:PutSold(key, unit, qty, t) then return end
+    local b = Codec.newDelta(t, "R")
+    b:add(key, unit, qty, t)
+    Comm:Enqueue(Comm.LIVE, b:finish())
+end
+
+function Sync:OnSold(msg, sender)
+    local now = self.serverTime()
+    Codec.decodeDelta(msg, function(key, unit, qty, t)
+        if unit > 0 and unit < 1e13 and qty > 0 and qty < 1e7 and t <= now + 300 and t >= now - self.cfg.maxAge then
+            Store:PutSold(key, unit, qty, t)
+        end
+    end)
 end
 
 function Sync:OnFair(msg, sender)
@@ -387,6 +406,7 @@ local OPS = {
     [83] = Sync.OnClaim,    -- S
     [67] = Sync.OnScanNote, -- C
     [70] = Sync.OnFair,     -- F
+    [82] = Sync.OnSold,     -- R
 }
 
 Sync.OPS = OPS -- other modules (Swarm) register their opcodes here

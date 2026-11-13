@@ -107,6 +107,7 @@ function Sniper:Evaluate(key, rows, commodity)
         vendor = self.vendorOf(key),
         avg = (avg and n and n >= Deals.cfg.minSamples) and avg or nil,
         deposit = self.depositOf(key, commodity),
+        sold = (Store:Sold(key, GetServerTime(), 48 * 3600)),
     })
     if wall then Sync:ObserveFair(key, wall) end
     if self.buying and self.buying.key == key then
@@ -135,6 +136,13 @@ end
 
 function Sniper:OnCommodityResults(itemID)
     local AH = C_AuctionHouse
+    -- Judge only on the complete listing: if the server sent a partial page, ask for the rest.
+    local s = self.searching
+    if s and s.key == itemID and AH.HasFullCommoditySearchResults and not AH.HasFullCommoditySearchResults(itemID)
+        and (s.more or 0) < 8 then
+        s.needMore, s.at = "commodity", GetTime()
+        return
+    end
     local rows = {}
     for i = 1, AH.GetNumCommoditySearchResults(itemID) or 0 do
         local r = AH.GetCommoditySearchResultInfo(itemID, i)
@@ -149,6 +157,12 @@ end
 function Sniper:OnItemResults(itemKey)
     if not itemKey or (itemKey.battlePetSpeciesID or 0) > 0 then return end
     local AH = C_AuctionHouse
+    local s = self.searching
+    if s and s.key == itemKey.itemID and AH.HasFullItemSearchResults and not AH.HasFullItemSearchResults(itemKey)
+        and (s.more or 0) < 8 then
+        s.needMore, s.itemKey, s.at = "item", itemKey, GetTime()
+        return
+    end
     local rows = {}
     for i = 1, AH.GetNumItemSearchResults(itemKey) or 0 do
         local r = AH.GetItemSearchResultInfo(itemKey, i)
@@ -230,6 +244,15 @@ function Sniper:Tick()
     if self.searching and now - self.searching.at > SEARCH_TIMEOUT then self.searching = nil end
     if now - (self.lastScreen or 0) > 5 then self:Screen(); self.lastScreen = now end
     if now - (self.lastBg or 0) > 20 then self:RebuildBackground(); self.lastBg = now end
+    local s = self.searching
+    if s and s.needMore and ns.Gate:Ready() then
+        local kind = s.needMore
+        s.needMore, s.more, s.at = nil, (s.more or 0) + 1, now
+        ns.Gate:Use(("more results for %s (page %d)"):format(tostring(s.key), s.more + 1))
+        if kind == "commodity" then C_AuctionHouse.RequestMoreCommoditySearchResults(s.key)
+        else C_AuctionHouse.RequestMoreItemSearchResults(s.itemKey) end
+        return
+    end
     if self:Busy() or not ns.Gate:Ready() then return end
     if ns.Seller and ns.Seller:Busy() then return end
     local S = ns.Swarm
