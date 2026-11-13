@@ -722,7 +722,7 @@ function Sniper:ReadOwned()
             n = n + 1
         end
     end
-    self.own = own
+    self.own, self.ownRead = own, true
     ns.Log("OWNED %d active auctions read", n)
     -- Deals built before we knew about them are re-checked.
     for k in pairs(self.verified) do if own[k] then self.verified[k] = nil; self.checkedAt[k] = nil end end
@@ -734,6 +734,7 @@ end
 function Sniper:Start()
     self.active = true
     self.checkedAt = {} -- new AH visit: everything may have changed
+    self.ownRead = false
     self.sweep, self.triggers = {}, {}
     depCache = {}       -- fees are asked again each visit
     self.needOwned = true

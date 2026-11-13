@@ -219,6 +219,10 @@ r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
 check(r[1] and r[1]:find("Ready to post") and r[1]:find("Paid 20c  >  Sell 77c  >  %+53c each") and r[1]:find("%[Post%]"), "ready to post with live price and profit after the cut")
 click(1); advance(1)
 check(posted[1] and posted[1].qty == 6 and posted[1].price == 77 and AuctionMeshDB.flips[2589] == nil, "one click posted all 6 at 77c; removed after bags confirmed")
+UI.tab = "SELL"; UI.notice = nil; UI:Render()
+r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
+check(r[1] and r[1]:find("Linen Cloth x6") and r[1]:find("LISTED") and r[1]:find("+3s18c", 1, true), "the posted auction stays in the portfolio as LISTED with its expected profit")
+check(AuctionMeshDB.realized == 24, "banked profit so far: +24c from the vendor sale")
 
 print("listings you can't buy (the Zesty Clam case from the real log)")
 ITEMS[500] = { "Zesty Clam Meat", 500 }
@@ -254,7 +258,9 @@ print("real sale")
 GetInboxInvoiceInfo = function() return "seller", "Linen Cloth", "Buyer", 462, 0, 6, 23, nil, nil, nil, 6 end
 Se:RecordSale(1); Se:RecordSale(1)
 check(ns.Store.sa[2589] == 77 and ns.Store.sn[2589] == 6, "sale invoice read once: buyers paid 77c each for 6")
-check(chat[#chat]:find("Sold: 6 x Linen Cloth at 77c each"), "chat reports the real sale")
+check(AuctionMeshDB.realized == 24 + (462 - 23 - 120) and (AuctionMeshDB.listed or {})[2589] == nil,
+    ("sale collected: banked profit is now %dc and the listing leaves the portfolio"):format(AuctionMeshDB.realized or 0))
+check(chat[#chat]:find("Sold: 6 x Linen Cloth at 77c each. Profit +319c", 1, true), "chat reports the sale and the profit made")
 
 print("minimum profit control")
 UI:SetVendorOnly(false)

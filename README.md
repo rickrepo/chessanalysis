@@ -38,6 +38,11 @@ The window is laid out like a trading screen. The top strip shows **BALANCE**, *
 * **VOLUME** is units sold per hour, measured by watching the listing. Vendor deals say "instant".
 * On the PORTFOLIO tab, a `*` after MARKET means the price is the plan from when you bought; it becomes the live price once checked.
 
+### Listed auctions and banked profit
+
+* An auction you post stays on the PORTFOLIO tab as **LISTED** with its quantity, cost, your price and expected profit. It shows **UNDERCUT** when the latest sweep saw someone cheaper, and **SOLD?** when it is no longer among your auctions (collect the gold from the mailbox).
+* **BANKED** in the top strip is profit actually made: vendor sales, plus auction sales once you collect the gold (sale price minus the auction house cut minus what you paid).
+
 ### HISTORY tab
 
 Everything that happened to your gold and items, newest first: "Bought: 7 x … for 1s40c", "Collected from mailbox: 7 x … is now in your bags", "Posted 1x Wool Cloth at 1s60c", "Sold: …", and purchases that were cancelled. When the addon takes a purchase out of your mailbox it also says so in chat and at the top of the window.

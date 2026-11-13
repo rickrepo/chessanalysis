@@ -25,6 +25,7 @@ ns.UI = UI
 
 local floor, min = math.floor, math.min
 local ROWS, ROW_H, WIDTH = 8, 36, 720
+local MAXROWS = 12 -- rows that exist; how many are shown depends on the panel's height
 -- Column layout (x offset inside a row, width). Same grid for both tabs:
 --   BUY:  ITEM | BUY (qty @ price) | MARKET | SPREAD | VOLUME | PROFIT | [Buy]
 --   SELL: ITEM | QTY               | COST   | MARKET | STATUS | P/L    | [Post]
@@ -128,6 +129,11 @@ local STATE = {
     VENDOR = function() return GREEN .. "Sell to any vendor|r", merchantOpen() and "Sell" or nil end,
     MAIL = function(e) return BLUE .. (e.seen and "In your mailbox" or "In your mailbox (not checked yet)") .. "|r", nil end,
     HOLD = function() return RED .. "Waiting: market is below your cost|r", ahOpen() and "Re-check" or nil end,
+    LISTED = function(e)
+        if e.live == 0 then return GREEN .. "Sold or expired: check your mailbox|r", nil end
+        if e.undercut then return ORANGE .. "Listed, but someone is cheaper|r", nil end
+        return GREY .. "Listed for sale|r", nil
+    end,
 }
 
 local function fillSell(r, e, short)
@@ -138,13 +144,20 @@ local function fillSell(r, e, short)
     local ready = p and p.price and GetTime() - p.at < 90
     local busy = Se.pending and Se.pending.key == e.key
     if Se.posting and Se.posting.key == e.key then busy = true end
+    if e.action == "LISTED" then
+        -- someone listed below your price? (from the last sweep, if it is recent)
+        local St = ns.Store
+        local t = St.t[e.key]
+        e.undercut = t and GetServerTime() - t < 600 and St.p[e.key] < (e.listed.price or 0) or false
+    end
     local text, button = STATE[e.action](e, ready, busy)
     r.state:SetText(text)
     local paid, sell, _, profit, live = Se:Numbers(e)
     r.c[1]:SetText(tostring(e.count))
     r.c[2]:SetText(paid and short(paid) or (ORANGE .. "?|r"))
-    r.c[3]:SetText(short(sell) .. ((e.f.kind == "FLIP" and not live) and (GREY .. "*|r") or ""))
-    r.c[4]:SetText(e.action == "AH" and (ready and (GOLD .. "READY|r") or (GREY .. "pricing|r"))
+    r.c[3]:SetText(short(sell) .. ((e.f.kind == "FLIP" and not live and e.action ~= "LISTED") and (GREY .. "*|r") or ""))
+    r.c[4]:SetText(e.action == "LISTED" and (e.live == 0 and (GREEN .. "SOLD?|r") or e.undercut and (ORANGE .. "UNDERCUT|r") or (GREY .. "LISTED|r"))
+        or e.action == "AH" and (ready and (GOLD .. "READY|r") or (GREY .. "pricing|r"))
         or e.action == "VENDOR" and (GREEN .. "VENDOR|r") or e.action == "MAIL" and (CYAN .. "MAIL|r") or (RED .. "WAIT|r"))
     if profit and e.action ~= "HOLD" then
         r.profit:SetText((profit >= 0 and GREEN .. "+" or RED) .. short(profit * e.count) .. "|r")
@@ -157,7 +170,7 @@ local function fillSell(r, e, short)
     else
         local profitText = ""
         if profit then profitText = ("  >  %s%s%s|r each"):format(profit >= 0 and GREEN or RED, profit >= 0 and "+" or "", short(profit)) end
-        local est = (e.f.kind == "FLIP" and not live) and (GREY .. " (planned)|r") or ""
+        local est = (e.f.kind == "FLIP" and not live and e.action ~= "LISTED") and (GREY .. " (planned)|r") or ""
         r.detail:SetText(("Paid %s  >  Sell %s%s%s"):format(paidText, short(sell), est, profitText))
     end
     if button then r.btn:SetText(button); r.btn:Enable(); r.btn:Show() else r.btn:Hide() end
@@ -224,8 +237,10 @@ function UI:Render()
             if paid then inv, back = inv + paid * e.count, back + net * e.count end
         end
         local pl = back - inv
-        frame.gold:SetText(("%sBALANCE|r %s    %sIN POSITIONS|r %s    %sOPEN P/L|r %s%s%s|r"):format(
-            GREY, short(GetMoney()), GREY, short(inv), GREY, pl >= 0 and GREEN or RED, pl >= 0 and "+" or "", short(pl)))
+        local rz = AuctionMeshDB.realized or 0
+        frame.gold:SetText(("%sBALANCE|r %s   %sIN POSITIONS|r %s   %sOPEN P/L|r %s%s%s|r   %sBANKED|r %s%s%s|r"):format(
+            GREY, short(GetMoney()), GREY, short(inv), GREY, pl >= 0 and GREEN or RED, pl >= 0 and "+" or "", short(pl),
+            GREY, rz >= 0 and GREEN or RED, rz >= 0 and "+" or "", short(rz)))
     end
     for i = 1, 6 do frame.head[i]:SetText(CYAN .. HEAD[self.tab][i] .. "|r") end
     frame.tabBuy:SetText(("BUY (%d)"):format(#deals))
@@ -264,8 +279,13 @@ function UI:Render()
         status = ORANGE .. "Paused while your mouse is on the game's auction window.|r " .. status
     end
     frame.status:SetText(status)
-    for i = 1, ROWS do
+    -- as many rows as the panel's height holds
+    local h = frame:GetHeight()
+    local vis = type(h) == "number" and h > 0 and math.max(3, math.min(MAXROWS, floor((h - 152 - 34) / ROW_H))) or ROWS
+    self.vis = vis
+    for i = 1, MAXROWS do
         local r, item = rows[i], list[i]
+        if i > vis then item = nil end
         r.item = item
         if not item then r:Hide() else
             if self.tab == "HISTORY" then
@@ -285,7 +305,7 @@ function UI:Render()
             r:Show()
         end
     end
-    local more = #list > ROWS and ("  +" .. (#list - ROWS) .. " more") or ""
+    local more = #list > vis and ("  +" .. (#list - vis) .. " more") or ""
 
     -- Footer: money tied up in the SELL list.
     local invested, back, unknown = 0, 0, 0
@@ -452,11 +472,12 @@ function UI:Create()
     frame.status:SetHeight(40)
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
 
-    for i = 1, ROWS do
+    for i = 1, MAXROWS do
         local r = CreateFrame("Frame", nil, frame)
         r:SetHeight(ROW_H - 2)
-        r:SetPoint("RIGHT", frame, "RIGHT", -10, 0) -- rows stretch to whatever width the panel has
-        r:SetPoint("TOPLEFT", 10, -152 - (i - 1) * ROW_H)
+        -- left and right edges follow the panel, so rows fit whatever width it has
+        r:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -152 - (i - 1) * ROW_H)
+        r:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -152 - (i - 1) * ROW_H)
         r.bg = r:CreateTexture(nil, "BACKGROUND")
         r.bg:SetAllPoints()
         r.bg:SetColorTexture(0.4, 0.7, 1, (i % 2 == 0) and 0.03 or 0.07)

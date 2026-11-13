@@ -104,7 +104,22 @@ function Seller:Entries()
             out[#out + 1] = { key = key, action = "MAIL", count = inMail, f = f, seen = seen }
         end
     end
-    local order = { AH = 1, VENDOR = 2, MAIL = 3, HOLD = 4 }
+    -- Auctions you have posted stay in the portfolio until they sell.
+    local own = ns.Sniper and ns.Sniper.ownRead and ns.Sniper.own or nil
+    for key, L in pairs(AuctionMeshDB.listed or {}) do
+        local live = nil
+        if own then
+            live = 0
+            for _, q in pairs(own[key] or {}) do live = live + q end
+        end
+        if GetServerTime() - (L.at or 0) > 48 * 3600 then
+            AuctionMeshDB.listed[key] = nil -- auctions last 12h at most; this record is stale
+        else
+            out[#out + 1] = { key = key, action = "LISTED", count = (live and live > 0) and live or L.qty, live = live,
+                              f = { kind = "FLIP", cost = L.cost, sell = L.price }, listed = L }
+        end
+    end
+    local order = { AH = 1, VENDOR = 2, MAIL = 3, HOLD = 4, LISTED = 5 }
     table.sort(out, function(a, b)
         if a.action ~= b.action then return order[a.action] < order[b.action] end
         return a.key < b.key
@@ -113,8 +128,8 @@ function Seller:Entries()
 end
 
 function Seller:Instructions(entries)
-    local n = { AH = 0, VENDOR = 0, MAIL = 0, HOLD = 0 }
-    for _, e in ipairs(entries) do n[e.action] = n[e.action] + 1 end
+    local n = { AH = 0, VENDOR = 0, MAIL = 0, HOLD = 0, LISTED = 0 }
+    for _, e in ipairs(entries) do n[e.action] = (n[e.action] or 0) + 1 end
     local lines = {}
     local function add(action, text) lines[#lines + 1] = COLORS[action][4] .. text .. "|r" end
     if n.MAIL > 0 then
@@ -138,6 +153,9 @@ function Seller:Instructions(entries)
             or ("Talk to any vendor: " .. n.VENDOR .. " item(s) sell automatically."))
     end
     if n.HOLD > 0 then add("HOLD", n.HOLD .. " item(s) waiting: the market is below what you paid. Re-checked every 10 min.") end
+    if n.LISTED > 0 then
+        lines[#lines + 1] = ("|cffaaaaaa%d auction(s) listed. The gold arrives by mail when they sell.|r"):format(n.LISTED)
+    end
     if #lines == 0 then
         lines[1] = "|cffaaaaaaNothing to sell. Items you buy on the BUY tab appear here.|r"
     end
@@ -180,6 +198,7 @@ function Seller:SellVendor(onlyKey)
             if gone > 0 then
                 local f = flips()[key]
                 earned = earned + ((f and f.sell) or 0) * gone
+                if f and not f.unknownCost then Seller.Realize(((f.sell or 0) - (f.cost or 0)) * gone) end
                 Seller.ForgetUnits(key, gone)
             end
         end
@@ -249,7 +268,18 @@ function Seller:RecordSale(i)
     local unit = floor(bid / count)
     ns.Log("SOLD %s x%d for %d each (invoice)", tostring(key), count, unit)
     if ns.Sync then ns.Sync:ObserveSold(key, unit, count) end
-    say(("|cff33ff66Sold:|r %d x %s at %s each."):format(count, itemName, money(unit)))
+    local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
+    local profitText = ""
+    if L then
+        if L.cost then
+            local profit = bid - (cut or floor(bid * Deals.cfg.cut)) - L.cost * count
+            Seller.Realize(profit)
+            profitText = (" Profit %s%s."):format(profit >= 0 and "+" or "-", money(math.abs(profit)))
+        end
+        L.qty = L.qty - count
+        if L.qty <= 0 then AuctionMeshDB.listed[key] = nil end
+    end
+    say(("|cff33ff66Sold:|r %d x %s at %s each.%s"):format(count, itemName, money(unit), profitText))
 end
 
 -- Counts every item attached to mail in the inbox (nil until the mailbox is opened).
@@ -441,6 +471,18 @@ function Seller:CheckPosted()
     -- Sale invoices only carry the item's name: remember which item it is.
     AuctionMeshDB.names = AuctionMeshDB.names or {}
     AuctionMeshDB.names[nameOf(q.key)] = q.key
+    do  -- keep the position: quantity, your price and what it cost you
+        local f = flips()[q.key]
+        local posted = min(gone, q.qty)
+        AuctionMeshDB.listed = AuctionMeshDB.listed or {}
+        local L = AuctionMeshDB.listed[q.key]
+        local cost = f and not f.unknownCost and f.cost or (L and L.cost) or nil
+        if L then
+            L.qty, L.price, L.cost, L.at = L.qty + posted, q.price, cost, GetServerTime()
+        else
+            AuctionMeshDB.listed[q.key] = { qty = posted, price = q.price, cost = cost, at = GetServerTime() }
+        end
+    end
     self.ForgetUnits(q.key, min(gone, q.qty))
     self.prices[q.key] = nil
     say(("Posted %dx %s at %s each, deposit %s (%s)."):format(min(gone, q.qty), nameOf(q.key), money(q.price), money(q.deposit), q.why))
@@ -573,8 +615,15 @@ function Seller:Refresh(show)
     UI:Dirty()
 end
 
+-- Profit actually banked (vendor sales and collected auction sales).
+function Seller.Realize(copper)
+    AuctionMeshDB.realized = (AuctionMeshDB.realized or 0) + copper
+    ns.Log("REALIZED %+d (total %d)", copper, AuctionMeshDB.realized)
+end
+
 function Seller:Untrack(key)
     flips()[key] = nil
+    if AuctionMeshDB.listed then AuctionMeshDB.listed[key] = nil end
     self.prices[key] = nil
     say("Stopped tracking " .. nameOf(key) .. ".")
     self:Refresh()
