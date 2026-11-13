@@ -80,7 +80,7 @@ function Scanner:OnItemSearch(itemKey)
         local r = AH.GetItemSearchResultInfo(itemKey, i)
         if r and r.buyoutAmount and r.buyoutAmount > 0 then
             local q = r.quantity or 1
-            local unit = floor(r.buyoutAmount / (q > 0 and q or 1))
+            local unit = r.buyoutAmount -- price of one item (quantity = identical auctions in the row)
             if not best or unit < best then best = unit end
             qty = qty + q
         end

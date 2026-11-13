@@ -149,7 +149,11 @@ function UI:Render()
     frame.tabSell:SetEnabled(self.tab ~= "SELL")
 
     local list = self.tab == "BUY" and deals or entries
-    frame.status:SetText(self.tab == "BUY" and buyStatus(#deals) or Se:Instructions(entries))
+    local status = self.tab == "BUY" and buyStatus(#deals) or Se:Instructions(entries)
+    if ahOpen() and ns.Gate:UserBusy() then
+        status = ORANGE .. "Paused while you use the game's own Buy/Sell screen.|r " .. status
+    end
+    frame.status:SetText(status)
     for i = 1, ROWS do
         local r, item = rows[i], list[i]
         r.item = item

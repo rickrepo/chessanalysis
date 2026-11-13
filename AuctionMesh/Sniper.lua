@@ -25,6 +25,7 @@ local SEARCH_TIMEOUT = 6
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true, [9] = true, [19] = true }
 
 Sniper.verified = {}   -- key -> deal (+ key, at, commodity)
+Sniper.isItem = {}     -- key -> true for non-stackable items (never deal candidates)
 Sniper.checkedAt = {}  -- key -> GetTime() of our last live check
 Sniper.vendor = {}     -- key -> vendor sell price (false = cannot be vendored)
 Sniper.stats = { checks = 0, deals = 0, bought = 0, spent = 0, expected = 0 }
@@ -101,6 +102,12 @@ end
 function Sniper:Evaluate(key, rows, commodity)
     table.sort(rows, function(a, b) return a.price < b.price end)
     if ns.Seller then ns.Seller:OnResults(key, rows, commodity) end
+    if not commodity then
+        -- Non-stackable items are priced for selling only; they are not offered as deals.
+        self.verified[key] = nil
+        if self.searching and self.searching.key == key then self.searching = nil end
+        return dirty()
+    end
     local avg, n = Store.a[key], Store.an[key]
     local deal, wall = Deals.evaluate(rows, {
         budget = self:Budget(), gold = GetMoney(), commodity = commodity,
@@ -114,6 +121,7 @@ function Sniper:Evaluate(key, rows, commodity)
         -- never replace a deal while its purchase is in flight
     elseif deal then
         deal.at, deal.commodity, deal.key = GetTime(), commodity, key
+        deal.rowsText = self.RowsText(rows)
         if not self.verified[key] then
             self.stats.deals = self.stats.deals + 1
             if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
@@ -148,6 +156,8 @@ function Sniper:OnCommodityResults(itemID)
         local r = AH.GetCommoditySearchResultInfo(itemID, i)
         if r and r.unitPrice and r.unitPrice > 0 then
             local q = (r.quantity or 0) - (r.numOwnerItems or 0)
+            -- Your own (or your other characters') auctions can't be bought: never count them as a deal.
+            if (r.containsOwnerItem or r.containsAccountItem) and (r.numOwnerItems or 0) == 0 then q = 0 end
             if q > 0 then rows[#rows + 1] = { price = r.unitPrice, qty = q } end
         end
     end
@@ -166,14 +176,15 @@ function Sniper:OnItemResults(itemKey)
     local rows = {}
     for i = 1, AH.GetNumItemSearchResults(itemKey) or 0 do
         local r = AH.GetItemSearchResultInfo(itemKey, i)
-        if r and r.buyoutAmount and r.buyoutAmount > 0 and not r.containsOwnerItem then
+        -- buyoutAmount is the price of ONE item; quantity is how many identical
+        -- auctions are grouped in this row. (Dividing one by the other was a bug
+        -- that made 3s45c items look like 12c items.)
+        if r and r.buyoutAmount and r.buyoutAmount > 0 and not r.containsOwnerItem and not r.containsAccountItem then
             local q = (r.quantity and r.quantity > 0) and r.quantity or 1
-            -- Vendor price of this exact listing (item level variants differ).
-            local v = r.itemLink and select(11, C_Item.GetItemInfo(r.itemLink)) or nil
-            rows[#rows + 1] = { price = floor(r.buyoutAmount / q), qty = q, whole = true,
-                                id = r.auctionID, buyout = r.buyoutAmount, vendor = (v and v > 0) and v or 0 }
+            rows[#rows + 1] = { price = r.buyoutAmount, qty = q }
         end
     end
+    self.isItem[itemKey.itemID] = true
     self:Evaluate(itemKey.itemID, rows, false)
 end
 
@@ -189,7 +200,7 @@ function Sniper:NextCheck()
     if self.priority then local k = self.priority; self.priority = nil; return k end
     local now = GetTime()
     for _, c in ipairs(self.candidates or {}) do
-        if not self.verified[c.key] and self:Since(c.key) > CHECK_AGAIN then return c.key end
+        if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then return c.key end
     end
     local q = self.background
     while q and q.i <= #q do
@@ -218,7 +229,7 @@ end
 function Sniper:Pending()
     local n, now = 0, GetTime()
     for _, c in ipairs(self.candidates or {}) do
-        if not self.verified[c.key] and self:Since(c.key) > CHECK_AGAIN then n = n + 1 end
+        if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then n = n + 1 end
     end
     return n
 end
@@ -379,6 +390,8 @@ function Sniper:OnPriceQuote(unitPrice, total)
         b.phase, b.total, b.at = "confirm", total, GetTime()
         self:ArmPurchaseTimeout(25) -- you have 25s to press Confirm
     else
+        ns.Log("QUOTE MISMATCH %s: wanted %d units; deal was built at %s", tostring(b.key), b.units, tostring(b.deal.rowsText))
+        ns.Gate.ignoreErrorUntil = GetTime() + 1.5 -- our own cancel is not a server problem
         C_AuctionHouse.CancelCommoditiesPurchase()
         say(("|cffff8040Not bought:|r the price changed (%s now, %s when checked). Re-checking."):format(money(total), money(b.deal.cost)))
         self.verified[b.key] = nil

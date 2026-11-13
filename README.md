@@ -65,6 +65,10 @@ Everything you bought is listed here, with what you paid, what it sells for, the
 
 The game requires one click or key press per auction. For speed, make a macro `/click AuctionMeshPostButton` and tap it. An item only leaves the list once your bags show it really went. Right-click a row to remove it. Drag an item from your bags onto the window to add it by hand.
 
+Background scanning and price checks pause completely while you use the game's own Sell tab or buy dialog, and for 8 seconds after any auction action you take there. Otherwise each background query would grey out the game's Create Auction button for a moment.
+
+Non-stackable items (gear, recipes) are never offered as deals. They are only priced for selling.
+
 ### If something goes wrong
 
 * Press **Log** (or type `/amesh log`), then Ctrl+A, Ctrl+C, and paste it to Claude. It records every auction house call, every error, and every decision (which listings a deal was based on, quotes, purchases, posts).

@@ -74,8 +74,25 @@ end
 local Gate = { interval = 0.6, nextAt = 0, outstanding = 0, changedAt = 0, lastError = 0, errors = 0 }
 ns.Gate = Gate
 
+-- True while you are using the game's own auction screens (its Sell tab, its
+-- buy dialog), or for 8s after any AH request AuctionMesh did not send itself.
+-- Background work stops completely then: every background query makes the
+-- game grey out its own Create Auction / Buyout buttons for a moment.
+local BLIZZ = { "ItemSellFrame", "CommoditiesSellFrame", "ItemBuyFrame", "CommoditiesBuyFrame", "WoWTokenSellFrame" }
+function Gate:UserBusy()
+    if GetTime() < (self.userUntil or 0) then return true end
+    local ah = AuctionHouseFrame
+    if type(ah) ~= "table" then return false end
+    for _, name in ipairs(BLIZZ) do
+        local f = rawget(ah, name)
+        if type(f) == "table" and f.IsShown and f:IsShown() then return true end
+    end
+    return false
+end
+
 function Gate:Ready()
     local now = GetTime()
+    if self:UserBusy() then return false end
     -- Safety: if the server never confirmed, don't wait forever.
     if self.outstanding > 0 and now - self.changedAt > 5 then self.outstanding = 0 end
     if self.errors > 0 and now - self.lastError > 60 then
@@ -97,6 +114,7 @@ end
 -- Call right before sending a request.
 function Gate:Use(what)
     self.nextAt = GetTime() + self.interval
+    self.usedAt = GetTime()
     Log("SEND %s", what)
 end
 
@@ -128,7 +146,7 @@ local EVENTS = {
     "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE", "COMMODITY_PURCHASE_SUCCEEDED",
     "COMMODITY_PURCHASE_FAILED", "COMMODITY_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_UPDATED",
     "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "REPLICATE_ITEM_LIST_UPDATE", "ADDON_ACTION_BLOCKED",
-    "ADDON_ACTION_FORBIDDEN",
+    "ADDON_ACTION_FORBIDDEN", "AUCTION_HOUSE_PURCHASE_COMPLETED", "PLAYER_MONEY", "BIDS_UPDATED",
 }
 
 local function isAHError(msg)
@@ -150,6 +168,12 @@ local function onEvent(_, event, ...)
         local _, msg = ...
         if not isAHError(msg) and not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
         if isAHError(msg) then Gate:Penalize(tostring(msg)) end
+    elseif event == "AUCTION_HOUSE_SHOW_ERROR" and GetTime() < (Gate.ignoreErrorUntil or 0) then
+        -- follows our own cancelled purchase: log it, no back-off
+    elseif event == "PLAYER_MONEY" then
+        if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
+        Log("MONEY now %d", GetMoney())
+        return
     elseif event == "AUCTION_HOUSE_SHOW_ERROR" then
         Gate:Penalize("show error " .. tostring((...)))
     elseif (event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN") and (...) ~= ADDON then
@@ -174,7 +198,10 @@ function Diag:Init()
     for _, name in ipairs(HOOKED) do
         if C_AuctionHouse[name] then
             hooksecurefunc(C_AuctionHouse, name, function(...)
-                Log("CALL %s(%s) ready=%s", name, args(...), tostring(C_AuctionHouse.IsThrottledMessageSystemReady()))
+                local ours = (Gate.usedAt == GetTime()) or name:find("^Cancel") or name:find("^Confirm")
+                if not ours then Gate.userUntil = GetTime() + 8 end
+                Log("CALL %s(%s) ready=%s%s", name, args(...), tostring(C_AuctionHouse.IsThrottledMessageSystemReady()),
+                    ours and "" or "  [you / game UI: background paused 8s]")
             end)
         end
     end

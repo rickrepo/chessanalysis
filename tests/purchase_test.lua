@@ -22,7 +22,7 @@ C_AuctionHouse = {
 AuctionMeshDB = {}
 local ns = {
     Print = function(m) printed[#printed + 1] = m end, Log = function() end,
-    Gate = { Ready = function() return true end, ReadyForUser = function() return true end, Use = function() end },
+    Gate = { Ready = function() return true end, ReadyForUser = function() return true end, UserBusy = function() return false end, Use = function() end },
     Store = { a = {}, an = {} }, Sync = { ObserveFair = function() end },
     Seller = { LogBuy = function() end, Refresh = function() end, OnResults = function() end },
 }
