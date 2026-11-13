@@ -40,8 +40,10 @@ Only deals that were just checked against the live listings appear here, with th
 A snipe only exists for a minute or two after someone posts it. So AuctionMesh doesn't try to cover the whole auction house:
 
 1. Once every 15 minutes it browses the **crafting materials** categories (cloth, ore, herbs, leather, cooking, enchanting…). That's a handful of requests.
-2. The watch list holds 40 items. First come the **staple low-level materials** that players levelling 1-40 and their professions burn through: linen, wool and silk cloth; copper, tin and iron ore and their bars; stone; light, medium and heavy leather; the early herbs; strange dust and the early essences; the first gems. The remaining slots go to the most-listed other materials you can afford.
-3. It re-reads the full listing of those 40, round and round, each about every 50 seconds. The moment a cheap listing shows up, it appears on the BUY tab.
+2. The watch list holds 50 items (tuned from the ForeverDB and SPACE4GAMES gold guides). First come the **staple low-level materials** that players levelling 1-40 and their professions burn through: linen, wool and silk cloth; copper, tin and iron ore and their bars; stone; light, medium and heavy leather; the early herbs; strange dust and the early essences; the first gems; silver ore; the common cooking meats. Next come the new Forever materials the guides call in demand (Frilled Lichen, Cerulean Dye, Pitchblende, Azerothium Bars), recognised by name once the scan has seen them. The remaining slots go to the most-listed other materials you can afford.
+3. It re-reads the full listing of those 50, round and round, each about every minute. The moment a cheap listing shows up, it appears on the BUY tab.
+
+**Min profit per deal** (two boxes at the top, silver and copper): any deal that makes less than this is never shown. The default is 50c. Type a new value and press Enter, or use `/amesh minprofit 1s50c`. The "Last" line then says "profit 24c is under your 50c minimum" for deals it skips.
 
 Under the headline, three lines keep you informed:
 

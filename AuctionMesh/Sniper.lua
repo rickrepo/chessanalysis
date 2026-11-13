@@ -21,7 +21,7 @@ ns.Sniper = Sniper
 local floor, min = math.floor, math.min
 local VERIFIED_TTL = 45           -- a verified deal is trusted this long, then re-checked
 local CHECK_AGAIN = 30            -- don't re-check the same candidate sooner
-local WATCH_SIZE = 40             -- how many items are watched continuously
+local WATCH_SIZE = 50             -- how many items are watched continuously
 
 -- Staple low-level profession materials (what players levelling 1-40 and their
 -- professions 1-150 burn through, per current WoW Forever gold guides: cloth,
@@ -35,7 +35,18 @@ local STAPLES = {
     2452, 3355, 3356, 3357,                    -- Swiftthistle, Wild Steelbloom, Kingsblood, Liferoot
     10940, 10938, 10939, 10978,                -- Strange Dust, Lesser / Greater Magic Essence, Small Glimmering Shard
     774, 818, 1210,                            -- Malachite, Tigerseye, Shadowgem
+    2775, 2934,                                -- Silver Ore, Ruined Leather Scraps
+    2672, 769, 6889, 12223, 5465, 2673, 3173, 2924, -- cooking meats: wolf, boar, egg, bat wing, spider leg, coyote, bear, crocolisk
 }
+
+-- Materials new in WoW Forever that guides report as in demand. Their item
+-- numbers are new, so they are recognised by name once the price scan has seen them.
+local HOT_NAMES = {
+    ["Frilled Lichen"] = true, ["Cerulean Dye"] = true,       -- 100+ Tailoring recipes need the dye
+    ["Pitchblende"] = true, ["Azerothium Bar"] = true,        -- new ore and its bar
+    ["Commonplace Herb Seeds"] = true,
+}
+Sniper.HOT_NAMES = HOT_NAMES
 Sniper.STAPLES = STAPLES
 local WATCH_MIN = 15              -- never re-read the same item sooner than this
 local SEARCH_TIMEOUT = 6
@@ -75,7 +86,7 @@ function Sniper.vendorOf(key)
 end
 
 -- AH deposit per unit for a 12h listing: what we actually paid last time,
--- else the game's own calculation, else 15% of vendor price. math.huge = unknown.
+-- else the game's own calculation, else 5% of vendor price (min 1c). math.huge = unknown.
 local depCache = {}
 function Sniper.depositOf(key, commodity)
     local learned = AuctionMeshDB and AuctionMeshDB.deposits and AuctionMeshDB.deposits[key]
@@ -91,7 +102,9 @@ function Sniper.depositOf(key, commodity)
     end
     local v = Sniper.vendorOf(key)
     if v == nil and Sniper.vendor[key] == nil then return math.huge end
-    return math.ceil((v or 0) * 0.15)
+    -- Guide (ForeverDB, from the client): faction auction houses charge 5% of the
+    -- item's vendor price as deposit; the minimum is 1 copper.
+    return math.max(1, math.ceil((v or 0) * 0.05))
 end
 
 local function classOf(key)
@@ -273,6 +286,13 @@ function Sniper:RebuildBackground()
     for _, key in ipairs(STAPLES) do
         local p = Store.p[key]
         if not self.isItem[key] and (not p or p <= budget) then list[#list + 1] = key; seen[key] = true end
+    end
+    -- New Forever materials, found by name among what the scan has seen.
+    for key in pairs(Store.t) do
+        if key > 0 and not seen[key] and not self.isItem[key] and Store.p[key] <= budget then
+            local name = C_Item.GetItemInfo(key)
+            if name and HOT_NAMES[name] then list[#list + 1] = key; seen[key] = true end
+        end
     end
     list.staples = #list
     -- Then the most-listed other materials you can afford.

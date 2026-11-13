@@ -34,7 +34,7 @@ local floor, min, max, ceil = math.floor, math.min, math.max, math.ceil
 Deals.cfg = {
     margin = 0.40,        -- FLIP: profit must be >= 40% of what we pay
     vendorMargin = 0.10,  -- SAFE: guaranteed, so 10% is enough
-    minProfit = 20,       -- ignore deals that make less than this in total
+    minProfit = 50,       -- ignore deals that make less than this in total (set in the window)
     cut = 0.05,           -- auction house cut on sales
     undercut = 1,         -- we list this far under the competition
     step = 1,             -- smallest price unit the AH accepts (Core sets 100 if copper is rejected)
@@ -104,7 +104,10 @@ local function vendorDeal(rows, o, cfg)
             break -- commodity rows are sorted and share one vendor price
         end
     end
-    if units == 0 or profit < cfg.minProfit then return nil end
+    if units == 0 then return nil end
+    if profit < cfg.minProfit then
+        return nil, ("vendor profit $%d is under your $%d minimum"):format(profit, cfg.minProfit)
+    end
     return { kind = "VENDOR", units = units, cost = cost, deposit = 0, profit = profit, sell = sell,
              buys = buys, counts = counts }
 end
@@ -147,7 +150,9 @@ local function flipDeal(rows, o, cfg)
         return nil, wall, ("good deal but costs $%d, more than you can spend"):format(need)
     end
     local profit = units * net - cost
-    if profit < cfg.minProfit then return nil, wall, "profit too small" end
+    if profit < cfg.minProfit then
+        return nil, wall, ("profit $%d is under your $%d minimum"):format(profit, cfg.minProfit)
+    end
     return { kind = "FLIP", units = units, cost = cost, deposit = units * dep, profit = profit, sell = sell,
              wall = wall, depth = depth, sold = o.sold, buys = {}, counts = {} }, wall
 end
@@ -170,10 +175,14 @@ function Deals.evaluate(rows, o, cfg)
     o.gold = o.gold or o.budget
     local wall
     if o.commodity then wall = select(2, Deals.wall(rows, cfg)) end
-    local deal = vendorDeal(rows, o, cfg)
+    local deal, vreason = vendorDeal(rows, o, cfg)
     if deal then return deal, wall end
-    if o.commodity and cfg.flips then return flipDeal(rows, o, cfg) end
+    if o.commodity and cfg.flips then
+        local d, w, r = flipDeal(rows, o, cfg)
+        return d, w, (not d) and (vreason or r) or nil
+    end
     local v = o.vendor or 0
+    if vreason then return nil, wall, vreason end
     return nil, wall, v > 0 and ("cheapest is $%d, vendor pays $%d"):format(rows[1].price, v) or "can't be sold to a vendor"
 end
 

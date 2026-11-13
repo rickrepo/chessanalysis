@@ -12,7 +12,7 @@ local say = ns.Print
 
 -- New realm: profession goods are where the early money is, so the swarm scans them first.
 local DEFAULTS = { channel = "", password = "", route = "channel", focus = "tradegoods", scope = "mats",
-    snipeAuto = true, margin = 40, minProfit = 20, flips = true, autoOpen = true, autoScan = true }
+    snipeAuto = true, margin = 40, minProfit = 50, flips = true, autoOpen = true, autoScan = true }
 
 local function money(c)
     if C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then return C_CurrencyInfo.GetCoinTextureString(c) end
@@ -134,6 +134,8 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         Scanner:Init()
         Swarm:Init()
         if (db.cfg.v or 0) < 4 then db.cfg.v, db.cfg.focus, db.cfg.scope = 4, "tradegoods", "mats" end
+        if (db.cfg.v or 0) < 5 then db.cfg.v = 5; if db.cfg.minProfit < 50 then db.cfg.minProfit = 50 end end
+        Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)
         Deals.cfg.margin, Deals.cfg.minProfit = db.cfg.margin / 100, db.cfg.minProfit
@@ -205,9 +207,11 @@ SlashCmdList.AUCTIONMESH = function(input)
         if m then cfg.margin = m; Deals.cfg.margin = m / 100 end
         say(("Flip margin: %d%% profit after the AH cut and deposit (vendor deals use %d%%)."):format(cfg.margin, Deals.cfg.vendorMargin * 100))
     elseif cmd == "minprofit" then
-        local m = tonumber(rest)
-        if m then cfg.minProfit = m; Deals.cfg.minProfit = m end
-        say("Minimum profit per deal: " .. money(cfg.minProfit))
+        -- /amesh minprofit 1s50c  |  2s  |  75c  |  150 (copper)
+        local g, s2, cp = rest:match("(%d+)g"), rest:match("(%d+)s"), rest:match("(%d+)c")
+        local v = (tonumber(g) or 0) * 10000 + (tonumber(s2) or 0) * 100 + (tonumber(cp) or 0)
+        if v == 0 then v = tonumber(rest) or 0 end
+        if v > 0 then UI:SetMinProfit(v) else say("Minimum profit per deal: " .. money(cfg.minProfit) .. ". Example: /amesh minprofit 1s50c") end
     elseif cmd == "scope" then
         if rest == "all" or rest == "money" or rest == "mats" then
             cfg.scope, Swarm.scope = rest, rest

@@ -145,6 +145,7 @@ end
 fire("ADDON_LOADED", "AuctionMesh")
 fire("PLAYER_LOGIN")
 local UI, S, Se = ns.UI, ns.Sniper, ns.Seller
+AuctionMeshDB.cfg.minProfit, ns.Deals.cfg.minProfit = 20, 20 -- the walkthrough uses small deals
 local function rowsText()
     local out = {}
     for i = 1, #frames do
@@ -250,6 +251,19 @@ GetInboxInvoiceInfo = function() return "seller", "Linen Cloth", "Buyer", 462, 0
 Se:RecordSale(1); Se:RecordSale(1)
 check(ns.Store.sa[2589] == 77 and ns.Store.sn[2589] == 6, "sale invoice read once: buyers paid 77c each for 6")
 check(chat[#chat]:find("Sold: 6 x Linen Cloth at 77c each"), "chat reports the real sale")
+
+print("minimum profit control")
+UI:SetVendorOnly(false)
+S.verified, S.checkedAt, S.floor = {}, {}, {}
+LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }; ns.Store:Put(2770, 3, 512, GetServerTime())
+LIST[2589] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }; ns.Store:Put(2589, 20, 906, GetServerTime())
+gold = 900; S.priority = 2770; advance(4); S.priority = 2589; advance(4)
+check(S.verified[2770] ~= nil and S.verified[2589] ~= nil, "with a 20c minimum both the +24c and the +3s12c deal show")
+AuctionMeshFrame.minS:SetText("1"); AuctionMeshFrame.minC:SetText("0"); UI:ApplyMinProfit()
+check(S.verified[2770] == nil and S.verified[2589] ~= nil and ns.Deals.cfg.minProfit == 100, "typing 1s 0c hides the +24c deal at once, keeps the +3s12c one")
+S:Evaluate(2770, { { price = 3, qty = 12 }, { price = 9, qty = 200 }, { price = 10, qty = 300 } }, true)
+check(S.verified[2770] == nil and tostring(S.last.reason):find("under your"), "the small deal stays hidden; reason says it is under your minimum (" .. tostring(S.last.reason) .. ")")
+UI:SetMinProfit(20)
 
 print("timers")
 S:RebuildBackground(); UI.tab = "BUY"; S.searching = nil; S.last = nil; S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)

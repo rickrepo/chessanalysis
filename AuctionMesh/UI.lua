@@ -333,6 +333,28 @@ function UI:Create()
     frame.tabBuy:SetPoint("TOPLEFT", 10, -34)
     frame.tabSell = button(frame, 110, "SELL", function() UI.tab = "SELL"; UI:Render() end)
     frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", 6, 0)
+    -- Minimum profit per deal: anything that makes less is never shown.
+    local lbl = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    lbl:SetPoint("LEFT", frame.tabSell, "RIGHT", 14, 0)
+    lbl:SetText("Min profit per deal:")
+    local function box(anchor, x, suffix)
+        local e = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+        e:SetSize(30, 20)
+        e:SetPoint("LEFT", anchor, "RIGHT", x, 0)
+        e:SetAutoFocus(false)
+        e:SetNumeric(true)
+        e:SetMaxLetters(3)
+        local s = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        s:SetPoint("LEFT", e, "RIGHT", 2, 0)
+        s:SetText(suffix)
+        e:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+        e:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        e:SetScript("OnEditFocusLost", function() UI:ApplyMinProfit() end)
+        return e, s
+    end
+    local sLabel
+    frame.minS, sLabel = box(lbl, 8, "|cffc7c7cfs|r")
+    frame.minC = box(sLabel, 6, "|cffeda55fc|r")
     local log = button(frame, 50, "Log", function() ns.Diag:Show() end)
     log:SetPoint("TOPRIGHT", -10, -34)
 
@@ -403,6 +425,30 @@ function UI:Create()
     frame:Hide()
 end
 
+-- Reads the two "Min profit" boxes and applies them right away.
+function UI:ApplyMinProfit()
+    local s = tonumber(frame.minS:GetText()) or 0
+    local c = tonumber(frame.minC:GetText()) or 0
+    self:SetMinProfit(s * 100 + c)
+end
+
+function UI:SetMinProfit(copper)
+    copper = math.max(1, math.floor(copper))
+    AuctionMeshDB.cfg.minProfit = copper
+    ns.Deals.cfg.minProfit = copper
+    local S = ns.Sniper
+    for k, d in pairs(S.verified) do
+        if d.profit < copper and not (S.buying and S.buying.key == k) then S.verified[k] = nil end
+    end
+    S.checkedAt = {} -- deals hidden by the old minimum can show up again
+    if frame then
+        frame.minS:SetText(tostring(math.floor(copper / 100)))
+        frame.minC:SetText(tostring(copper % 100))
+    end
+    self:Notice(("Minimum profit per deal: %s. Smaller deals are not shown."):format(ns.Seller.short(copper)))
+    self:Dirty()
+end
+
 -- Vendor-only mode: every deal shown is guaranteed profit (buy, sell to an NPC).
 function UI:SetVendorOnly(on)
     local cfg = AuctionMeshDB.cfg
@@ -419,6 +465,11 @@ end
 function UI:Open(tab)
     self:Create()
     if tab then self.tab = tab end
+    local mp = ns.Deals.cfg.minProfit
+    if not frame.minS:HasFocus() and not frame.minC:HasFocus() then
+        frame.minS:SetText(tostring(math.floor(mp / 100)))
+        frame.minC:SetText(tostring(mp % 100))
+    end
     if not frame:IsShown() then
         frame:ClearAllPoints()
         local pos = AuctionMeshDB.cfg.pos
