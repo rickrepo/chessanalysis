@@ -37,6 +37,12 @@ local function mailOpen() return MailFrame and MailFrame:IsShown() end
 
 function UI:Dirty() self.dirty = true end
 
+-- Shows the latest message at the top of the window for 10 seconds.
+function UI:Notice(text)
+    self.notice = { text = text, till = GetTime() + 10 }
+    self.dirty = true
+end
+
 ---------------------------------------------------------------- row content
 
 local function buyRows()
@@ -150,8 +156,11 @@ function UI:Render()
 
     local list = self.tab == "BUY" and deals or entries
     local status = self.tab == "BUY" and buyStatus(#deals) or Se:Instructions(entries)
-    if ahOpen() and ns.Gate:UserBusy() then
-        status = ORANGE .. "Paused while you use the game's own Buy/Sell screen.|r " .. status
+    local n = self.notice
+    if n and GetTime() < n.till then
+        status = n.text
+    elseif ahOpen() and ns.Gate:UserBusy() then
+        status = ORANGE .. "Paused while your mouse is on the game's auction window (so its buttons don't flicker).|r " .. status
     end
     frame.status:SetText(status)
     for i = 1, ROWS do
@@ -338,6 +347,9 @@ function UI:Create()
         acc = acc + elapsed
         if acc < 0.2 then return end
         acc = 0
+        if UI.notice and GetTime() >= UI.notice.till then UI.notice = nil; UI.dirty = true end
+        local paused = ns.Gate:UserBusy()
+        if paused ~= UI.wasPaused then UI.wasPaused = paused; UI.dirty = true end
         if UI.dirty then UI:Render() end
     end)
     frame:Hide()

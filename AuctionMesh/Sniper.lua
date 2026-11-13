@@ -26,11 +26,17 @@ local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true,
 
 Sniper.verified = {}   -- key -> deal (+ key, at, commodity)
 Sniper.isItem = {}     -- key -> true for non-stackable items (never deal candidates)
+Sniper.own = {}        -- key -> { [unitPrice] = qty } of your own active auctions (from the server)
+Sniper.floor = {}      -- key -> { price, at }: the server refused to sell below this price
 Sniper.checkedAt = {}  -- key -> GetTime() of our last live check
 Sniper.vendor = {}     -- key -> vendor sell price (false = cannot be vendored)
 Sniper.stats = { checks = 0, deals = 0, bought = 0, spent = 0, expected = 0 }
 
-local function say(m) if ns.Print then ns.Print(m) end end
+-- Every message goes to chat AND to the top of the window, so a click always gets a visible answer.
+local function say(m)
+    if ns.Print then ns.Print(m) end
+    if ns.UI then ns.UI:Notice(m) end
+end
 local function dirty() if ns.UI then ns.UI:Dirty() end end
 local function money(c)
     if C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then return C_CurrencyInfo.GetCoinTextureString(c) end
@@ -122,6 +128,7 @@ function Sniper:Evaluate(key, rows, commodity)
     elseif deal then
         deal.at, deal.commodity, deal.key = GetTime(), commodity, key
         deal.rowsText = self.RowsText(rows)
+        deal.rows = rows
         if not self.verified[key] then
             self.stats.deals = self.stats.deals + 1
             if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
@@ -158,6 +165,12 @@ function Sniper:OnCommodityResults(itemID)
             local q = (r.quantity or 0) - (r.numOwnerItems or 0)
             -- Your own (or your other characters') auctions can't be bought: never count them as a deal.
             if (r.containsOwnerItem or r.containsAccountItem) and (r.numOwnerItems or 0) == 0 then q = 0 end
+            -- Your own auctions, as listed by the server's "my auctions" query.
+            local mine = self.own[itemID] and self.own[itemID][r.unitPrice]
+            if mine and (r.numOwnerItems or 0) == 0 then q = q - mine end
+            -- The server itself quoted a higher price than this row: it is not buyable by you.
+            local fl = self.floor[itemID]
+            if fl and GetTime() - fl.at < 1800 and r.unitPrice < fl.price then q = 0 end
             if q > 0 then rows[#rows + 1] = { price = r.unitPrice, qty = q } end
         end
     end
@@ -266,6 +279,12 @@ function Sniper:Tick()
     end
     if self:Busy() or not ns.Gate:Ready() then return end
     if ns.Seller and ns.Seller:Busy() then return end
+    if self.needOwned and C_AuctionHouse.QueryOwnedAuctions then
+        self.needOwned = false
+        ns.Gate:Use("list my own auctions")
+        C_AuctionHouse.QueryOwnedAuctions({})
+        return
+    end
     local S = ns.Swarm
     if S and S.active and S.current and S.current.phase == "query" then return end
     if not self.priority and S and S.active and not S.idle and ns.lastQuery == "sniper" then return end
@@ -287,6 +306,21 @@ function Sniper:Screen()
 end
 
 ---------------------------------------------------------------- buying
+
+-- rows: the listing a deal was built on. If skipping the cheapest j rows makes
+-- `units` cost exactly `total`, returns the price of the first buyable row.
+function Sniper.PhantomFloor(rows, units, total)
+    if not rows then return nil end
+    for j = 1, #rows - 1 do
+        local need, cost = units, 0
+        for i = j + 1, #rows do
+            local n = min(need, rows[i].qty)
+            cost, need = cost + n * rows[i].price, need - n
+            if need == 0 then break end
+        end
+        if need == 0 and cost == total then return rows[j + 1].price end
+    end
+end
 
 -- What one click on Buy will purchase: units, total copper.
 function Sniper.NextBuy(deal)
@@ -391,9 +425,20 @@ function Sniper:OnPriceQuote(unitPrice, total)
         self:ArmPurchaseTimeout(25) -- you have 25s to press Confirm
     else
         ns.Log("QUOTE MISMATCH %s: wanted %d units; deal was built at %s", tostring(b.key), b.units, tostring(b.deal.rowsText))
-        ns.Gate.ignoreErrorUntil = GetTime() + 1.5 -- our own cancel is not a server problem
-        C_AuctionHouse.CancelCommoditiesPurchase()
-        say(("|cffff8040Not bought:|r the price changed (%s now, %s when checked). Re-checking."):format(money(total), money(b.deal.cost)))
+        -- The server's quote is the truth. Remember it: listings below this price
+        -- are not buyable by you (your own or your other characters' auctions, or already gone).
+        -- If the quote is exactly what the units would cost with the cheapest
+        -- rows skipped, those rows are not buyable by you; otherwise the listing just changed.
+        local phantom = Sniper.PhantomFloor(b.deal.rows, b.units, total)
+        if phantom then self.floor[b.key] = { price = phantom, at = GetTime() } end
+        ns.Log("QUOTE says real total %d; phantom floor %s", total, tostring(phantom))
+        ns.Gate.ignoreErrorUntil = GetTime() + 2 -- our own cancel is not a server problem
+        -- Cancel a moment later: cancelling inside the quote event makes the game show "Internal Auction Error".
+        C_Timer.After(0.4, function() if not Sniper.buying then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end end)
+        say(("|cffff8040Nothing bought, nothing spent.|r The server's real price is %s for %d (listing showed %s). %s")
+            :format(money(total), b.units, money(b.deal.cost),
+                phantom and "The cheaper listings can't be bought by you (your own auctions?), so this deal is removed."
+                or "The listing changed; re-checking."))
         self.verified[b.key] = nil
         self.priority = b.key
         self.buying = nil
@@ -430,11 +475,33 @@ function Sniper:OnPurchase(ok, why)
     dirty()
 end
 
+-- Your own active auctions, straight from the server. Used so your own
+-- listings are never mistaken for deals.
+function Sniper:ReadOwned()
+    local AH, own, n = C_AuctionHouse, {}, 0
+    for i = 1, AH.GetNumOwnedAuctions and AH.GetNumOwnedAuctions() or 0 do
+        local a = AH.GetOwnedAuctionInfo(i)
+        local sold = a and Enum.AuctionStatus and a.status == Enum.AuctionStatus.Sold
+        if a and a.itemKey and a.buyoutAmount and not sold then
+            local id = a.itemKey.itemID
+            own[id] = own[id] or {}
+            own[id][a.buyoutAmount] = (own[id][a.buyoutAmount] or 0) + (a.quantity or 1)
+            n = n + 1
+        end
+    end
+    self.own = own
+    ns.Log("OWNED %d active auctions read", n)
+    -- Deals built before we knew about them are re-checked.
+    for k in pairs(self.verified) do if own[k] then self.verified[k] = nil; self.checkedAt[k] = nil end end
+    dirty()
+end
+
 ---------------------------------------------------------------- lifecycle
 
 function Sniper:Start()
     self.active = true
     self.checkedAt = {} -- new AH visit: everything may have changed
+    self.needOwned = true
     self.lastScreen, self.lastBg = 0, 0
     if not self.ticker then self.ticker = C_Timer.NewTicker(0.25, function() Sniper:Tick() end) end
     dirty()
@@ -462,7 +529,7 @@ function Sniper:Init(auto)
     for _, e in ipairs({ "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "COMMODITY_SEARCH_RESULTS_UPDATED",
         "ITEM_SEARCH_RESULTS_UPDATED", "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE",
         "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "PLAYER_MONEY",
-        "AUCTION_HOUSE_PURCHASE_COMPLETED", "UI_ERROR_MESSAGE" }) do
+        "AUCTION_HOUSE_PURCHASE_COMPLETED", "UI_ERROR_MESSAGE", "OWNED_AUCTIONS_UPDATED", "AUCTION_HOUSE_AUCTION_CREATED" }) do
         pcall(f.RegisterEvent, f, e)
     end
     f:SetScript("OnEvent", function(_, event, a1, a2)
@@ -490,6 +557,8 @@ function Sniper:Init(auto)
             if b and b.item and b.phase == "wait" and GetMoney() <= b.moneyBefore - b.total + 1 then
                 Sniper:OnPurchase(true, "gold left your bags")
             end
+        elseif event == "OWNED_AUCTIONS_UPDATED" then Sniper:ReadOwned()
+        elseif event == "AUCTION_HOUSE_AUCTION_CREATED" then Sniper.needOwned = true
         elseif event == "AUCTION_HOUSE_SHOW" then if auto() then Sniper:Start() end
         elseif event == "AUCTION_HOUSE_CLOSED" then Sniper:Stop()
         end

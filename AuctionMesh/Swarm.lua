@@ -29,7 +29,7 @@ ns.Swarm = Swarm
 local floor, random = math.floor, math.random
 
 Swarm.cfg = {
-    fresh = 5 * 60,       -- a unit scanned within this window is skipped
+    fresh = 15 * 60,      -- a unit scanned within this window is skipped
     claimTTL = 90,        -- a claim with no "done" expires after this
     unitTimeout = 60,     -- give up on a unit whose results never complete
     tick = 0.2,

@@ -65,9 +65,13 @@ Everything you bought is listed here, with what you paid, what it sells for, the
 
 The game requires one click or key press per auction. For speed, make a macro `/click AuctionMeshPostButton` and tap it. An item only leaves the list once your bags show it really went. Right-click a row to remove it. Drag an item from your bags onto the window to add it by hand.
 
-Background scanning and price checks pause completely while you use the game's own Sell tab or buy dialog, and for 8 seconds after any auction action you take there. Otherwise each background query would grey out the game's Create Auction button for a moment.
+Background scanning and price checks pause completely while your mouse is on the game's auction window, while its Sell or Auctions tab is open, and for 8 seconds after any auction action you take there. Otherwise each background query would grey out the game's Create Auction button for a moment.
 
 Non-stackable items (gear, recipes) are never offered as deals. They are only priced for selling.
+
+The server has the final word on a purchase. If its quote is higher than the listing showed, nothing is bought, and the window says so. When the quote shows the cheap listings can't be bought by you (for example your own auctions), that deal is removed and doesn't come back. Your own auctions are also read from the server's "my auctions" list and never counted as deals.
+
+The top line of the window shows the result of your last click for 10 seconds, so a click always gets a visible answer.
 
 ### If something goes wrong
 

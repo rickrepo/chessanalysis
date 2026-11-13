@@ -83,6 +83,14 @@ function Gate:UserBusy()
     if GetTime() < (self.userUntil or 0) then return true end
     local ah = AuctionHouseFrame
     if type(ah) ~= "table" then return false end
+    -- Mouse on the game's auction window = you are using it. Everything in the
+    -- background waits, so the game's own buttons never flicker under your cursor.
+    if ah.IsShown and ah:IsShown() and ah.IsMouseOver and ah:IsMouseOver() then return true end
+    -- Any tab other than the first (Buy) is the game's Sell / My Auctions screen.
+    if PanelTemplates_GetSelectedTab and ah.IsShown and ah:IsShown() then
+        local ok, tab = pcall(PanelTemplates_GetSelectedTab, ah)
+        if ok and tab and tab ~= 1 then return true end
+    end
     for _, name in ipairs(BLIZZ) do
         local f = rawget(ah, name)
         if type(f) == "table" and f.IsShown and f:IsShown() then return true end
@@ -146,7 +154,7 @@ local EVENTS = {
     "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE", "COMMODITY_PURCHASE_SUCCEEDED",
     "COMMODITY_PURCHASE_FAILED", "COMMODITY_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_UPDATED",
     "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "REPLICATE_ITEM_LIST_UPDATE", "ADDON_ACTION_BLOCKED",
-    "ADDON_ACTION_FORBIDDEN", "AUCTION_HOUSE_PURCHASE_COMPLETED", "PLAYER_MONEY", "BIDS_UPDATED",
+    "ADDON_ACTION_FORBIDDEN", "AUCTION_HOUSE_PURCHASE_COMPLETED", "OWNED_AUCTIONS_UPDATED", "PLAYER_MONEY", "BIDS_UPDATED",
 }
 
 local function isAHError(msg)

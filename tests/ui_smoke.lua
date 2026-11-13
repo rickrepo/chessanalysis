@@ -214,6 +214,24 @@ check(r[1] and r[1]:find("Ready to post") and r[1]:find("Paid 20c  >  Sell 77c  
 click(1); advance(1)
 check(posted[1] and posted[1].qty == 6 and posted[1].price == 77 and AuctionMeshDB.flips[200] == nil, "one click posted all 6 at 77c; removed after bags confirmed")
 
+print("listings you can't buy (the Zesty Clam case from the real log)")
+ITEMS[500] = { "Zesty Clam Meat", 500 }
+LIST[500] = { { 450, 3 }, { 500, 913 }, { 750, 6 } }
+ns.Store:Put(500, 450, 922, GetServerTime())
+local realStart = C_AuctionHouse.StartCommoditiesPurchase
+C_AuctionHouse.StartCommoditiesPurchase = function(id, q) -- server refuses the 3 cheap ones (they are yours)
+    if id == 500 then C_Timer.After(0.2, function() fire("COMMODITY_PRICE_UPDATED", 500, 500 * q) end) else realStart(id, q) end
+end
+gold = 900; fire("PLAYER_MONEY"); UI.tab = "BUY"; advance(8)
+r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
+check(r[1] and r[1]:find("Zesty Clam Meat") and r[1]:find("Buy 2 for 9s00c"), "listing looks like a deal at first")
+local before = gold
+click(1); advance(1)
+check(gold == before and S.buying == nil, "server quoted 5s each: nothing bought, nothing spent")
+check(strip(AuctionMeshFrame.status._text):find("Nothing bought, nothing spent"), "the window itself says what happened")
+advance(15)
+check(#rowsText() == 0 and S.verified[500] == nil, "the fake deal does not come back")
+
 print("real sale")
 GetInboxInvoiceInfo = function() return "seller", "Linen Cloth", "Buyer", 462, 0, 6, 23, nil, nil, nil, 6 end
 Se:RecordSale(1); Se:RecordSale(1)

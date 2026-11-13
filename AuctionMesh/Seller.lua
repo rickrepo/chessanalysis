@@ -32,7 +32,10 @@ local COLORS = {
 
 Seller.prices = {}  -- key -> { price, qty, commodity, why, at } or { hold = reason, at }
 
-local function say(m) if ns.Print then ns.Print(m) end end
+local function say(m)
+    if ns.Print then ns.Print(m) end
+    if ns.UI then ns.UI:Notice(m) end
+end
 local function money(c)
     if C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then return C_CurrencyInfo.GetCoinTextureString(c) end
     return GetCoinTextureString(c)
