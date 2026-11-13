@@ -217,6 +217,11 @@ SlashCmdList.AUCTIONMESH = function(input)
         local v = (tonumber(g) or 0) * 10000 + (tonumber(s2) or 0) * 100 + (tonumber(cp) or 0)
         if v == 0 then v = tonumber(rest) or 0 end
         if v > 0 then UI:SetMinProfit(v) else say("Minimum profit per deal: " .. money(cfg.minProfit) .. ". Example: /amesh minprofit 1s50c") end
+    elseif cmd == "dock" then
+        cfg.dock = (rest ~= "off")
+        UI:Close()
+        say(cfg.dock and "The panel opens inside the auction house window." or "The panel opens as a separate window.")
+        if AuctionHouseFrame and AuctionHouseFrame:IsShown() then UI:Open() end
     elseif cmd == "scope" then
         if rest == "all" or rest == "money" or rest == "mats" then
             cfg.scope, Swarm.scope = rest, rest
@@ -271,7 +276,7 @@ SlashCmdList.AUCTIONMESH = function(input)
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
     else
-        say("/amesh = open the window | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
+        say("/amesh = open the window | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
         say("Sharing: /amesh channel <name> [password] | guild | sync.   Scanning: /amesh scope money/all | swarm | focus <types>")
     end
 end

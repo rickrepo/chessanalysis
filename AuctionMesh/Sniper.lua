@@ -70,7 +70,8 @@ for _, id in ipairs({
 }) do VENDOR_SOLD[id] = true end
 Sniper.VENDOR_SOLD = VENDOR_SOLD
 Sniper.STAPLES = STAPLES
-local WATCH_MIN = 15              -- never re-read the same item sooner than this
+local WATCH_MIN = 300             -- routine full look at a watched item (keeps its market price current)
+local TRIGGER_MIN = 20            -- never fully re-read the same item sooner than this on a trigger
 local SEARCH_TIMEOUT = 6
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
 
@@ -164,6 +165,17 @@ end
 
 function Sniper:Evaluate(key, rows, commodity)
     table.sort(rows, function(a, b) return a.price < b.price end)
+    do  -- the game sends the same results twice per search: judge them once
+        local parts = { #rows }
+        for i = 1, min(#rows, 8) do parts[#parts + 1] = rows[i].price .. "x" .. rows[i].qty end
+        local sig, now = table.concat(parts, ","), GetTime()
+        local last = self.lastEval
+        if last and last.key == key and last.sig == sig and now - last.at < 2 then
+            if self.searching and self.searching.key == key then self.searching = nil end
+            return
+        end
+        self.lastEval = { key = key, sig = sig, at = now }
+    end
     if ns.Seller then ns.Seller:OnResults(key, rows, commodity) end
     if not commodity then
         -- Non-stackable items are priced for selling only; they are not offered as deals.
@@ -208,9 +220,51 @@ function Sniper:Evaluate(key, rows, commodity)
     dirty()
 end
 
+-- THE RADAR. Called for every item of every category sweep (a handful of
+-- requests covers every crafting material on the auction house). A full
+-- single-item search, the expensive request, is only queued when the sweep
+-- shows something worth it:
+--   * lowest price at or below what a vendor pays, or
+--   * lowest price 20% or more under the known market price, or
+--   * lowest price fell 15% or more since the previous sweep.
+-- The same sweep also measures volume: a drop in the listed quantity between
+-- two sweeps means units were bought.
+function Sniper:OnSweep(key, price, qty)
+    if not self.active or key <= 0 or self.isItem[key] then return end
+    local now = GetTime()
+    self.sweep = self.sweep or {}
+    local prev = self.sweep[key]
+    self.sweep[key] = { p = price, q = qty, at = now }
+    if prev then
+        local dt = now - prev.at
+        if dt >= 10 and dt <= 900 then
+            local gone = prev.q - qty - (self.bought[key] or 0)
+            Store:AddTurnover(key, gone > 0 and gone or 0, dt)
+        end
+    end
+    if price > self:Budget() then return end
+    local why
+    local v = self.vendorOf(key)
+    local ft = Store.ft[key]
+    local market = (ft and GetServerTime() - ft <= 1800) and Store.fp[key] or nil
+    if v and price <= floor(v / (1 + Deals.cfg.vendorMargin)) then why = "at or under vendor price"
+    elseif VENDOR_SOLD[key] or not Deals.cfg.flips then return
+    elseif market and price <= market * 0.8 then why = "20% under market"
+    elseif prev and price <= prev.p * 0.85 then why = "price just dropped"
+    end
+    if not why or self.verified[key] or self:Since(key) < TRIGGER_MIN then return end
+    self.triggers = self.triggers or {}
+    if not self.triggers[key] then
+        self.triggers[key] = true
+        self.triggers[#self.triggers + 1] = key
+        ns.Log("TRIGGER %s: %s (lowest %d, market %s)", tostring(key), why, price, tostring(market))
+    end
+end
+
 -- What will be checked next, without taking it (for the timer in the window).
 function Sniper:PeekNext()
     if self.priority then return self.priority end
+    if self.triggers and self.triggers[1] then return self.triggers[1] end
     for _, c in ipairs(self.candidates or {}) do
         if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then return c.key end
     end
@@ -324,11 +378,18 @@ function Sniper:NextCheck()
     local Se = ns.Seller
     local want = Se and Se.NextToPrice and Se:NextToPrice()
     if want then Se.pending = { key = want, at = GetTime() }; return want end
+    -- Radar hits: the sweep saw a price worth a full look.
+    local tr = self.triggers
+    while tr and #tr > 0 do
+        local k = table.remove(tr, 1)
+        tr[k] = nil
+        if not self.verified[k] and self:Since(k) >= TRIGGER_MIN then return k end
+    end
     for _, c in ipairs(self.candidates or {}) do
         if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then return c.key end
     end
-    -- The watch list, round and round. A snipe only exists for a minute or
-    -- two after someone posts it, so the same few items are re-read constantly.
+    -- Routine: each watched item gets a full look every few minutes, which keeps
+    -- its market price and volume current. Everything faster comes from the radar.
     local q = self.background
     if not q or #q == 0 then return nil end
     for _ = 1, #q do
@@ -385,8 +446,14 @@ function Sniper:Pending()
 end
 
 function Sniper:HasWork()
+    if self.priority ~= nil or (self.triggers and #self.triggers > 0) or self:Pending() > 0 then return true end
     local q = self.background
-    return self.priority ~= nil or self:Pending() > 0 or (q ~= nil and #q > 0)
+    if q then
+        for i = 1, #q do
+            if not self.isItem[q[i]] and self:Since(q[i]) > WATCH_MIN then return true end
+        end
+    end
+    return false
 end
 
 function Sniper:Busy() return self.searching ~= nil or self.buying ~= nil or self.queued ~= nil end
@@ -667,6 +734,7 @@ end
 function Sniper:Start()
     self.active = true
     self.checkedAt = {} -- new AH visit: everything may have changed
+    self.sweep, self.triggers = {}, {}
     depCache = {}       -- fees are asked again each visit
     self.needOwned = true
     self.lastScreen, self.lastBg = 0, 0

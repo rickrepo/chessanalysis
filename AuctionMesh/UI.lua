@@ -24,7 +24,7 @@ local UI = {}
 ns.UI = UI
 
 local floor, min = math.floor, math.min
-local ROWS, ROW_H, WIDTH = 8, 38, 720
+local ROWS, ROW_H, WIDTH = 8, 36, 720
 -- Column layout (x offset inside a row, width). Same grid for both tabs:
 --   BUY:  ITEM | BUY (qty @ price) | MARKET | SPREAD | VOLUME | PROFIT | [Buy]
 --   SELL: ITEM | QTY               | COST   | MARKET | STATUS | P/L    | [Post]
@@ -204,9 +204,8 @@ local function buyStatus(n)
     if Sw and Sw.active and #Sw.units > 0 then
         local fresh, total = Sw:Coverage()
         local left = Sw:NextRescan() or 0
-        lines[#lines + 1] = fresh < total and ("%sPrice scan running: %d of %d categories.|r"):format(GREY, fresh, total)
-            or ("%sNext price scan in %s. Watching %d materials, full round about every %s.|r"):format(GREY, clock(left),
-                q and #q or 0, clock(math.max(15, (q and #q or 0) * 1.3)))
+        lines[#lines + 1] = ("%sRadar: every crafting material re-read every %ds (%d of %d categories current, next in %s).|r"):format(
+            GREY, Sw.cfg.fresh, fresh, total, clock(left))
     end
     return table.concat(lines, "\n")
 end
@@ -380,9 +379,10 @@ function UI:Create()
     frame:SetFrameStrata("HIGH")
     frame:SetMovable(true); frame:EnableMouse(true); frame:RegisterForDrag("LeftButton")
     frame:SetClampedToScreen(true)
-    frame:SetScript("OnDragStart", frame.StartMoving)
+    frame:SetScript("OnDragStart", function(f) if not UI.docked then f:StartMoving() end end)
     frame:SetScript("OnDragStop", function(f)
         f:StopMovingOrSizing()
+        if UI.docked then return end
         local point, _, rel, x, y = f:GetPoint()
         AuctionMeshDB.cfg.pos = { point, rel, x, y }
     end)
@@ -394,6 +394,7 @@ function UI:Create()
     frame.title:SetText("AuctionMesh")
     local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", 0, 0)
+    close:SetScript("OnClick", function() UI:Close() end)
     frame.gold = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.gold:SetPoint("TOPRIGHT", -34, -12)
 
@@ -447,13 +448,14 @@ function UI:Create()
     local rule = frame:CreateTexture(nil, "ARTWORK")
     rule:SetColorTexture(0.4, 0.8, 1, 0.35)
     rule:SetPoint("TOPLEFT", 10, -149); rule:SetPoint("TOPRIGHT", -10, -149); rule:SetHeight(1)
-    frame.status:SetWidth(WIDTH - 24)
+    frame.status:SetWidth(WIDTH - 60)
     frame.status:SetHeight(40)
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
 
     for i = 1, ROWS do
         local r = CreateFrame("Frame", nil, frame)
-        r:SetSize(WIDTH - 20, ROW_H - 2)
+        r:SetHeight(ROW_H - 2)
+        r:SetPoint("RIGHT", frame, "RIGHT", -10, 0) -- rows stretch to whatever width the panel has
         r:SetPoint("TOPLEFT", 10, -152 - (i - 1) * ROW_H)
         r.bg = r:CreateTexture(nil, "BACKGROUND")
         r.bg:SetAllPoints()
@@ -556,6 +558,36 @@ function UI:SetVendorOnly(on)
     self:Dirty()
 end
 
+-- Where the panel lives.
+--   Auction house open: INSIDE the auction house window, covering its content
+--   area, exactly its size. It opens, moves and closes with that window. The
+--   "AuctionMesh" tab under the window switches between the game's screens and ours.
+--   Vendor / mailbox / anywhere else: a compact free-floating window.
+function UI:Place()
+    local ah = AuctionHouseFrame
+    local dock = ahOpen() and AuctionMeshDB.cfg.dock ~= false
+    frame:ClearAllPoints()
+    if dock then
+        frame:SetParent(ah)
+        frame:SetScale(1)
+        frame:SetPoint("TOPLEFT", ah, "TOPLEFT", 3, -22)
+        frame:SetPoint("BOTTOMRIGHT", ah, "BOTTOMRIGHT", -3, 3)
+        frame:SetFrameStrata("DIALOG")
+        frame:SetBackdropColor(0.02, 0.03, 0.05, 1)
+        frame:SetMovable(false)
+    else
+        frame:SetParent(UIParent)
+        frame:SetScale(0.85)
+        frame:SetSize(WIDTH, 176 + ROWS * ROW_H)
+        frame:SetFrameStrata("HIGH")
+        frame:SetBackdropColor(0.02, 0.03, 0.05, 0.97)
+        frame:SetMovable(true)
+        local pos = AuctionMeshDB.cfg.pos
+        if pos then frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else frame:SetPoint("CENTER", 0, 40) end
+    end
+    self.docked = dock
+end
+
 function UI:Open(tab)
     self:Create()
     if tab then self.tab = tab end
@@ -564,24 +596,41 @@ function UI:Open(tab)
         frame.minS:SetText(tostring(math.floor(mp / 100)))
         frame.minC:SetText(tostring(mp % 100))
     end
-    if not frame:IsShown() then
-        frame:ClearAllPoints()
-        local pos = AuctionMeshDB.cfg.pos
-        if ahOpen() and not pos then
-            frame:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 4, 0)
-        elseif pos then
-            frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
-        else
-            frame:SetPoint("CENTER", 250, 0)
-        end
+    if not frame:IsShown() or (ahOpen() and AuctionMeshDB.cfg.dock ~= false) ~= (self.docked or false) then
+        self:Place()
         frame:Show()
     end
+    self.openedAt = GetTime()
+    if self.ahTab then self.ahTab:SetText("Auction House") end
     self:Render()
+end
+
+function UI:Close()
+    if frame then frame:Hide() end
+    if self.ahTab then self.ahTab:SetText("AuctionMesh") end
 end
 
 function UI:Toggle()
     self:Create()
-    if frame:IsShown() then frame:Hide() else self:Open() end
+    if frame:IsShown() then self:Close() else self:Open() end
+end
+
+-- The tab under the auction house window.
+function UI:CreateAHTab()
+    local ah = AuctionHouseFrame
+    if self.ahTab or type(ah) ~= "table" then return end
+    local b = CreateFrame("Button", "AuctionMeshAHTab", ah, "UIPanelButtonTemplate")
+    b:SetSize(120, 24)
+    b:SetPoint("TOPRIGHT", ah, "BOTTOMRIGHT", -8, 1)
+    b:SetText("AuctionMesh")
+    b:SetScript("OnClick", function() UI:Toggle() end)
+    self.ahTab = b
+    -- Clicking one of the game's own tabs puts the game's screen back.
+    if ah.SetDisplayMode and hooksecurefunc then
+        hooksecurefunc(ah, "SetDisplayMode", function()
+            if UI.docked and frame and frame:IsShown() and GetTime() - (UI.openedAt or 0) > 0.5 then UI:Close() end
+        end)
+    end
 end
 
 function UI:IsShown() return frame and frame:IsShown() end
@@ -593,6 +642,8 @@ function UI:Init()
     end
     f:SetScript("OnEvent", function(_, event)
         if event == "AUCTION_HOUSE_SHOW" then
+            UI:CreateAHTab()
+            if frame and frame:IsShown() then frame:Hide() end -- re-place inside the auction house
             if AuctionMeshDB.cfg.autoOpen then
                 -- Things to post? Start on SELL so they go up first.
                 local toPost = false
@@ -600,7 +651,8 @@ function UI:Init()
                 UI:Open(toPost and "SELL" or "BUY")
             end
         elseif event == "AUCTION_HOUSE_CLOSED" then
-            if frame and frame:IsShown() and #ns.Seller:Entries() == 0 then frame:Hide() end
+            -- The docked panel leaves with the auction house window.
+            if frame and UI.docked then frame:Hide(); frame:SetParent(UIParent); UI.docked = false end
             UI:Dirty()
         else
             UI:Dirty()

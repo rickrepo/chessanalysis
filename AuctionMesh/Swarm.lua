@@ -29,7 +29,7 @@ ns.Swarm = Swarm
 local floor, random = math.floor, math.random
 
 Swarm.cfg = {
-    fresh = 15 * 60,      -- a unit scanned within this window is skipped
+    fresh = 45,           -- a category is re-read this often: the sweep IS the sniper's radar
     claimTTL = 90,        -- a claim with no "done" expires after this
     unitTimeout = 60,     -- give up on a unit whose results never complete
     tick = 0.2,
@@ -108,6 +108,8 @@ function Swarm:PickUnit()
 end
 
 local function note(kind, u)
+    -- Work-sharing notes are only worth sending when a friend is listening.
+    if not ns.peerAt or Swarm.clock() - ns.peerAt > 600 then return end
     local buf, n = { "W" }, 1
     n = Codec.putUInt(buf, n, kind)
     n = Codec.putUInt(buf, n, u)

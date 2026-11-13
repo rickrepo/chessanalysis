@@ -17,6 +17,10 @@ Open the auction house. One window opens next to it and price scanning starts by
    FLIP  Buy 6 for 1s20c  >  resell at 77c each  >  +3s12c (not guaranteed)
 ```
 
+### Where the panel lives
+
+With the auction house open, the panel is **inside the auction house window**: it covers the content area, is exactly that window's size, and opens, moves and closes with it. An **AuctionMesh** tab under the window switches between the game's own screens and the panel; clicking any of the game's tabs also switches back. At a vendor or mailbox it appears as a compact separate window. `/amesh dock off` makes it a separate window everywhere.
+
 ### The layout
 
 The window is laid out like a trading screen. The top strip shows **BALANCE**, **IN POSITIONS** (gold tied up in items you hold) and **OPEN P/L** (expected profit on them). Both tabs use the same columns:
@@ -58,29 +62,24 @@ Only deals that were just checked against the live listings appear here, with th
 * A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
 * The **Mode** button at the bottom switches between **Vendor only** (every deal is guaranteed) and **Vendor + Flips**. `/amesh vendor` does the same. In vendor-only mode no flip checks are made, so more of the search budget goes to vendor deals.
 
-### What gets watched
+### How it looks for deals (the radar)
 
-A snipe only exists for a minute or two after someone posts it. So AuctionMesh doesn't try to cover the whole auction house:
+The auction house offers two kinds of search, and they cost the same one request each:
 
-1. Once every 15 minutes it browses the **crafting materials** categories (cloth, ore, herbs, leather, cooking, enchanting…). That's a handful of requests.
-2. The watch list holds 50 items (tuned from the ForeverDB and SPACE4GAMES gold guides). First come the **staple low-level materials** that players levelling 1-40 and their professions burn through: linen, wool and silk cloth; copper, tin and iron ore and their bars; stone; light, medium and heavy leather; the early herbs; strange dust and the early essences; the first gems; silver ore; the common cooking meats. Next come the new Forever materials the guides call in demand (Frilled Lichen, Cerulean Dye, Pitchblende, Azerothium Bars), recognised by name once the scan has seen them. The remaining slots go to the most-listed other materials you can afford.
-3. It re-reads the full listing of those 50, round and round, each about every minute. The moment a cheap listing shows up, it appears on the BUY tab.
+* a **category search** returns the lowest price and total quantity of *every item in the category*;
+* an **item search** returns the full listing of *one item*.
 
-**Min profit per deal** (two boxes at the top, silver and copper): any deal that makes less than this is never shown. The default is 50c. Type a new value and press Enter, or use `/amesh minprofit 1s50c`. The "Last" line then says "profit 24c is under your 50c minimum" for deals it skips.
+AuctionMesh uses the cheap, wide one as its radar and spends the narrow one only where it pays:
 
-Under the headline, three lines keep you informed:
+1. **Sweep.** Every 45 seconds it re-reads the crafting-material categories. That's about a dozen requests for every crafting material on the auction house.
+2. **Trigger.** A full item search is queued only when the sweep shows something: the lowest price is at or under vendor price, is 20% or more under the known market price, or fell 15% or more since the last sweep.
+3. **Confirm.** One item search loads the full listing and the deal rules decide.
+4. **Volume for free.** A drop in an item's listed quantity between two sweeps means units were bought, so every material's trading volume is measured without extra requests.
+5. **Routine.** Each of the 50 watched staples also gets one full look every 5 minutes to keep its market price current.
 
-```
-Next check: Linen Cloth in 0.6s  (3 of 40, round 12)
-Last: Copper Ore: cheapest is 9c, market 9c: needs 5c or less (2s ago)
-Next price scan in 13:41. Watching 40 materials, full round about every 52s.
-```
+Compared with re-reading 50 items one by one, this covers every crafting material and uses fewer requests. It should also spot a new cheap listing within one sweep instead of one round. With friends on the same channel the sweep is shared: each category is read by one of you.
 
-The "Last" line gives the reason each item was or wasn't a deal. The same reasons go into the log as `NO DEAL` lines.
-
-The top of the window shows **MAKE NOW: +X**, the total profit of every deal you could buy this second. Each row shows its own profit in large type next to the Buy button.
-
-`/amesh scope money` widens the scope to reagents, consumables, gems and enhancements; `/amesh scope all` covers everything; `/amesh scope mats` goes back.
+The game's full-download scan (`/amesh scan`, one request for the entire auction house, allowed once per 15 minutes) is still available.
 
 ### Where the prices come from
 

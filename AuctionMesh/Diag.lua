@@ -84,6 +84,9 @@ function Gate:UserBusy()
     if GetTime() < (self.userUntil or 0) then return true end
     local hb = ns.UI and ns.UI.hoverBtn
     if hb and hb.IsShown and hb:IsShown() and hb:IsMouseOver() then return true end
+    -- Our panel is shown inside the auction house window: the game's own
+    -- screens are covered, so the mouse being there is not "using the game's UI".
+    if ns.UI and ns.UI.docked and ns.UI:IsShown() then return false end
     local ah = AuctionHouseFrame
     if type(ah) ~= "table" then return false end
     -- Mouse on the game's auction window = you are using it. Everything in the

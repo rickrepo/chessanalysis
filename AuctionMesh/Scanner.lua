@@ -58,6 +58,9 @@ function Scanner:OnBrowse(results, reset)
             v[1] = min(v[1], prev[1]); v[2] = v[2] + prev[2]
         end
         browseMin[key] = v
+        -- One category query just told us the lowest price and quantity of this
+        -- item. The sniper decides from that whether a full look is worth a request.
+        if ns.Sniper and ns.Sniper.OnSweep then ns.Sniper:OnSweep(key, v[1], v[2]) end
         Sync:Observe(key, v[1], v[2])
     end
 end

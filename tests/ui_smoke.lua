@@ -17,7 +17,7 @@ local function widget(parent, name)
         IsVisible = function(s) return s._shown end,
         Enable = function(s) s._enabled = true end, Disable = function(s) s._enabled = false end,
         SetEnabled = function(s, v) s._enabled = v and true or false end,
-        GetParent = function(s) return s._parent end,
+        GetParent = function(s) return s._parent end, SetParent = function(s, p) s._parent = p end,
         CreateFontString = function(s) return widget(s) end, CreateTexture = function(s) return widget(s) end,
         GetStringHeight = function() return 12 end, GetFont = function() return "font", 10 end,
         GetPoint = function() return "CENTER", nil, "CENTER", 0, 0 end,
@@ -169,6 +169,9 @@ AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW")
 advance(12)
 W = AuctionMeshFrame
 check(W and W:IsShown() and UI.tab == "BUY", "window opens by itself on the BUY tab")
+check(UI.docked == true and W._parent == AuctionHouseFrame, "it opens INSIDE the auction house window")
+check(AuctionMeshAHTab ~= nil, "an AuctionMesh tab is added under the auction house window")
+check(ns.Gate:UserBusy() == false, "while docked, the mouse on the auction house does not pause it")
 local r = rowsText()
 for _, l in ipairs(r) do print("     " .. l) end
 check(#r == 2, "exactly the 2 real deals are listed (the 500-unit trap is not)")
@@ -344,17 +347,29 @@ local st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
 check(st:find("Next check: .+ in %d+%.%ds") ~= nil, "shows what is checked next and in how many seconds")
 check(st:find("Last: Peacebloom: 500 cheap units is too many to clear", 1, true) ~= nil, "shows the last item checked and why it was not a deal")
-check(st:find("Next price scan in") ~= nil or st:find("Price scan running") ~= nil, "shows the price scan timer")
+check(st:find("Radar: every crafting material re%-read every") ~= nil, "shows the radar line")
 
-print("watch list")
-S:RebuildBackground()
-check(S.background[1] == 2589 and S.background.staples >= 30, "staple low-level materials (Linen Cloth first) are always on the watch list")
+print("radar: category sweeps find the drop, one full search confirms it")
+ns.Deals.cfg.requireTurnover = false
+UI:SetVendorOnly(false); UI.notice = nil
+S.verified, S.checkedAt, S.floor, S.sweep, S.triggers, S.candidates = {}, {}, {}, {}, {}, {}
+S.background = { i = 1 }; S.lastBg = GetTime() + 1e6; S.lastScreen = GetTime() + 1e6 -- radar only
+ITEMS[2319] = { "Medium Leather", 2 }
+LIST[2319] = { { 100, 300 }, { 101, 300 } }
+ns.Store:PutFair(2319, 100, GetServerTime()); gold = 900
+local function sweep(minPrice, qty) ns.Scanner:OnBrowse({ { itemKey = { itemID = 2319 }, minPrice = minPrice, totalQuantity = qty } }, true) end
 local n0 = #sent
-advance(130)
-local c200 = 0
-for i = n0 + 1, #sent do if sent[i] == "search2589" then c200 = c200 + 1 end end
-check(c200 >= 2, ("the same material is re-read continuously (%d times in about 2 minutes, was once per 20 min)"):format(c200))
-check(strip(AuctionMeshFrame.status._text or ""):find("Watching %d+ materials") ~= nil or UI.tab ~= "BUY", "status says what is being watched")
+sweep(100, 600); advance(3)
+local function searches() local c = 0; for i = n0 + 1, #sent do if sent[i] == "search2319" then c = c + 1 end end; return c end
+check(searches() == 0, "normal price in the sweep: no single-item search is spent on it")
+LIST[2319] = { { 40, 5 }, { 100, 300 }, { 101, 300 } }
+advance(30); sweep(40, 605); advance(3)
+check(searches() == 1 and S.verified[2319] and S.verified[2319].units == 5, "someone lists 5 at 40c: the next sweep spots it and ONE search confirms the deal")
+advance(30); sweep(40, 505); advance(30); sweep(40, 455)
+local rate = ns.Store:Rate(2319, 30)
+check(rate and rate > 1000, ("the same sweeps measure volume: 150 units left in a minute (about %d an hour)"):format(rate or 0))
+check(searches() == 1, "no further searches while the deal is already confirmed")
+S.verified[2319] = nil
 
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

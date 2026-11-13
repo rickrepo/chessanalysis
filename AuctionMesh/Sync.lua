@@ -412,6 +412,7 @@ local OPS = {
 Sync.OPS = OPS -- other modules (Swarm) register their opcodes here
 
 function Sync.Dispatch(msg, sender)
+    ns.peerAt = Sync.clock() -- someone else on the mesh is online
     local f = OPS[msg:byte(1) or 0]
     if f then f(Sync, msg, sender) end
 end
