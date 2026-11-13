@@ -3,7 +3,8 @@
 -- Log
 --   Every C_AuctionHouse call (ours AND the Blizzard AH window's), every AH
 --   error / throttle event, and what AuctionMesh was trying to do, with
---   millisecond timestamps. Kept in SavedVariables (last 800 lines).
+--   millisecond timestamps. Starts empty on every /reload or login (last 800
+--   lines kept; the previous session is available with /amesh log old).
 --   /amesh log  opens a window: Ctrl+A, Ctrl+C, paste it to Claude.
 --
 -- Gate
@@ -195,10 +196,11 @@ end
 
 function Diag:Init()
     AuctionMeshDB.log = AuctionMeshDB.log or {}
-    -- Start a new session block, keeping the previous session for comparison.
-    local old = AuctionMeshDB.log
+    -- Every /reload or login starts an empty log. The previous session is kept
+    -- aside (not shown) and can be opened with /amesh log old.
+    AuctionMeshDB.logPrev = AuctionMeshDB.log
+    AuctionMeshDB.log = {}
     buf, n = {}, 0
-    for i = math.max(1, #old - 300), #old do n = n + 1; buf[n] = old[i] end
     local _, build, _, toc = GetBuildInfo()
     Log("==== session start: AuctionMesh %s, build %s, interface %s, realm %s, copperValues=%s, step=%s",
         C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or "?",
@@ -226,7 +228,8 @@ function Diag:Save()
     AuctionMeshDB.log = out
 end
 
-function Diag:Text()
+function Diag:Text(previous)
+    if previous then return table.concat(AuctionMeshDB.logPrev or {}, "\n") end
     local from = math.max(1, n - MAX_LINES + 1)
     return table.concat(buf, "\n", from, n)
 end
@@ -239,7 +242,7 @@ end
 ---------------------------------------------------------------- copy window
 
 local win
-function Diag:Show()
+function Diag:Show(previous)
     if not win then
         win = CreateFrame("Frame", "AuctionMeshLogFrame", UIParent, "BackdropTemplate")
         win:SetSize(720, 460)
@@ -275,7 +278,7 @@ function Diag:Show()
         clr:SetSize(110, 22); clr:SetPoint("LEFT", sel, "RIGHT", 8, 0); clr:SetText("Clear log")
         clr:SetScript("OnClick", function() Diag:Clear(); edit:SetText(Diag:Text()) end)
     end
-    win.edit:SetText(self:Text())
+    win.edit:SetText(self:Text(previous))
     win:Show()
     win.edit:SetFocus()
     win.edit:HighlightText()

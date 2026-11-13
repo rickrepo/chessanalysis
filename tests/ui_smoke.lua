@@ -320,6 +320,13 @@ UI.tab = "BUY"; UI.notice = nil; UI:Render()
 r = rowsText(); for _, l in ipairs(r) do if l:find("Light Leather") then print("     " .. l) end end
 S.verified[2318] = nil; ns.Deals.cfg.requireTurnover = false
 
+print("log resets on reload")
+local before = select(2, ns.Diag:Text():gsub("\n", "")) + 1
+ns.Diag:Save(); ns.Diag:Init()
+local after = ns.Diag:Text()
+check(before > 50 and select(2, after:gsub("\n", "")) == 0 and after:find("session start"), ("log had %d lines; after a reload it holds only the new session line"):format(before))
+check(#ns.Diag:Text(true) > 1000, "the previous session is still available with /amesh log old")
+
 print("history")
 UI.tab = "HISTORY"; UI.notice = nil; UI:Render()
 local hist, seen = AuctionMeshDB.history or {}, {}

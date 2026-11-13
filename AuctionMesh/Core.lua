@@ -190,7 +190,9 @@ SlashCmdList.AUCTIONMESH = function(input)
     if cmd == "" then
         UI:Toggle()
     elseif cmd == "log" then
-        if rest == "clear" then ns.Diag:Clear(); say("Log cleared.") else ns.Diag:Show() end
+        if rest == "clear" then ns.Diag:Clear(); say("Log cleared.")
+        elseif rest == "old" then ns.Diag:Show(true)
+        else ns.Diag:Show() end
     elseif cmd == "restore" then
         Seller:Restore()
     elseif cmd == "track" then
