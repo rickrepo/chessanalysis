@@ -132,7 +132,7 @@ function Sniper:Evaluate(key, rows, commodity)
         return dirty()
     end
     local avg, n = Store.a[key], Store.an[key]
-    local deal, wall = Deals.evaluate(rows, {
+    local deal, wall, reason = Deals.evaluate(rows, {
         budget = self:Budget(), gold = GetMoney(), commodity = commodity,
         vendor = self.vendorOf(key),
         avg = (avg and n and n >= Deals.cfg.minSamples) and avg or nil,
@@ -155,9 +155,28 @@ function Sniper:Evaluate(key, rows, commodity)
             deal.cost, deal.sell, deal.profit, self.RowsText(rows))
     else
         self.verified[key] = nil
+        if #rows == 0 then reason = "none listed" end
+        ns.Log("NO DEAL %s: %s (rows: %s)", tostring(key), tostring(reason), self.RowsText(rows))
     end
+    self.last = { key = key, deal = deal ~= nil, reason = reason, at = GetTime() }
     if self.searching and self.searching.key == key then self.searching = nil end
     dirty()
+end
+
+-- What will be checked next, without taking it (for the timer in the window).
+function Sniper:PeekNext()
+    if self.priority then return self.priority end
+    for _, c in ipairs(self.candidates or {}) do
+        if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then return c.key end
+    end
+    local q = self.background
+    if not q or #q == 0 then return nil end
+    local i = q.i
+    for _ = 1, #q do
+        if i > #q then i = 1 end
+        if not self.isItem[q[i]] and self:Since(q[i]) > WATCH_MIN then return q[i], i end
+        i = i + 1
+    end
 end
 
 function Sniper.RowsText(rows)

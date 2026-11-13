@@ -109,20 +109,21 @@ local function vendorDeal(rows, o, cfg)
              buys = buys, counts = counts }
 end
 
+-- Returns deal, wall, reason (reason = plain words when there is no deal).
 local function flipDeal(rows, o, cfg)
     local wi, wall, depth = Deals.wall(rows, cfg)
-    if not wi then return nil, nil end
+    if not wi then return nil, nil, "too few listings to know the real price" end
     local dep = o.deposit or 0
-    if dep == math.huge then return nil, wall end
+    if dep == math.huge then return nil, wall, "posting fee not known yet" end
     local ref = wall
     if o.avg and o.avg > 0 and o.avg < ref then ref = o.avg end -- rule 7
     if o.sold and o.sold > 0 and o.sold < ref then ref = o.sold end -- rule 8
     -- Rule 3: the resale price is set by the first row we do NOT buy.
-    local k, sell, net
+    local k, sell, net, maxBuy
     for _ = 1, wi do
         sell = Deals.round(ref - cfg.undercut, cfg)
         net = floor(sell * (1 - cfg.cut)) - dep
-        local maxBuy = floor(net / (1 + cfg.margin))
+        maxBuy = floor(net / (1 + cfg.margin))
         k = 0
         while k + 1 < wi and rows[k + 1].price <= maxBuy do k = k + 1 end
         if k + 1 < wi and rows[k + 1].price < ref then
@@ -131,16 +132,22 @@ local function flipDeal(rows, o, cfg)
             break
         end
     end
-    if not k or k == 0 or sell <= 0 then return nil, wall end
+    if not k or k == 0 or sell <= 0 then
+        return nil, wall, ("cheapest is $%d, market $%d: needs $%d or less"):format(rows[1].price, wall, math.max(maxBuy or 0, 0))
+    end
     local units, cost = 0, 0
     for i = 1, k do units, cost = units + rows[i].qty, cost + rows[i].qty * rows[i].price end
-    if units > floor(depth * cfg.share) then return nil, wall end                 -- rule 4
+    if units > floor(depth * cfg.share) then
+        return nil, wall, ("%d cheap units is too many to clear (market has %d)"):format(units, depth)
+    end
     local need = cost + units * dep
     -- Rule 5. Under 1 gold the cap is 80%: half of a few silver buys nothing.
     local cap = (o.gold < 10000) and math.max(cfg.maxSpend, 0.8) or cfg.maxSpend
-    if need > o.budget or need > floor(o.gold * cap) then return nil, wall end -- rules 3, 5
+    if need > o.budget or need > floor(o.gold * cap) then
+        return nil, wall, ("good deal but costs $%d, more than you can spend"):format(need)
+    end
     local profit = units * net - cost
-    if profit < cfg.minProfit then return nil, wall end
+    if profit < cfg.minProfit then return nil, wall, "profit too small" end
     return { kind = "FLIP", units = units, cost = cost, deposit = units * dep, profit = profit, sell = sell,
              wall = wall, depth = depth, sold = o.sold, buys = {}, counts = {} }, wall
 end
@@ -166,7 +173,8 @@ function Deals.evaluate(rows, o, cfg)
     local deal = vendorDeal(rows, o, cfg)
     if deal then return deal, wall end
     if o.commodity and cfg.flips then return flipDeal(rows, o, cfg) end
-    return nil, wall
+    local v = o.vendor or 0
+    return nil, wall, v > 0 and ("cheapest is $%d, vendor pays $%d"):format(rows[1].price, v) or "can't be sold to a vendor"
 end
 
 -- Cheap screen over everything the mesh knows, to decide what is worth a live

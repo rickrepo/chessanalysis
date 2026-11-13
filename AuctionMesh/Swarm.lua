@@ -238,6 +238,17 @@ function Swarm:Coverage()
     return fresh, #self.units, n
 end
 
+-- Seconds until the stalest category is due for a rescan (0 = scanning now).
+function Swarm:NextRescan()
+    if #self.units == 0 then return nil end
+    local now, soonest = self.serverTime(), math.huge
+    for _, u in ipairs(self.units) do
+        local left = self.cfg.fresh - (now - (self.doneAt[u] or 0))
+        if left < soonest then soonest = left end
+    end
+    return math.max(0, soonest)
+end
+
 -- "/amesh focus herbs" style shortcuts, plus raw class or class:subclass ids.
 local NAMED = {
     consumables = { 0 }, containers = { 1 }, weapons = { 2 }, gems = { 3 }, armor = { 4 },

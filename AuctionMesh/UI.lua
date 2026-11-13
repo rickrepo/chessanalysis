@@ -126,30 +126,50 @@ end
 
 ---------------------------------------------------------------- status line
 
+local function clock(s)
+    s = math.floor(s + 0.5)
+    return s >= 60 and ("%d:%02d"):format(s / 60, s % 60) or (s .. "s")
+end
+
+-- Three short lines: what is being checked and when, the last result, and the scan timer.
 local function buyStatus(n)
     if not ahOpen() then return GOLD .. "Open the Auction House to look for deals.|r" end
-    local S, Sw = ns.Sniper, ns.Swarm
-    local parts = {}
+    local S, Sw, G = ns.Sniper, ns.Swarm, ns.Gate
+    local name, lines = S.nameOf, {}
+    local q = S.background
+    local mode = ns.Deals.cfg.flips and "" or (GREEN .. "Vendor-only.|r ")
+
+    -- line 1: now / next
+    if G:UserBusy() then
+        lines[1] = ORANGE .. "Paused while your mouse is on the game's auction window.|r"
+    elseif S.searching then
+        lines[1] = mode .. "Checking now: " .. name(S.searching.key)
+    else
+        local key, pos = S:PeekNext()
+        local wait = math.max(0, (G.nextAt or 0) - GetTime())
+        if key then
+            lines[1] = ("%sNext check: %s in %.1fs%s"):format(mode, name(key), wait,
+                (pos and q) and ("  %s(%d of %d, round %d)|r"):format(GREY, pos, #q, (q.rounds or 0) + 1) or "")
+        else
+            lines[1] = mode .. "Nothing to check yet: waiting for the first price scan."
+        end
+    end
+    -- line 2: last result
+    local l = S.last
+    if l then
+        lines[2] = ("%sLast: %s: %s (%s ago)|r"):format(l.deal and GREEN or GREY, name(l.key),
+            l.deal and "DEAL FOUND" or ((l.reason or "no deal"):gsub("%$(%d+)", function(c) return ns.Seller.short(tonumber(c)) .. GREY end)),
+            clock(GetTime() - l.at))
+    end
+    -- line 3: scan timer
     if Sw and Sw.active and #Sw.units > 0 then
         local fresh, total = Sw:Coverage()
-        parts[#parts + 1] = fresh < total and ("Scanning prices: %d of %d categories done."):format(fresh, total)
-            or "Prices are up to date."
-    elseif ns.Store.n == 0 then
-        parts[#parts + 1] = "No price data yet."
+        local left = Sw:NextRescan() or 0
+        lines[#lines + 1] = fresh < total and ("%sPrice scan running: %d of %d categories.|r"):format(GREY, fresh, total)
+            or ("%sNext price scan in %s. Watching %d materials, full round about every %s.|r"):format(GREY, clock(left),
+                q and #q or 0, clock(math.max(15, (q and #q or 0) * 1.3)))
     end
-    local q = S.background
-    if q and #q > 0 then
-        parts[#parts + 1] = ("Watching %d materials (cloth, ore, herbs, leather, enchanting first), each re-read about every %ds."):format(#q, math.max(15, math.floor(#q * 1.3)))
-    end
-    local pending = S:Pending()
-    if pending > 0 then parts[#parts + 1] = ("Checking %d possible deal(s)..."):format(pending) end
-    if not ns.Deals.cfg.flips then table.insert(parts, 1, GREEN .. "Vendor-only mode.|r") end
-    if n == 0 then
-        parts[#parts + 1] = "No deals right now. Only confirmed deals you can afford are listed."
-    else
-        parts[#parts + 1] = GREEN .. "Press Buy. What you see is exactly what you get.|r"
-    end
-    return table.concat(parts, " ")
+    return table.concat(lines, "\n")
 end
 
 ---------------------------------------------------------------- render
@@ -186,8 +206,8 @@ function UI:Render()
     local n = self.notice
     if n and GetTime() < n.till then
         status = n.text
-    elseif ahOpen() and ns.Gate:UserBusy() then
-        status = ORANGE .. "Paused while your mouse is on the game's auction window (so its buttons don't flicker).|r " .. status
+    elseif self.tab == "SELL" and ahOpen() and ns.Gate:UserBusy() then
+        status = ORANGE .. "Paused while your mouse is on the game's auction window.|r " .. status
     end
     frame.status:SetText(status)
     for i = 1, ROWS do
@@ -284,7 +304,7 @@ end
 function UI:Create()
     if frame then return end
     frame = CreateFrame("Frame", "AuctionMeshFrame", UIParent, "BackdropTemplate")
-    frame:SetSize(WIDTH, 140 + ROWS * ROW_H)
+    frame:SetSize(WIDTH, 154 + ROWS * ROW_H)
     frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
         insets = { left = 3, right = 3, top = 3, bottom = 3 } })
@@ -324,13 +344,13 @@ function UI:Create()
     frame.headline:SetJustifyH("LEFT")
     frame.status:SetPoint("TOPLEFT", 12, -90)
     frame.status:SetWidth(WIDTH - 24)
-    frame.status:SetHeight(26)
+    frame.status:SetHeight(40)
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
 
     for i = 1, ROWS do
         local r = CreateFrame("Frame", nil, frame)
         r:SetSize(WIDTH - 20, ROW_H - 2)
-        r:SetPoint("TOPLEFT", 10, -120 - (i - 1) * ROW_H)
+        r:SetPoint("TOPLEFT", 10, -134 - (i - 1) * ROW_H)
         r.bg = r:CreateTexture(nil, "BACKGROUND")
         r.bg:SetAllPoints()
         r.bg:SetColorTexture(1, 1, 1, (i % 2 == 0) and 0.03 or 0.07)
@@ -376,6 +396,8 @@ function UI:Create()
         if UI.notice and GetTime() >= UI.notice.till then UI.notice = nil; UI.dirty = true end
         local paused = ns.Gate:UserBusy()
         if paused ~= UI.wasPaused then UI.wasPaused = paused; UI.dirty = true end
+        -- Timers tick while the BUY tab is open at the auction house.
+        if UI.tab == "BUY" and ahOpen() then UI.dirty = true end
         if UI.dirty then UI:Render() end
     end)
     frame:Hide()

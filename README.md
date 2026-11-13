@@ -43,6 +43,16 @@ A snipe only exists for a minute or two after someone posts it. So AuctionMesh d
 2. The watch list holds 40 items. First come the **staple low-level materials** that players levelling 1-40 and their professions burn through: linen, wool and silk cloth; copper, tin and iron ore and their bars; stone; light, medium and heavy leather; the early herbs; strange dust and the early essences; the first gems. The remaining slots go to the most-listed other materials you can afford.
 3. It re-reads the full listing of those 40, round and round, each about every 50 seconds. The moment a cheap listing shows up, it appears on the BUY tab.
 
+Under the headline, three lines keep you informed:
+
+```
+Next check: Linen Cloth in 0.6s  (3 of 40, round 12)
+Last: Copper Ore: cheapest is 9c, market 9c: needs 5c or less (2s ago)
+Next price scan in 13:41. Watching 40 materials, full round about every 52s.
+```
+
+The "Last" line gives the reason each item was or wasn't a deal. The same reasons go into the log as `NO DEAL` lines.
+
 The top of the window shows **MAKE NOW: +X**, the total profit of every deal you could buy this second. Each row shows its own profit in large type next to the Buy button.
 
 `/amesh scope money` widens the scope to reagents, consumables, gems and enhancements; `/amesh scope all` covers everything; `/amesh scope mats` goes back.

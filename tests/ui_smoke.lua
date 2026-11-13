@@ -251,6 +251,15 @@ Se:RecordSale(1); Se:RecordSale(1)
 check(ns.Store.sa[2589] == 77 and ns.Store.sn[2589] == 6, "sale invoice read once: buyers paid 77c each for 6")
 check(chat[#chat]:find("Sold: 6 x Linen Cloth at 77c each"), "chat reports the real sale")
 
+print("timers")
+S:RebuildBackground(); UI.tab = "BUY"; S.searching = nil; S.last = nil; S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)
+UI.notice = nil; UI:Render()
+local st = strip(AuctionMeshFrame.status._text)
+for l in st:gmatch("[^\n]+") do print("     " .. l) end
+check(st:find("Next check: .+ in %d+%.%ds") ~= nil, "shows what is checked next and in how many seconds")
+check(st:find("Last: Peacebloom: 500 cheap units is too many to clear", 1, true) ~= nil, "shows the last item checked and why it was not a deal")
+check(st:find("Next price scan in") ~= nil or st:find("Price scan running") ~= nil, "shows the price scan timer")
+
 print("watch list")
 S:RebuildBackground()
 check(S.background[1] == 2589 and S.background.staples >= 30, "staple low-level materials (Linen Cloth first) are always on the watch list")
