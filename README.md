@@ -21,6 +21,18 @@ Open the auction house. One window opens next to it and price scanning starts by
 
 With the auction house open, the panel is **inside the auction house window**: it covers the content area, is exactly that window's size, and opens, moves and closes with it. An **AuctionMesh** tab under the window switches between the game's own screens and the panel; clicking any of the game's tabs also switches back. At a vendor or mailbox it appears as a compact separate window. `/amesh dock off` makes it a separate window everywhere.
 
+### The look
+
+The panel is assembled from the game's own interface pieces, so it takes on the game's look instead of bringing its own:
+
+* the auction house's own background art, list stripes and row highlight;
+* the game's tab style for BUY / PORTFOLIO / HISTORY, and a real tab after the auction house's own tabs for switching to AuctionMesh;
+* the game's inset frame around the list and its gold column headings;
+* the game's coin icons for every price;
+* one line per row. The longer explanation ("Buy 6 for …, relist at …") is in the tooltip when you hover a row.
+
+Each piece is checked before use. If this client doesn't have one, a plain fallback is drawn in its place.
+
 ### The layout
 
 The window is laid out like a trading screen. The top strip shows **BALANCE**, **IN POSITIONS** (gold tied up in items you hold) and **OPEN P/L** (expected profit on them). Both tabs use the same columns:

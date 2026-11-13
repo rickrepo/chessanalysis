@@ -578,6 +578,11 @@ Seller.AcceptDrop = acceptDrop
 -- Short money text: 1g20s, 35s40c, 79c (colored like coins).
 local function short(c)
     if not c then return "?" end
+    -- The game's own coin icons (gold / silver / copper), exactly as its auction house shows prices.
+    if not ns.plainMoney and C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then
+        local v = math.abs(floor(c + 0.5))
+        return (c < 0 and "-" or "") .. C_CurrencyInfo.GetCoinTextureString(v)
+    end
     local neg = c < 0
     c = math.abs(floor(c + 0.5))
     local g, sv, cp = floor(c / 10000), floor(c / 100) % 100, c % 100

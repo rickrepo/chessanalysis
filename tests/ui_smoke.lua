@@ -138,7 +138,7 @@ C_AuctionHouse = {
 }
 
 -- Load the addon exactly as the client would.
-local ns = {}
+local ns = { plainMoney = true } -- tests read plain "1s20c" text; the game shows coin icons
 for line in io.lines("AuctionMesh/AuctionMesh.toc") do
     if line:match("%.lua$") then assert(loadfile("AuctionMesh/" .. line))("AuctionMesh", ns) end
 end
