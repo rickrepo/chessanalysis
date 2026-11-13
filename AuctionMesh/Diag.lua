@@ -75,28 +75,22 @@ end
 local Gate = { interval = 0.6, nextAt = 0, outstanding = 0, changedAt = 0, lastError = 0, errors = 0 }
 ns.Gate = Gate
 
--- True while you are using the game's own auction screens (its Sell tab, its
--- buy dialog), or for 8s after any AH request AuctionMesh did not send itself.
--- Background work stops completely then: every background query makes the
--- game grey out its own Create Auction / Buyout buttons for a moment.
+-- True when background work must stay silent: the AuctionMesh panel is not
+-- open, the mouse is on one of its Buy/Post buttons, or the game's own UI sent
+-- an auction request in the last 8s. Moving the mouse over the auction house
+-- window does NOT pause anything.
 local BLIZZ = { "ItemSellFrame", "CommoditiesSellFrame", "ItemBuyFrame", "CommoditiesBuyFrame", "WoWTokenSellFrame" }
 function Gate:UserBusy()
     if GetTime() < (self.userUntil or 0) then return true end
     local hb = ns.UI and ns.UI.hoverBtn
     if hb and hb.IsShown and hb:IsShown() and hb:IsMouseOver() then return true end
-    -- Our panel is shown inside the auction house window: the game's own
-    -- screens are covered, so the mouse being there is not "using the game's UI".
-    if ns.UI and ns.UI.docked and ns.UI:IsShown() then return false end
     local ah = AuctionHouseFrame
-    if type(ah) ~= "table" then return false end
-    -- Mouse on the game's auction window = you are using it. Everything in the
-    -- background waits, so the game's own buttons never flicker under your cursor.
-    if ah.IsShown and ah:IsShown() and ah.IsMouseOver and ah:IsMouseOver() then return true end
-    -- Any tab other than the first (Buy) is the game's Sell / My Auctions screen.
-    if PanelTemplates_GetSelectedTab and ah.IsShown and ah:IsShown() then
-        local ok, tab = pcall(PanelTemplates_GetSelectedTab, ah)
-        if ok and tab and tab ~= 1 then return true end
-    end
+    if type(ah) ~= "table" or not (ah.IsShown and ah:IsShown()) then return false end
+    -- AuctionMesh only works while its own panel is open. On the game's own
+    -- auction screens it sends nothing, so it never changes what the game shows you.
+    if not (ns.UI and ns.UI:IsShown()) then return true end
+    if ns.UI.docked then return false end
+    -- Separate-window mode: stay quiet while one of the game's sell/buy dialogs is up.
     for _, name in ipairs(BLIZZ) do
         local f = rawget(ah, name)
         if type(f) == "table" and f.IsShown and f:IsShown() then return true end

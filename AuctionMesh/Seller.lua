@@ -149,8 +149,8 @@ function Seller:Instructions(entries)
         end
     end
     if n.VENDOR > 0 then
-        add("VENDOR", merchantOpen() and "Selling vendor items..."
-            or ("Talk to any vendor: " .. n.VENDOR .. " item(s) sell automatically."))
+        add("VENDOR", merchantOpen() and ("Press Sell all to vendor (or Sell on a row) to sell " .. n.VENDOR .. " item(s).")
+            or ("Talk to any vendor to sell " .. n.VENDOR .. " item(s). Nothing is sold until you press Sell."))
     end
     if n.HOLD > 0 then add("HOLD", n.HOLD .. " item(s) waiting: the market is below what you paid. Re-checked every 10 min.") end
     if n.LISTED > 0 then
@@ -643,8 +643,8 @@ function Seller:Init()
     end
     f:SetScript("OnEvent", function(_, event, a1, a2)
         if event == "MERCHANT_SHOW" then
+            -- Nothing is sold by itself: the panel opens and waits for your click.
             Seller:Refresh("open")
-            C_Timer.After(0.3, function() Seller:SellVendor() end)
         elseif event == "MAIL_SHOW" then
             Seller:Refresh("open"); Seller:CollectMail()
         elseif event == "MAIL_INBOX_UPDATE" then

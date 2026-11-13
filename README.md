@@ -110,13 +110,13 @@ Everything you bought is listed here, with what you paid, what it sells for, the
 | It says | What happens |
 |---|---|
 | **In your mailbox** | Open any mailbox. AH purchases and sale gold are collected automatically, and the inbox is checked against your bags. |
-| **Sell to any vendor** | Talk to any vendor. These sell automatically. Only the units you bought are sold, never copies you already owned. |
+| **Sell to any vendor** | Talk to any vendor. Nothing is sold by itself: press **Sell all to vendor** (it shows the total you'll receive) or **Sell** on a single row. Only the units you bought are sold, never copies you already owned. |
 | **Ready to post** | Press **Post** (or **Post next**). The price is 1 step under the cheapest other seller, and never below what you paid plus the deposit plus the 5% cut. It posts everything of that item in one click. |
 | **Waiting: market is below your cost** | Nothing is posted, because that would lose money. It re-checks every 10 minutes. |
 
 The game requires one click or key press per auction. For speed, make a macro `/click AuctionMeshPostButton` and tap it. An item only leaves the list once your bags show it really went. Right-click a row to remove it. Drag an item from your bags onto the window to add it by hand.
 
-Background scanning and price checks pause completely while your mouse is on the game's auction window, while its Sell or Auctions tab is open, and for 8 seconds after any auction action you take there. Otherwise each background query would grey out the game's Create Auction button for a moment.
+AuctionMesh only works while its own panel is open. When you switch to the game's own auction screens it sends nothing at all, so it never changes what those screens show. Moving the mouse over the auction house window doesn't pause anything; it only waits briefly while your mouse is on a Buy or Post button, and for 8 seconds after you use one of the game's own auction buttons.
 
 Non-stackable items (gear, recipes) are never offered as deals. They are only priced for selling.
 

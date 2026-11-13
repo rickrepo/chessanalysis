@@ -193,7 +193,7 @@ local function buyStatus(n)
 
     -- line 1: now / next
     if G:UserBusy() then
-        lines[1] = ORANGE .. "Paused while your mouse is on the game's auction window.|r"
+        lines[1] = ORANGE .. "Paused for a moment (a click is in progress).|r"
     elseif S.searching then
         lines[1] = mode .. "Checking now: " .. name(S.searching.key)
     else
@@ -276,7 +276,7 @@ function UI:Render()
     if n and GetTime() < n.till then
         status = n.text
     elseif self.tab == "SELL" and ahOpen() and ns.Gate:UserBusy() then
-        status = ORANGE .. "Paused while your mouse is on the game's auction window.|r " .. status
+        status = ORANGE .. "Paused for a moment (a click is in progress).|r " .. status
     end
     frame.status:SetText(status)
     -- as many rows as the panel's height holds
@@ -321,6 +321,14 @@ function UI:Render()
     end
     frame.footer:SetText(text .. more)
     frame.post:SetShown(self.tab == "SELL" and ahOpen())
+    do  -- vendor sales always need your click
+        local nv, gain = 0, 0
+        for _, e in ipairs(entries) do
+            if e.action == "VENDOR" then nv = nv + 1; gain = gain + (e.f.sell or 0) * e.count end
+        end
+        frame.vend:SetShown(self.tab == "SELL" and merchantOpen() and nv > 0 and not ahOpen())
+        frame.vend:SetText(("Sell all to vendor  +%s"):format((short(gain):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))))
+    end
     frame.flips:SetText(ns.Deals.cfg.flips and "Mode: Vendor + Flips" or "Mode: Vendor only")
     frame.flips:SetShown(self.tab == "BUY")
 end
@@ -521,6 +529,8 @@ function UI:Create()
     frame.footer = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.footer:SetPoint("BOTTOMLEFT", 12, 13)
     frame.footer:SetJustifyH("LEFT")
+    frame.vend = button(frame, 210, "Sell all to vendor", function() ns.Seller:SellVendor() end)
+    frame.vend:SetPoint("BOTTOMRIGHT", -10, 8)
     frame.post = button(frame, 96, "Post next", function() ns.Seller:PostNext() end, "AuctionMeshPostButton")
     frame.post:SetPoint("BOTTOMRIGHT", -10, 8)
     frame.flips = button(frame, 160, "Mode: Vendor + Flips", function() UI:SetVendorOnly(ns.Deals.cfg.flips) end)
