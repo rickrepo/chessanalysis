@@ -13,8 +13,8 @@ Open the auction house and the **Snipes** window appears next to it. Each row is
 ```
 
 * **VENDOR** means the item is listed for less than a vendor pays for it. Buy it, sell it to any NPC, and keep the difference. It's risk-free, has no 5% AH cut, and works on a brand-new realm with no price history. These deals are always listed first.
-* **FLIP** means the cheapest listings are far below what the item really sells for. The resale price is the **lower** of two numbers: (a) the price once the cheap outliers are bought out, and (b) the item's moving average. On a new realm prices fall fast, so the lower number is the safer bet. Profit counts the 5% AH cut and a 1c undercut. The default bar is 30% profit.
-* **Budget-aware:** only items you can afford with the gold in your bag are shown. The buy amount is capped at your gold, and the budget updates as you earn. That works fine starting from 32s.
+* **FLIP** means the cheapest listings are far below what the item really sells for. The resale price is the **lower** of two numbers: (a) the price once the cheap outliers are bought out, and (b) the item's moving average. On a new realm prices fall fast, so the lower number is the safer bet. Profit counts the 5% AH cut, a 1c undercut, **and the deposit to relist it**. The default bar is 30% profit.
+* **Budget-aware:** only items you can afford with the gold in your bag are shown. The buy amount is capped at your gold **and keeps back the gold you'll need to post them**, and the budget updates as you earn. That works fine starting from 32s.
 * **Check** searches that item's listings to confirm the deal and work out exactly how many to buy. The sniper also checks affordable profession goods in the background, starting with the items that have the most listed (those resell fastest). Every price it confirms is shared with your friends, so they don't check the same items again.
 * **Buy** works differently by item type. For stackable goods, **Buy** asks the server for the real total, then you click **Confirm**. If the price rose more than 2% in the meantime, the purchase is cancelled automatically. For gear, one click buys one listing.
 * After you buy something, its tooltip says "sell to a vendor" or "post at X each".
@@ -105,7 +105,7 @@ Commands: `/amesh bag | snipe | margin <pct> | minprofit <copper> | swarm | focu
 ## Tests
 
 ```bash
-lua5.1 tests/sim.lua          # protocol simulator + deal and posting math (44 checks)
+lua5.1 tests/sim.lua          # protocol simulator + deal and posting math (52 checks)
 python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 ```
 
@@ -114,7 +114,8 @@ python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 * **Not yet run in the real client.** The protocol logic is tested offline against stubbed WoW APIs. The AH calls follow the retail `C_AuctionHouse` API, which Auctioneer's Forever build also uses.
 * If the client blocks automatic `SendBrowseQuery` (an `ADDON_ACTION_BLOCKED` message appears), the swarm switches to manual mode. Bind a key to `/amesh step`; each press scans one step.
 * While the swarm runs, it uses the AH browse list, so don't browse by hand at the same time.
-* The sniper never buys by itself. Every purchase is your click, which the game requires anyway. Check the numbers on expensive buys. The deposit to relist isn't included in profit; it's small and refunded on sale for most goods.
+* The sniper never buys by itself. Every purchase is your click, which the game requires anyway. Check the numbers on expensive buys.
+* **Deposits** are counted as a cost, since you lose them if an item doesn't sell. The amount comes from the game's own deposit calculation where that's available. Otherwise it's estimated at 15% of the vendor price, then replaced with the real figure after your first post of that item. Until an item's details have loaded, it's never treated as an AH flip.
 * Prices are stored per item ID, so different item levels of the same gear collapse into the cheapest one. Battle pets are stored per species.
 * Midnight blocks addon messages in some instanced or combat situations. Sends are paused in combat and retried automatically.
 * Anyone on the channel can send data, so only share the channel password with people you trust.

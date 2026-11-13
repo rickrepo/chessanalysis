@@ -237,15 +237,35 @@ function Seller:Tick()
     self:Refresh()
 end
 
+-- Real deposit per unit for posting `qty` of this item now (12h).
+function Seller:DepositEach(key, commodity, qty)
+    local AH, d = C_AuctionHouse, nil
+    if commodity then
+        d = AH.CalculateCommodityDeposit(key, DURATION, qty)
+    else
+        local bag, slot = self.FindInBags(key)
+        if bag then d = AH.CalculateItemDeposit(ItemLocation:CreateFromBagAndSlot(bag, slot), DURATION, 1) end
+    end
+    if d and d >= 0 then
+        local each = math.ceil(d / qty)
+        AuctionMeshDB.deposits = AuctionMeshDB.deposits or {}
+        AuctionMeshDB.deposits[key] = each -- the sniper uses this for future buys
+        return each
+    end
+    return ns.Sniper.depositOf(key, commodity)
+end
+
 -- Called by the sniper for every item search result (ours or anyone's).
 function Seller:OnResults(key, rows, commodity)
     local f = flips()[key]
     if not f or f.kind ~= "FLIP" then return end
     if self.pending and self.pending.key == key then self.pending = nil end
-    local price, why = Deals.postPrice(rows, f.cost or 0, f.sell or 0)
+    local qty = max(commodity and min(bagCount[key] or 0, f.units or 0) or 1, 1)
+    local depEach = self:DepositEach(key, commodity, qty)
+    local price, why = Deals.postPrice(rows, f.cost or 0, f.sell or 0, nil, depEach)
     if price then
-        local qty = commodity and min(bagCount[key] or 0, f.units or 0) or 1
-        self.prices[key] = { price = price, qty = max(qty, 1), commodity = commodity, why = why, at = GetTime() }
+        self.prices[key] = { price = price, qty = qty, commodity = commodity, why = why, at = GetTime(),
+                             deposit = depEach * qty }
     else
         self.prices[key] = { hold = why, at = GetTime() }
     end
@@ -277,7 +297,7 @@ function Seller:Post(key)
             AH.ConfirmPostItem(loc, DURATION, 1, nil, p.price)
         end
     end
-    say(("Posted %dx %s at %s each (%s)."):format(qty, nameOf(key), money(p.price), p.why))
+    say(("Posted %dx %s at %s each, deposit %s (%s)."):format(qty, nameOf(key), money(p.price), money(deposit), p.why))
     self.ForgetUnits(key, qty)
     self.prices[key] = nil
     self:Refresh()
@@ -311,6 +331,7 @@ local function slotTooltip(self)
     elseif e.action == "AH" then
         if p and p.price then
             GameTooltip:AddLine(c[4] .. ("Post %dx at %s each (%s)|r"):format(p.commodity and p.qty or 1, money(p.price), p.why))
+            GameTooltip:AddLine(("|cffaaaaaaDeposit %s (included: price covers cost + deposit + 5%% cut)|r"):format(money(p.deposit or 0)))
         else
             GameTooltip:AddLine(c[4] .. (ahOpen() and "Checking price..." or "Open the Auction House to post") .. "|r")
         end

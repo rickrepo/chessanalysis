@@ -389,5 +389,34 @@ do
     check(deal and deal.sell == 900 and deal.sell % 100 == 0, "flip resale price is a valid silver amount")
 end
 
+------------------------------------------------------------------ 9. deposits
+print("deposits")
+do
+    local ns = {}
+    assert(loadfile("AuctionMesh/Store.lua"))("AuctionMesh", ns)
+    assert(loadfile("AuctionMesh/Deals.lua"))("AuctionMesh", ns)
+    local D, S = ns.Deals, ns.Store
+    local rows = { { price = 20, qty = 40 }, { price = 78, qty = 100 }, { price = 80, qty = 300 }, { price = 85, qty = 500 } }
+    local d0 = D.evaluate(rows, nil, nil, 3200)
+    local d = D.evaluate(rows, nil, nil, 3200, nil, 10)
+    check(d and d.deposit == 400 and d.profit == d0.profit - 400, "deposit is subtracted from flip profit")
+    local tight = D.evaluate(rows, nil, nil, 1200, nil, 10)
+    check(tight and tight.units == 40 and tight.cost + tight.deposit <= 1200, "gold for the deposit is kept back from the budget")
+    local tighter = D.evaluate(rows, nil, nil, 900, nil, 10)
+    check(tighter and tighter.units == 30, "with 9s it buys 30 (30 x (20c + 10c deposit)), not 45")
+    check(D.evaluate(rows, nil, nil, 3200, nil, 50) == nil, "a deposit that eats the margin kills the deal (50c deposit vs 79c resale)")
+    check(D.evaluate({ { price = 50, qty = 10 } }, nil, 100, 3200, nil, 40).profit == 500, "vendor flips pay no deposit")
+    check(D.evaluate(rows, nil, nil, 3200, nil, math.huge) == nil, "unknown deposit: no AH flip")
+    check(D.postPrice({ { price = 80, qty = 5 } }, 50, 79, nil, 20) == 79 and D.postPrice({ { price = 80, qty = 5 } }, 60, 79, nil, 20) == nil,
+        "post floor covers cost + deposit + cut (holds when it doesn't)")
+    S:Attach({})
+    local now = 1763000000
+    for i = 1, 5 do S:Sample(11, 1000, now - 20000 + i * 3600) end
+    S:Put(11, 500, 5, now)
+    local c1 = D.candidates(S, 3200, now, function() return nil end)
+    local c2 = D.candidates(S, 3200, now, function() return nil end, nil, nil, function() return 300 end)
+    check(#c1 == 1 and #c2 == 0, "screening also counts the deposit")
+end
+
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

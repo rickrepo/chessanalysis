@@ -56,6 +56,29 @@ function Sniper.vendorOf(key)
     return sell > 0 and sell or nil
 end
 
+-- AH deposit per unit for a 12h listing. Order of preference:
+--   1. what we actually paid last time we posted this item (learned)
+--   2. the game's own calculation (commodities, AH open)
+--   3. estimate: 15% of the vendor price (corrected by 1 after the first post)
+local DEPOSIT_RATE = 0.15
+local depCache = {}
+function Sniper.depositOf(key, commodity)
+    local learned = AuctionMeshDB and AuctionMeshDB.deposits and AuctionMeshDB.deposits[key]
+    if learned then return learned end
+    if depCache[key] then return depCache[key] end
+    local AH = C_AuctionHouse
+    if commodity ~= false and AH and AH.CalculateCommodityDeposit then
+        local ok, d = pcall(AH.CalculateCommodityDeposit, key, 1, 100)
+        if ok and d and d > 0 then
+            depCache[key] = math.ceil(d / 100)
+            return depCache[key]
+        end
+    end
+    local v = Sniper.vendorOf(key)
+    if v == nil and Sniper.vendor[key] == nil then return math.huge end -- item info not loaded yet: don't guess
+    return math.ceil((v or 0) * DEPOSIT_RATE)
+end
+
 local function classOf(key)
     local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(key)
     return classID
@@ -92,7 +115,9 @@ function Sniper:Evaluate(key, rows, commodity)
     -- Average only (not fair): the fair price is recomputed from these very rows.
     local avg, n = Store.a[key], Store.an[key]
     local ref = (avg and n and n >= Deals.cfg.minSamples) and avg or nil
-    local deal, fair = Deals.evaluate(rows, ref, self.vendorOf(key), self:Budget())
+    -- Unknown deposit (item info not loaded) = math.huge: rules out AH flips, vendor flips still work.
+    local dep = self.depositOf(key, commodity)
+    local deal, fair = Deals.evaluate(rows, ref, self.vendorOf(key), self:Budget(), nil, dep)
     if fair then Sync:ObserveFair(key, fair) end
     if deal then
         deal.at, deal.commodity, deal.key = GetTime(), commodity, key
@@ -201,7 +226,8 @@ function Sniper:Screen()
     for k, d in pairs(self.verified) do
         if now - d.at > VERIFIED_TTL then self.verified[k] = nil end
     end
-    self.candidates = Deals.candidates(Store, self:Budget(), t, self.vendorOf, nil, 40)
+    self.candidates = Deals.candidates(Store, self:Budget(), t, self.vendorOf, nil, 40,
+        function(k) return self.depositOf(k) end)
     self.dirty = true
 end
 
