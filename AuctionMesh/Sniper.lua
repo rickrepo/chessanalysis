@@ -88,6 +88,7 @@ local function sortRows(rows) table.sort(rows, function(a, b) return a.price < b
 
 function Sniper:Evaluate(key, rows, commodity)
     sortRows(rows)
+    if ns.Seller then ns.Seller:OnResults(key, rows, commodity) end
     -- Average only (not fair): the fair price is recomputed from these very rows.
     local avg, n = Store.a[key], Store.an[key]
     local ref = (avg and n and n >= Deals.cfg.minSamples) and avg or nil
@@ -209,15 +210,26 @@ end
 local function recordFlip(deal, units, spent)
     local db = AuctionMeshDB
     db.flips = db.flips or {}
-    db.flips[deal.key] = { kind = deal.kind, sell = deal.sell, units = units, at = GetServerTime() }
+    -- Merge with earlier buys of the same item: units add up, cost is the weighted average.
+    local f = db.flips[deal.key]
+    local unitCost = units > 0 and spent / units or 0
+    if f and f.kind == deal.kind then
+        local total = (f.units or 0) + units
+        f.cost = floor(((f.cost or unitCost) * (f.units or 0) + spent) / total + 0.5)
+        f.units, f.sell, f.at = total, deal.sell, GetServerTime()
+    else
+        db.flips[deal.key] = { kind = deal.kind, sell = deal.sell, units = units,
+                               cost = floor(unitCost + 0.5), at = GetServerTime() }
+    end
+    if ns.Seller then ns.Seller:Refresh(true) end
     local s = Sniper.stats
     s.bought, s.spent = s.bought + units, s.spent + spent
     local each = deal.units > 0 and floor(deal.profit / deal.units) or 0
     s.expected = s.expected + each * units
     if deal.kind == "VENDOR" then
-        say(("Bought %d x %s for %s. Vendor them: %s each."):format(units, nameOf(deal.key), money(spent), money(deal.sell)))
+        say(("Bought %d x %s for %s. It's in your mailbox; the Flip Bag shows what to do."):format(units, nameOf(deal.key), money(spent)))
     else
-        say(("Bought %d x %s for %s. Post at %s each."):format(units, nameOf(deal.key), money(spent), money(deal.sell)))
+        say(("Bought %d x %s for %s. It's in your mailbox; the Flip Bag shows what to do."):format(units, nameOf(deal.key), money(spent)))
     end
 end
 
@@ -356,6 +368,11 @@ function Sniper:CreateWindow()
     local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", 0, 0)
     close:SetScript("OnClick", function() Sniper:Stop() end)
+    local bagBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    bagBtn:SetSize(72, 18)
+    bagBtn:SetPoint("TOPRIGHT", -30, -7)
+    bagBtn:SetText("Flip Bag")
+    bagBtn:SetScript("OnClick", function() if ns.Seller then ns.Seller:Toggle() end end)
     for i = 1, ROWS do
         local r = CreateFrame("Frame", nil, frame)
         r:SetSize(450, 22)

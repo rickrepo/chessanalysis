@@ -19,6 +19,19 @@ Open the auction house and the **Snipes** window appears next to it. Each row is
 * **Buy** works differently by item type. For stackable goods, **Buy** asks the server for the real total, then you click **Confirm**. If the price rose more than 2% in the meantime, the purchase is cancelled automatically. For gear, one click buys one listing.
 * After you buy something, its tooltip says "sell to a vendor" or "post at X each".
 
+## The Flip Bag (selling what you bought)
+
+A bag-style window (`/amesh bag`, or the **Flip Bag** button on the Snipes window) that shows every item you bought to flip. Each item has a colored badge, and the text at the top always tells you the next step:
+
+| Badge | Meaning | What happens |
+|---|---|---|
+| **MAIL** (blue) | AH purchases arrive in your mailbox | Open any mailbox; purchases and sale gold are collected automatically |
+| **VENDOR** (green) | Sell to an NPC | Talk to any vendor; these sell automatically |
+| **AH** (gold) | Post on the auction house | Open the AH. Each item is priced 1 step under the cheapest competitor, never below what you paid plus the 5% cut. **Click an item to post it** |
+| **HOLD** (red) | Market is below what you paid | Not posted, because that would lose money. It re-checks every 10 minutes |
+
+The game requires one click or keypress per auction posted, so posting can't be fully automatic. For speed, make a macro `/click AuctionMeshPostButton`, bind it to a key, and tap it to post your items one after another. Listings are 12 hours, which has the cheapest deposit. Right-click an item in the Flip Bag to stop tracking it.
+
 Settings: `/amesh margin 30` (flip profit %), `/amesh minprofit 20` (minimum copper per deal), `/amesh snipe` (toggle the window).
 
 Profession goods (trade goods, reagents, recipes, profession items) are the swarm's default focus, because that's where the money is on a new realm.
@@ -87,12 +100,12 @@ The server and every client use the same conflict rule: the newer timestamp wins
 2. Everyone in the group runs the same command once: `/amesh channel <SecretName> <password>`. Or use `/amesh guild` to go over guild chat instead.
 3. At the AH, run `/amesh swarm`. Price lines show up in item tooltips. `/amesh` on its own shows status and statistics.
 
-Commands: `/amesh snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <itemID|link>`
+Commands: `/amesh bag | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <itemID|link>`
 
 ## Tests
 
 ```bash
-lua5.1 tests/sim.lua          # protocol simulator + deal math (35 checks)
+lua5.1 tests/sim.lua          # protocol simulator + deal and posting math (44 checks)
 python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 ```
 

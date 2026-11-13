@@ -364,5 +364,30 @@ do
         "screen: vendor deal first, then flip; skips unaffordable and stale")
 end
 
+------------------------------------------------------------------ 8. posting prices
+print("posting")
+do
+    local ns = {}
+    assert(loadfile("AuctionMesh/Store.lua"))("AuctionMesh", ns)
+    assert(loadfile("AuctionMesh/Deals.lua"))("AuctionMesh", ns)
+    local D = ns.Deals
+    -- copper allowed
+    check(D.postPrice({ { price = 80, qty = 5 } }, 20, 79) == 79, "undercuts the cheapest competitor by 1c")
+    check(D.postPrice({ { price = 120, qty = 5 } }, 20, 79) == 119, "competitor higher than planned: take the extra profit")
+    check(D.postPrice({}, 20, 79) == 79, "no competition: post at planned price")
+    local p, why = D.postPrice({ { price = 20, qty = 5 } }, 30, 79)
+    check(p == nil and why:find("below break%-even"), "market below what we paid: hold, never sell at a loss")
+    check(D.breakEven(100) == 107, "break-even covers the 5% cut and 1c profit")
+    -- silver-only auction house
+    local cfg = {}
+    for k, v in pairs(D.cfg) do cfg[k] = v end
+    cfg.step, cfg.undercut = 100, 100
+    check(D.postPrice({ { price = 1500, qty = 5 } }, 200, 1400, cfg) == 1400, "silver-only AH: undercut by 1s")
+    check(D.postPrice({ { price = 300, qty = 1 } }, 280, 300, cfg) == 300, "silver-only AH: match when undercutting would lose money")
+    check(D.round(1999, cfg) == 1900, "prices round down to whole silver")
+    local deal = D.evaluate({ { price = 200, qty = 10 }, { price = 1000, qty = 50 }, { price = 1050, qty = 100 } }, nil, nil, 3200, cfg)
+    check(deal and deal.sell == 900 and deal.sell % 100 == 0, "flip resale price is a valid silver amount")
+end
+
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

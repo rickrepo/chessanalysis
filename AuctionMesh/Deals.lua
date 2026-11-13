@@ -16,12 +16,27 @@ ns.Deals = Deals
 
 local floor, min, max, ceil = math.floor, math.min, math.max, math.ceil
 
+-- Round down to a price the auction house accepts.
+function Deals.round(p, cfg)
+    local s = (cfg or Deals.cfg).step
+    return floor(p / s) * s
+end
+
+-- Lowest unit price that still makes `minEach` profit after the AH cut, rounded up to a valid price.
+function Deals.breakEven(cost, cfg)
+    cfg = cfg or Deals.cfg
+    local s = cfg.step
+    local p = ceil((cost + 1) / (1 - cfg.cut))
+    return ceil(p / s) * s
+end
+
 Deals.cfg = {
     margin = 0.30,        -- FLIP: profit must be >= 30% of what we pay (after the AH cut)
     vendorMargin = 0.10,  -- VENDOR: risk-free, so 10% is enough
     minProfit = 20,       -- ignore deals that make less than this in total
     cut = 0.05,           -- auction house cut on sales
-    undercut = 1,         -- we relist 1 copper under the competition
+    undercut = 1,         -- we relist this far under the competition (100 if the AH has no copper)
+    step = 1,             -- smallest price unit the AH accepts (Core sets 100 if copper is rejected)
     fairDepth = 0.15,     -- fair price = price once 15% of supply is bought out
     fairMaxAge = 20 * 60, -- a fair price older than this is re-checked
     minSamples = 4,       -- average needs this many samples before we trust it
@@ -60,7 +75,8 @@ function Deals.evaluate(rows, ref, vendor, budget, cfg)
     local sell = fair
     if ref and ref > 0 then sell = sell and min(sell, ref) or ref end
 
-    local ahNet = sell and floor((sell - cfg.undercut) * (1 - cfg.cut)) or 0
+    if sell then sell = Deals.round(sell - cfg.undercut, cfg) end
+    local ahNet = (sell and sell > 0) and floor(sell * (1 - cfg.cut)) or 0
     local vendorNet = vendor or 0
     local ahMax = floor(ahNet / (1 + cfg.margin))
     local vMax = floor(vendorNet / (1 + cfg.vendorMargin))
@@ -96,7 +112,7 @@ function Deals.evaluate(rows, ref, vendor, budget, cfg)
     return {
         kind = kinds.VENDOR >= kinds.FLIP and "VENDOR" or "FLIP",
         units = units, cost = cost, profit = profit, maxUnit = maxUnit,
-        sell = (kinds.VENDOR >= kinds.FLIP) and vendorNet or (sell - cfg.undercut),
+        sell = (kinds.VENDOR >= kinds.FLIP) and vendorNet or sell,
         fair = fair, buys = buys, counts = counts,
     }, fair
 end
@@ -120,9 +136,10 @@ function Deals.candidates(store, budget, now, vendorOf, cfg, limit)
             end
             local ref = store:Reference(key, now, cfg.fairMaxAge, cfg.minSamples)
             if ref then
-                local net = floor((ref - cfg.undercut) * (1 - cfg.cut))
-                if p <= floor(net / (1 + cfg.margin)) and (not best or net - p > best) then
-                    best, kind, sell = net - p, "FLIP", ref - cfg.undercut
+                local s = Deals.round(ref - cfg.undercut, cfg)
+                local net = floor(s * (1 - cfg.cut))
+                if s > 0 and p <= floor(net / (1 + cfg.margin)) and (not best or net - p > best) then
+                    best, kind, sell = net - p, "FLIP", s
                 end
             end
             if best and best * units >= cfg.minProfit then
@@ -139,6 +156,24 @@ function Deals.candidates(store, budget, now, vendorOf, cfg, limit)
     end)
     if limit and n > limit then for i = n, limit + 1, -1 do out[i] = nil end end
     return out
+end
+
+-- Posting price for an item we flipped.
+--   rows   others' current listings, ascending (own listings excluded)
+--   cost   what we paid per unit
+--   target resale price we planned when buying
+-- Returns price, reason. price nil = hold (market is below our break-even).
+function Deals.postPrice(rows, cost, target, cfg)
+    cfg = cfg or Deals.cfg
+    local floorP = Deals.breakEven(cost, cfg)
+    local lowest = rows[1] and rows[1].price
+    if not lowest then
+        return max(Deals.round(target, cfg), floorP), "no competition"
+    end
+    local p = Deals.round(lowest - cfg.undercut, cfg)
+    if p >= floorP then return p, "undercut" end
+    if lowest >= floorP then return lowest, "match" end -- can't undercut further, match instead
+    return nil, ("market %d is below break-even %d"):format(lowest, floorP)
 end
 
 return Deals

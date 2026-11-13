@@ -1,6 +1,6 @@
 -- AuctionMesh Core: wiring, saved data, seed import/export, tooltip, slash commands.
 local ADDON, ns = ...
-local Codec, Store, Comm, Sync, Scanner, Swarm, Sniper, Deals = ns.Codec, ns.Store, ns.Comm, ns.Sync, ns.Scanner, ns.Swarm, ns.Sniper, ns.Deals
+local Codec, Store, Comm, Sync, Scanner, Swarm, Sniper, Deals, Seller = ns.Codec, ns.Store, ns.Comm, ns.Sync, ns.Scanner, ns.Swarm, ns.Sniper, ns.Deals, ns.Seller
 
 local floor = math.floor
 
@@ -128,6 +128,11 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         Swarm:SetFocus(db.cfg.focus)
         Deals.cfg.margin, Deals.cfg.minProfit = db.cfg.margin / 100, db.cfg.minProfit
         Sniper:Init(function() return AuctionMeshDB.cfg.snipeAuto end)
+        Seller:Init()
+        -- Retail-style AH rejects copper: prices must be whole silver, so undercut by 1s.
+        if C_AuctionHouse.SupportsCopperValues and not C_AuctionHouse.SupportsCopperValues() then
+            Deals.cfg.step, Deals.cfg.undercut = 100, 100
+        end
         hookTooltips()
 
         -- Channels can't be joined reliably in the first seconds after login.
@@ -156,7 +161,9 @@ SlashCmdList.AUCTIONMESH = function(input)
     local cmd, rest = (input or ""):match("^(%S*)%s*(.-)$")
     cmd = cmd:lower()
     local cfg = AuctionMeshDB.cfg
-    if cmd == "snipe" then
+    if cmd == "bag" then
+        Seller:Toggle()
+    elseif cmd == "snipe" then
         if Sniper.active then Sniper:Stop(); cfg.snipeAuto = false; say("Sniper off (won't auto-open).")
         else cfg.snipeAuto = true; Sniper:Start() end
     elseif cmd == "margin" then
@@ -210,6 +217,6 @@ SlashCmdList.AUCTIONMESH = function(input)
             say(("swarm %s: %d/%d categories fresh, %d peers scanning, you did %d units / %d queries"):format(
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
-        say("Commands: /amesh snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <item>")
+        say("Commands: /amesh bag | snipe | margin <pct> | minprofit <copper> | swarm | focus <types> | step | channel <name> [pw] | guild | scan [force] | sync | price <item>")
     end
 end

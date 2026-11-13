@@ -16,4 +16,5 @@ Scanner.lua
 Swarm.lua
 Deals.lua
 Sniper.lua
+Seller.lua
 Core.lua
