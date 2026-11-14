@@ -129,6 +129,9 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         db.realms[realm] = db.realms[realm] or {}
         local r = db.realms[realm]
         Store:Attach(r)
+        r.learn = r.learn or {}
+        ns.Learn:Attach(r.learn)
+        if db.cfg.autoTune == false then ns.Learn.cfg.autoTune = false end
         local pruned = Store:Prune(GetServerTime() - Sync.cfg.maxAge)
         local hItems, hRecords = Store:TrimHistory(GetServerTime())
         ns.historyNote = ("price history: %d items, %d hourly records"):format(hItems, hRecords)
@@ -299,6 +302,16 @@ SlashCmdList.AUCTIONMESH = function(input)
             say(("%s%+d%%|r  %s  now %s"):format(e.tr >= 0 and "|cff33ff66" or "|cffff4040", floor(e.tr * 100 + 0.5),
                 Sniper.nameOf(e.key), money(Store.fp[e.key] or 0)))
         end
+    elseif cmd == "learn" then
+        if rest == "off" or rest == "on" then
+            ns.Learn.cfg.autoTune = (rest == "on"); cfg.autoTune = ns.Learn.cfg.autoTune
+            say(ns.Learn.cfg.autoTune and "The profit bar adjusts itself from results." or "The profit bar stays where you set it.")
+        elseif rest == "reset" then
+            for k in pairs(ns.Learn.d) do ns.Learn.d[k] = nil end
+            ns.Learn:Attach(ns.Learn.d); say("Learning data cleared.")
+        else
+            say(ns.Learn:Summary())
+        end
     elseif cmd == "limits" then
         -- what has been measured on this client, this session
         local G, M = ns.Gate, ns.measure and ns.measure.last
@@ -322,7 +335,7 @@ SlashCmdList.AUCTIONMESH = function(input)
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
     else
-        say("/amesh = open the window | limits | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
+        say("/amesh = open the window | learn | limits | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
         say("Sharing: /amesh channel <name> [password] | guild | sync.   Scanning: /amesh scope money/all | swarm | focus <types>")
     end
 end

@@ -337,7 +337,7 @@ function UI:Render()
     frame.next:SetText("|cffffd100NEXT:|r " .. nextStep(deals, entries, short))
     local status = self.tab == "BUY" and buyStatus(#deals) or Se:Instructions(entries)
     if self.tab == "HISTORY" then
-        status = #list == 0 and (GREY .. "Nothing yet. Purchases, mailbox pick-ups, posts and sales are listed here.|r") or ""
+        status = GREY .. ns.Learn:Summary() .. "|r"
     end
     local n = self.notice
     if n and GetTime() < n.till then

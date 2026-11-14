@@ -153,6 +153,27 @@ Everyone running AuctionMesh on the same hidden channel (or in the same guild) i
 
 Limit set by the game: each player can send about one hidden message a second, so this carries prices and signals, not bulk data.
 
+### Learning from results, together
+
+The addon predicts a resale price for every flip. It now checks every prediction against what happened, and everyone on your channel shares those results, so the rules are tuned on the whole group's trades.
+
+**What counts as a result**
+
+* **Sold:** when you collect the sale gold, the invoice says what the buyer really paid. That is compared with the price planned at purchase.
+* **Expired:** an auction that comes back unsold in the mail. The addon recognises it, puts it back in your PORTFOLIO with what it cost you (so it can be reposted without selling at a loss), and counts the failure.
+
+**What is adjusted** (all bounded; nothing changes before 5 results)
+
+| Learned | Effect | Limits |
+|---|---|---|
+| **Price factor:** average of real sale price / planned price | If sales come in at 93% of plan, every future plan is multiplied by 0.93 | Never above 100%, never below 80% |
+| **Item record** | An item that expired is not flipped again for 12 hours; 24 after two failures in a row | Up to 48 hours; a sale clears it |
+| **Profit bar** | Under 70% of the last 20 flips sold: bar goes up 5 points. Over 90% sold: down 2 points | Between 12% and 50%; reconsidered once per 10 results |
+
+`/amesh learn` prints the current state, for example: "Learning from 23 finished flips (9 yours, 14 from friends): 87% of the last 20 sold, sales came in at 96% of the planned price. Profit bar: 22%." The HISTORY tab shows the same line. `/amesh learn off` stops the profit bar adjusting itself; `/amesh learn reset` clears what was learned.
+
+This is scorekeeping and calibration, not a neural network. It needs finished flips to learn from, so it changes nothing at first, and it learns faster the more people on the channel are trading.
+
 ### The price history database
 
 AuctionMesh keeps a database of price history inside its own saved data (an addon can't query an outside database while you play, so this is the only place it can be used for decisions).

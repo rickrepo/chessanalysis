@@ -21,6 +21,8 @@
 --     5. One item never takes more than `maxSpend` (50%) of our gold (all of it while under 1g).
 --     6. Profit after the 5% AH cut and the deposit is at least `margin` (20%).
 --     9. Never goods that NPC vendors sell in unlimited supply.
+--    12. Learned: finished flips (ours and friends') scale the planned price
+--        and put an item that failed to sell on hold (see Learn.lua).
 --    11. Trend: the price history database must not show the market price in
 --        free fall (10% or more in ~6h); a slower decline lowers the planned
 --        resale price by the same amount.
@@ -149,6 +151,13 @@ local function flipDeal(rows, o, cfg)
     -- price change over the last ~6 hours. A price in free fall is not a flip:
     -- by the time ours sells, "market" is lower. A slow decline is priced in by
     -- assuming it continues: we plan to sell at today's price minus the same drop.
+    -- Rule 12, learned from finished flips (ours and friends'): an item that
+    -- just failed to sell is left alone for a while, and planned prices are
+    -- scaled by how sales have really come in against plan.
+    if o.blockedHours then
+        return nil, wall, ("did not sell last time (yours or a friend's): skipped for %d more hour(s)"):format(math.ceil(o.blockedHours))
+    end
+    if o.learn and o.learn < 1 then ref = floor(ref * o.learn) end
     if o.trend and o.trend <= -cfg.trendSkip then
         return nil, wall, ("price is falling fast (%d%% in 6h): not buying into a drop"):format(floor(o.trend * 100 + 0.5))
     end

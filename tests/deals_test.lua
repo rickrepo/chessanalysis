@@ -142,6 +142,66 @@ local vend = { [10] = 100, [13] = 1000 }
 local c = D.candidates(S, 3200, t, function(k) return vend[k] end)
 check(#c == 2 and c[1].key == 10 and c[1].kind == "VENDOR" and c[2].key == 11, "screen: vendor candidates first; skips unaffordable and stale")
 
+print("learning from outcomes")
+do
+    local sentMsgs = {}
+    local ln = { Deals = D, Codec = nil, Sync = { OPS = {} }, Comm = { LIVE = 2, Enqueue = function(_, lane, m) sentMsgs[#sentMsgs + 1] = m end } }
+    assert(loadfile("AuctionMesh/Codec.lua"))("AuctionMesh", ln)
+    assert(loadfile("AuctionMesh/Learn.lua"))("AuctionMesh", ln)
+    local L = ln.Learn
+    local clockNow = 1763000000
+    L.serverTime = function() return clockNow end
+    L:Attach({})
+    local margin0 = D.cfg.margin
+    check(L:Factor() == 1 and L:Blocked(7) == nil, "nothing learned yet: prices and items are untouched")
+    for _ = 1, 4 do L:Outcome(7, true, 0.90) end
+    check(L:Factor() == 1, "four sales are not enough to change anything")
+    L:Outcome(7, true, 0.90)
+    check(math.abs(L:Factor() - 0.90) < 0.001, "after 5 sales at 90% of plan, planned prices are scaled to 90%")
+    for _ = 1, 30 do L:Outcome(7, true, 1.40) end
+    check(L:Factor() == 1, "sales above plan never raise the plan above 100%")
+    for _ = 1, 60 do L:Outcome(7, true, 0.50) end
+    check(L:Factor() == 0.80, "the price factor never goes below 80%")
+    -- item record
+    L:Attach({})
+    L:Outcome(9, false)
+    check(L:Blocked(9) and L:Blocked(9) > 11.9, "an item that expired is not flipped again for 12 hours")
+    L:Outcome(9, false)
+    check(L:Blocked(9) > 23.9, "two failures in a row: 24 hours")
+    clockNow = clockNow + 25 * 3600
+    check(L:Blocked(9) == nil, "the hold ends by itself")
+    L:Outcome(9, false); L:Outcome(9, true, 1)
+    check(L:Blocked(9) == nil, "a sale clears the hold")
+    -- deal rules use both
+    local dl = ev(with({ { price = 20, qty = 40 } }), { learn = 0.9 })
+    check(dl and dl.sell == math.floor(78 * 0.9) - 1, "deal rule: planned resale scaled by the learned factor (" .. tostring(dl and dl.sell) .. "c)")
+    local _, _, wb = ev(with({ { price = 20, qty = 40 } }), { blockedHours = 7.2 })
+    check(wb and wb:find("did not sell last time") and wb:find("8 more hour"), "deal rule: a held item is refused with the reason")
+    -- margin tuning, slow and bounded
+    L:Attach({}); D.cfg.margin = 0.20
+    for i = 1, 10 do L:Outcome(100 + i, i <= 5, 1) end
+    check(math.abs(D.cfg.margin - 0.25) < 1e-9, "only half of 10 flips sold: profit bar raised from 20% to 25%")
+    for i = 1, 20 do L:Outcome(200 + i, true, 1) end
+    check(math.abs(D.cfg.margin - 0.23) < 1e-9, "then 20 in a row sold: unchanged at 75% sold, then lowered 2 points once the last 20 all sold (23%)")
+    L.cfg.autoTune = false
+    for i = 1, 20 do L:Outcome(300 + i, false) end
+    check(math.abs(D.cfg.margin - 0.23) < 1e-9, "with self-adjustment off, the bar stays where it is")
+    L.cfg.autoTune = true
+    -- shared with the channel
+    L:Attach({}); sentMsgs = {}
+    L:Outcome(4306, true, 0.93)
+    local L2ns = { Deals = D, Sync = { OPS = {} }, Comm = ln.Comm }
+    assert(loadfile("AuctionMesh/Codec.lua"))("AuctionMesh", L2ns)
+    assert(loadfile("AuctionMesh/Learn.lua"))("AuctionMesh", L2ns)
+    L2ns.Learn.serverTime = L.serverTime
+    L2ns.Learn:Attach({})
+    L2ns.Sync.OPS[90](nil, sentMsgs[1], "Friend")
+    local d2 = L2ns.Learn.d
+    check(#sentMsgs == 1 and d2.n == 1 and d2.ok == 1 and d2.mine == 0 and math.abs(d2.ratio - 0.93) < 0.001, "an outcome is broadcast and a friend's addon records it (as a friend's)")
+    print("     " .. L2ns.Learn:Summary())
+    D.cfg.margin = margin0
+end
+
 print("price history database")
 S:Attach({})
 local H = 3600

@@ -206,6 +206,8 @@ function Sniper:Evaluate(key, rows, commodity)
         noFlip = VENDOR_SOLD[key],
         rate = (Store:Rate(key, 100)),
         trend = Store:Trend(key, GetServerTime(), 6),
+        learn = ns.Learn and ns.Learn:Factor() or nil,
+        blockedHours = ns.Learn and ns.Learn:Blocked(key) or nil,
     })
     if wall then Sync:ObserveFair(key, wall) end
     if self.buying and self.buying.key == key then

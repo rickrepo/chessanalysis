@@ -269,6 +269,29 @@ check(ns.Store.sa[2589] == 77 and ns.Store.sn[2589] == 6, "sale invoice read onc
 check(AuctionMeshDB.realized == 24 + (462 - 23 - 120) and (AuctionMeshDB.listed or {})[2589] == nil,
     ("sale collected: banked profit is now %dc and the listing leaves the portfolio"):format(AuctionMeshDB.realized or 0))
 check(chat[#chat]:find("Sold: 6 x Linen Cloth at 77c each. Profit +319c", 1, true), "chat reports the sale and the profit made")
+check(ns.Learn.d.n == 1 and ns.Learn.d.ok == 1 and math.abs(ns.Learn.d.ratio - 1) < 0.01, "the sale is scored against its prediction: sold at 100% of plan")
+
+print("an auction that expires")
+do
+    -- we listed 5 Wool Cloth an hour ago; it is no longer among our auctions and sits in the mailbox
+    ITEMS[2592] = { "Wool Cloth", 33 }
+    AuctionMeshDB.listed = { [2592] = { qty = 5, price = 160, cost = 34, plan = 160, at = GetServerTime() - 3600 } }
+    S.own, S.ownRead = {}, true
+    for s2 = 1, 16 do bags[s2] = nil end
+    inbox = { { itemID = 2592, stackCount = 5 } }
+    GetInboxInvoiceInfo = function() return nil end
+    AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
+    MailFrame:Show(); fire("MAIL_SHOW"); advance(4)
+    local f = AuctionMeshDB.flips[2592]
+    check(f and f.units == 5 and f.cost == 34 and AuctionMeshDB.listed[2592] == nil, "expired auction is back in the portfolio with what it cost you")
+    check(bags[1] and bags[1].itemID == 2592 and #inbox == 0, "and it was collected from the mailbox")
+    check(ns.Learn.d.fail == 1 and ns.Learn:Blocked(2592) ~= nil, "the failure is scored: that item is on hold for new flips")
+    MailFrame:Hide(); fire("MAIL_CLOSED")
+    AuctionMeshDB.flips[2592] = nil; bags[1] = nil
+    GetInboxInvoiceInfo = function() return "buyer" end
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(2)
+    ns.Learn.d.items[2592] = nil
+end
 
 print("minimum profit control")
 UI:SetVendorOnly(false)

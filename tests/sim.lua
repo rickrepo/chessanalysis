@@ -31,7 +31,7 @@ local sentLog = {}   -- per peer: list of send times (for throttle checks)
 
 local function newPeer(name)
     local ns = {}
-    for _, f in ipairs({ "Codec", "Store", "Comm", "Sync", "Swarm" }) do
+    for _, f in ipairs({ "Codec", "Store", "Comm", "Sync", "Swarm", "Deals", "Learn" }) do
         assert(loadfile("AuctionMesh/" .. f .. ".lua"))("AuctionMesh", ns)
     end
     local P = { name = name, ns = ns }
@@ -43,6 +43,8 @@ local function newPeer(name)
     Sync.clock = function() return NOW end
     Sync.serverTime = function() return SERVER0 + math.floor(NOW) end
     Sync.after = after
+    ns.Learn.serverTime = function() return SERVER0 + math.floor(NOW) end
+    ns.Learn:Attach({})
     ns.Swarm.clock = function() return NOW end
     ns.Swarm.serverTime = Sync.serverTime
     sentLog[name] = {}
@@ -261,6 +263,11 @@ do
     N.ns.Sniper = { AddTrigger = function(_, key, why) if key == 4306 then got = got + 1 end end }
     run(3)
     check(got == 1, "a deal hint reaches the friend once (repeat hints are held back)")
+    V.ns.Learn:Outcome(2589, true, 0.95); V.ns.Learn:Outcome(2770, false)
+    run(3)
+    local nd = N.ns.Learn.d
+    check(nd.n == 2 and nd.ok == 1 and nd.fail == 1 and nd.mine == 0 and N.ns.Learn:Blocked(2770) ~= nil,
+        "flip outcomes reach the friend: one sale, one expiry, and the expired item is on hold there too")
 end
 
 ------------------------------------------------------------------ 6. swarm scanning

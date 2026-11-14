@@ -235,6 +235,15 @@ function Seller:CollectMail()
                     C_Timer.After(0.4, step); return
                 elseif invoice == "seller" and (moneyAmt or 0) > 0 then
                     TakeInboxMoney(i); C_Timer.After(0.4, step); return
+                elseif not invoice and hasItem and (moneyAmt or 0) == 0 then
+                    -- a returned (expired) auction of an item we are tracking
+                    local nm, id, _, cnt = GetInboxItem(i, 1)
+                    local f = id and flips()[id]
+                    if f and f.proof == "auction expired, returned by mail" and (bagCount[id] or 0) < (f.units or 0) then
+                        AutoLootMailItem(i)
+                        say(("|cff4d99ffCollected from mailbox:|r %s x %s (expired auction) is back in your bags."):format(tostring(cnt or 1), tostring(nm or "item")))
+                        C_Timer.After(0.4, step); return
+                    end
                 end
             end
         end
@@ -276,6 +285,8 @@ function Seller:RecordSale(i)
             Seller.Realize(profit)
             profitText = (" Profit %s%s."):format(profit >= 0 and "+" or "-", money(math.abs(profit)))
         end
+        -- score the prediction: real sale price against the price planned at purchase
+        if ns.Learn and (L.plan or L.price or 0) > 0 then ns.Learn:Outcome(key, true, unit / (L.plan or L.price)) end
         L.qty = L.qty - count
         if L.qty <= 0 then AuctionMeshDB.listed[key] = nil end
     end
@@ -307,6 +318,29 @@ end
 function Seller:Reconcile()
     if not self.mailCount then return end
     local now = GetServerTime()
+    -- An auction that expired comes back in the mail. It is one of ours if we
+    -- have it on record as listed, it is no longer among our auctions, and the
+    -- item is sitting in the mailbox. Put it back in the portfolio with its cost
+    -- (so it can be reposted without selling at a loss) and score the failure.
+    local S = ns.Sniper
+    if S and S.ownRead then
+        local returned = false
+        for key, L in pairs(AuctionMeshDB.listed or {}) do
+            local inMail = self.mailCount[key] or 0
+            local live = 0
+            for _, q in pairs(S.own[key] or {}) do live = live + q end
+            if inMail > 0 and live == 0 and not flips()[key] and now - (L.at or 0) > 600 then
+                local n = min(inMail, L.qty)
+                flips()[key] = { kind = "FLIP", units = n, cost = L.cost or 0, unknownCost = (L.cost == nil),
+                                 sell = L.price, at = now, proof = "auction expired, returned by mail" }
+                AuctionMeshDB.listed[key] = nil
+                if ns.Learn then ns.Learn:Outcome(key, false) end
+                say(("|cffff8040Expired unsold:|r %d x %s came back by mail. It is in your PORTFOLIO again."):format(n, nameOf(key)))
+                returned = true
+            end
+        end
+        if returned then C_Timer.After(0.5, function() Seller:CollectMail() end) end
+    end
     for key, f in pairs(flips()) do
         local inMail = self.mailCount[key] or 0
         local have = (bagCount[key] or 0) + inMail
@@ -477,10 +511,11 @@ function Seller:CheckPosted()
         AuctionMeshDB.listed = AuctionMeshDB.listed or {}
         local L = AuctionMeshDB.listed[q.key]
         local cost = f and not f.unknownCost and f.cost or (L and L.cost) or nil
+        local plan = f and f.sell or q.price -- the resale price predicted when it was bought
         if L then
-            L.qty, L.price, L.cost, L.at = L.qty + posted, q.price, cost, GetServerTime()
+            L.qty, L.price, L.cost, L.at, L.plan = L.qty + posted, q.price, cost, GetServerTime(), plan
         else
-            AuctionMeshDB.listed[q.key] = { qty = posted, price = q.price, cost = cost, at = GetServerTime() }
+            AuctionMeshDB.listed[q.key] = { qty = posted, price = q.price, cost = cost, at = GetServerTime(), plan = plan }
         end
     end
     self.ForgetUnits(q.key, min(gone, q.qty))
