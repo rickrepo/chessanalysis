@@ -111,6 +111,13 @@ What the addon does with that:
 | Items whose details aren't loaded are skipped at no cost and retried in a few seconds | Avoids the dead wait described above |
 | A request the client did not transmit is dropped after 0.4s | It used to block the queue for 6s |
 
+The addon measures two of these figures itself, live, instead of trusting the numbers above:
+
+* **Seconds per request**, timed from each request to the moment the game unlocks. The sweep interval is computed from this figure, so if the server slows down at busy times the addon follows.
+* **What one sweep really costs:** items returned, requests used, and the largest number of results one request returned.
+
+Both are shown in the radar line ("Radar: 212 items in 5 requests, re-read every 11s. limit 1.6/s."), printed by `/amesh limits`, and written to the log as `SWEEP measured` and `LIMIT measured`.
+
 ### How it looks for deals (the radar)
 
 The auction house offers two kinds of search, and they cost the same one request each:

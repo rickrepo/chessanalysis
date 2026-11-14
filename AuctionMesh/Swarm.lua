@@ -263,10 +263,17 @@ function Swarm:Tune(unit, requests)
     for _, u in ipairs(self.units) do total = total + (self.unitReq[u] or 1) end
     local fresh = total * self.cfg.perRequest / self.cfg.sweepShare
     fresh = math.max(8, math.min(90, floor(fresh + 0.5)))
-    if fresh ~= self.cfg.fresh then
-        if ns.Log then ns.Log("SWEEP costs %d request(s): radar interval set to %ds", total, fresh) end
-        self.cfg.fresh = fresh
+    local M = ns.measure
+    if M then
+        -- what this sweep actually was: items seen, requests used, largest page
+        M.last = { items = M.items or 0, requests = total, pageMax = M.pageMax or 0 }
+        if ns.Log then
+            ns.Log("SWEEP measured: %d item(s) in %d request(s); largest page %d; %.2fs per request; radar every %ds",
+                M.last.items, total, M.last.pageMax, self.cfg.perRequest, fresh)
+        end
+        M.pages, M.items = 0, 0
     end
+    self.cfg.fresh = fresh
 end
 
 -- Seconds until the stalest category is due for a rescan (0 = scanning now).

@@ -398,6 +398,28 @@ do
     Sw:Tune(Sw.units[1], 6); local f6 = Sw.cfg.fresh
     check(f1 == 8 and f6 == 13, ("radar interval follows the sweep's real cost: 1 request -> every %ds, 6 requests -> every %ds"):format(f1, f6))
     Sw:Tune(Sw.units[1], 1)
+    -- the addon measures what one request returns and how fast requests go, instead of assuming
+    local function page(n, first)
+        local res = {}
+        for i = 1, n do res[i] = { itemKey = { itemID = 900000 + i + (first and 0 or 1000) }, minPrice = 100, totalQuantity = 5 } end
+        ns.Scanner:OnBrowse(res, first)
+    end
+    ns.measure.pages, ns.measure.items, ns.measure.pageMax = 0, 0, 0
+    page(50, true); page(50, false); page(23, false)
+    Sw:Tune(Sw.units[1], 3)
+    local ML = ns.measure.last
+    check(ML and ML.items == 123 and ML.requests == 3 and ML.pageMax == 50, "sweep measured: 123 items in 3 requests, largest page 50")
+    for _ = 1, 12 do
+        fire("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT"); advance(0.15)
+        fire("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED"); advance(0.5)
+        fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    end
+    local G = ns.Gate
+    check(G.cycle and G.cycle > 0.6 and G.cycle < 0.7 and math.abs(Sw.cfg.perRequest - G.cycle) < 1e-9,
+        ("request limit measured live: %.2fs per request, and the sweep interval uses it"):format(G.cycle or 0))
+    G.sawSent = false; Sw:Tune(Sw.units[1], 1)
+    UI.tab = "BUY"; UI.notice = nil; UI:Render()
+    for l in strip(AuctionMeshFrame.status._text):gmatch("[^\n]+") do if l:find("Radar") then print("     " .. l) end end
     -- the queue moves the instant the auction house unlocks
     S.triggers, S.verified, S.checkedAt = {}, {}, {}
     LIST[2589] = { { 100, 300 }, { 101, 300 } }
@@ -415,7 +437,7 @@ local st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
 check(st:find("Next check: .+ in %d+%.%ds") ~= nil, "shows what is checked next and in how many seconds")
 check(st:find("Last: Peacebloom: 500 cheap units is too many to clear", 1, true) ~= nil, "shows the last item checked and why it was not a deal")
-check(st:find("Radar: every crafting material re%-read every") ~= nil, "shows the radar line")
+check(st:find("Radar:.- re%-read every %d+s") ~= nil, "shows the radar line")
 
 print("radar: category sweeps find the drop, one full search confirms it")
 ns.Deals.cfg.requireTurnover = false

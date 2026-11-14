@@ -173,11 +173,30 @@ end
 
 local function onEvent(_, event, ...)
     if event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
+        -- MEASURE the limit itself: seconds from a request being sent to the lock
+        -- opening again, smoothed. The sweep interval is computed from this live
+        -- figure, so if the server slows down at busy times the addon follows.
+        if Gate.sentAt then
+            local dt = GetTime() - Gate.sentAt
+            Gate.sentAt = nil
+            if dt > 0.2 and dt < 10 then
+                local old = Gate.cycle
+                Gate.cycle = old and (old * 0.9 + dt * 0.1) or dt
+                Gate.cycleN = (Gate.cycleN or 0) + 1
+                if ns.Swarm and Gate.cycleN >= 5 then ns.Swarm.cfg.perRequest = math.max(0.4, math.min(3, Gate.cycle)) end
+                local shown = Gate.cycleShown
+                if Gate.cycleN >= 10 and (not shown or math.abs(Gate.cycle - shown) > shown * 0.2) then
+                    Gate.cycleShown = Gate.cycle
+                    Log("LIMIT measured: %.2fs per request (%.1f a second) over %d requests", Gate.cycle, 1 / Gate.cycle, Gate.cycleN)
+                end
+            end
+        end
         -- The lock just opened: send the next request this very frame.
         if ns.OnAHReady then ns.OnAHReady() end
         return -- too frequent to be worth a log line each
     elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT" then
         Gate.sentCount, Gate.sawSent = Gate.sentCount + 1, true
+        Gate.sentAt = GetTime()
         Gate.outstanding, Gate.changedAt = Gate.outstanding + 1, GetTime()
     elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED" then
         Gate.outstanding, Gate.changedAt = math.max(0, Gate.outstanding - 1), GetTime()

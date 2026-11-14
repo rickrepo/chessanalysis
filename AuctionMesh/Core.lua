@@ -179,6 +179,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         C_Timer.NewTicker(30, function() Sync:Tidy() end)
         C_Timer.NewTicker(150, function() if Comm:Route() then Sync:Beacon() end end)
         ns.sessionStart, ns.realizedAtLogin = GetTime(), AuctionMeshDB.realized or 0
+        ns.measure = {} -- live measurements of the request limit and sweep cost
         -- EVENT-DRIVEN PUMP. The instant the auction house unlocks, send the next
         -- request: first the sniper (a click you made, a trigger, a price check),
         -- then the sweep. The slow timers remain only as a safety net.
@@ -298,6 +299,13 @@ SlashCmdList.AUCTIONMESH = function(input)
             say(("%s%+d%%|r  %s  now %s"):format(e.tr >= 0 and "|cff33ff66" or "|cffff4040", floor(e.tr * 100 + 0.5),
                 Sniper.nameOf(e.key), money(Store.fp[e.key] or 0)))
         end
+    elseif cmd == "limits" then
+        -- what has been measured on this client, this session
+        local G, M = ns.Gate, ns.measure and ns.measure.last
+        say(G.cycle and ("Request limit: %.2fs per request (%.1f a second), measured over %d requests."):format(G.cycle, 1 / G.cycle, G.cycleN or 0)
+            or "Request limit: not measured yet (open the auction house with the panel open).")
+        say(M and ("Sweep: %d materials in %d request(s); largest page returned %d results; radar every %ds."):format(M.items, M.requests, M.pageMax, Swarm.cfg.fresh)
+            or "Sweep: not measured yet.")
     elseif cmd == "status" then
         local cs, ss = Comm.stats, Sync.stats
         local chatType, target = Comm:Route()
@@ -314,7 +322,7 @@ SlashCmdList.AUCTIONMESH = function(input)
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
     else
-        say("/amesh = open the window | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
+        say("/amesh = open the window | limits | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
         say("Sharing: /amesh channel <name> [password] | guild | sync.   Scanning: /amesh scope money/all | swarm | focus <types>")
     end
 end

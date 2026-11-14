@@ -237,8 +237,11 @@ local function buyStatus(n)
         local fresh, total = Sw:Coverage()
         local left = Sw:NextRescan() or 0
         local peers = ns.Sync:PeerCount()
-        lines[#lines + 1] = ("%sRadar: every crafting material re-read every %ds (%d of %d current, next in %s).  %s|r"):format(
-            GREY, Sw.cfg.fresh, fresh, total, clock(left),
+        local M, G = ns.measure and ns.measure.last, ns.Gate
+        local measured = M and (" %d items in %d request%s,"):format(M.items, M.requests, M.requests == 1 and "" or "s") or ""
+        local limit = G.cycle and (" limit %.1f/s."):format(1 / G.cycle) or ""
+        lines[#lines + 1] = ("%sRadar:%s re-read every %ds (next in %s).%s  %s|r"):format(
+            GREY, measured, Sw.cfg.fresh, clock(left), limit,
             peers > 0 and (GREEN .. ("Sharing live with %d other player%s."):format(peers, peers == 1 and "" or "s"))
             or "Not sharing: nobody else is connected (/amesh channel or a shared guild).")
     end

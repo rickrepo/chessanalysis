@@ -47,6 +47,15 @@ end
 function Scanner:OnBrowse(results, reset)
     if reset then browseMin = {} end
     if not results then return end
+    -- MEASURE: how many results one category request really returns on this
+    -- client. The public API pages don't say; this settles it.
+    local M = ns.measure
+    if M then
+        local n = #results
+        M.pages, M.items = (M.pages or 0) + 1, (M.items or 0) + n
+        if n > (M.pageMax or 0) then M.pageMax = n end
+        if ns.Log then ns.Log("BROWSE page: %d result(s)%s", n, reset and " (first page)" or " (next page)") end
+    end
     local batch = {}
     for i = 1, #results do
         local r = results[i]
