@@ -444,6 +444,7 @@ function UI:Render()
     for i = 1, MAXROWS do
         local r, item = rows[i], (i <= vis) and list[i + off] or nil
         r.item, r.sect = nil, nil
+        r.sel:SetShown(item ~= nil and item.key ~= nil and item.key == self.sel and AuctionMeshDB.cfg.drawer == true)
         if not item then r:Hide() else
             local plain = item.head or item.note
             r.head:SetText(plain and (GREY .. plain .. "|r") or "")
@@ -520,6 +521,7 @@ function UI:Render()
         frame.vend:SetShown(tab == "SELL" and merchantOpen() and nv > 0 and not ahOpen())
         frame.vend:SetText(("Sell all to vendor  +%s"):format((short(gain):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))))
     end
+    self:RenderDrawer(entries)
 end
 
 ---------------------------------------------------------------- clicks
@@ -560,7 +562,7 @@ local function rowEnter(self)
             GameTooltip:AddLine(RED .. p.hold .. "|r")
         end
         if item.f.proof then GameTooltip:AddLine(GREEN .. "Purchase confirmed: " .. item.f.proof .. "|r") end
-        GameTooltip:AddLine(GREY .. "Right-click: remove from this list|r")
+        GameTooltip:AddLine(GREY .. "Click: details and what to do. Right-click: remove from this list|r")
     else
         local d = item
         if d.kind == "FLIP" then
@@ -581,13 +583,19 @@ local function rowEnter(self)
             GameTooltip:AddLine(d.sold and (GREEN .. "Real sales on record: buyers paid " .. ns.Seller.short(d.sold) .. " each.|r")
                 or (GREY .. "No recorded sale of this item yet.|r"))
         end
+        GameTooltip:AddLine(GREY .. "Click: everything known about this item|r")
     end
     GameTooltip:Show()
 end
 
 local function rowMouseUp(self, button)
     if GetCursorInfo() then return ns.Seller.AcceptDrop() end
-    if button == "RightButton" and self.item and self.item.action then ns.Seller:Untrack(self.item.key) end
+    if button == "RightButton" and self.item and self.item.action then return ns.Seller:Untrack(self.item.key) end
+    -- left click: this item's details in the drawer
+    if self.item and self.item.key and button ~= "RightButton" then
+        UI.sel, UI.dscroll = self.item.key, 0
+        UI:ToggleDrawer(true)
+    end
 end
 
 ---------------------------------------------------------------- window
@@ -803,6 +811,11 @@ function UI:Create()
         r.hl = r:CreateTexture(nil, "HIGHLIGHT")
         r.hl:SetAllPoints()
         r.hl:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.10)
+        -- teal edge on the row whose details are open in the drawer
+        r.sel = r:CreateTexture(nil, "ARTWORK")
+        r.sel:SetPoint("TOPLEFT", 0, 0); r.sel:SetPoint("BOTTOMLEFT", 0, 0); r.sel:SetWidth(2)
+        r.sel:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 1)
+        r.sel:Hide()
         -- section heading: grey small caps over a thin rule
         r.head = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
         r.head:SetPoint("LEFT", 4, 0)
@@ -876,6 +889,7 @@ function UI:Create()
         if ahOpen() and UI.tick % 3 == 0 then UI.dirty = true end
         if UI.dirty then UI:Render() end
     end)
+    self:CreateDrawer()
     frame:Hide()
 end
 
@@ -984,6 +998,271 @@ function UI:Place()
         if pos then frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else frame:SetPoint("CENTER", 0, 40) end
     end
     self.docked = dock
+end
+
+---------------------------------------------------------------- detail drawer
+
+-- A panel that slides out on the right: every trade from purchase to sale
+-- with its profit, and one recommendation per open trade. Clicking an item
+-- row on the left shows that item alone, with everything known about it.
+local DRAWER_W, DLINES, DLINE_H = 400, 34, 15
+local WHITE = "|cffffffff"
+
+local function ago(t)
+    local age = GetServerTime() - (t or GetServerTime())
+    if age < 90 then return age .. "s ago" end
+    if age < 5400 then return floor(age / 60) .. " min ago" end
+    if age < 48 * 3600 then return floor(age / 3600) .. " h ago" end
+    return floor(age / 86400) .. " days ago"
+end
+
+-- breaks plain text into lines of about `width` characters, at spaces
+local function wrap(text, width)
+    local out, line = {}, ""
+    local function len(s) return #(s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end -- colour codes take no room
+    for word in tostring(text):gmatch("%S+") do
+        if #line > 0 and len(line) + 1 + len(word) > width then out[#out + 1] = line; line = word
+        else line = (#line > 0) and (line .. " " .. word) or word end
+    end
+    if #line > 0 then out[#out + 1] = line end
+    return out
+end
+
+local function signed(c, short) return (c >= 0 and "+ " or "- ") .. short(math.abs(c)) end
+
+local TONE = { ["do"] = { TEAL, "DO" }, wait = { GREY, "WAIT" }, warn = { ORANGE, "CHECK" } }
+
+-- one recommendation, wrapped, with its tone word in front of the first line
+local function adviceLines(out, e)
+    local text, tone = ns.Seller:Advice(e)
+    local t = TONE[tone] or TONE.wait
+    text = text:gsub("^Wait%. ", "") -- the tone word in front already says it
+    for i, l in ipairs(wrap(text, 56)) do
+        out[#out + 1] = { l = (i == 1 and (t[1] .. t[2] .. "|r  ") or "         ") .. l, advice = i == 1 and tone or nil }
+    end
+end
+
+-- the lines of one trade: bought, what became of it, profit, what to do
+local function tradeLines(out, t, byKey, short)
+    local J, Se = ns.Journal, ns.Seller
+    local left = J.left(t)
+    out[#out + 1] = { l = WHITE .. tostring(t.name) .. " x" .. t.qty .. "|r", r = GREY .. ago(t.at) .. "|r", trade = t }
+    out[#out + 1] = { l = t.cost and ("Bought at %s each"):format(short(t.cost)) or "Bought (cost not known)",
+        r = t.cost and ("- " .. short(t.cost * t.qty)) or (GREY .. "?|r") }
+    local sold, vend = t.sold or 0, t.vend or 0
+    if sold > 0 and vend == 0 then
+        out[#out + 1] = { l = ("Sold %d at %s each, after the cut"):format(sold, short(t.soldPrice or 0)), r = GREEN .. "+ " .. short(t.got or 0) .. "|r" }
+    elseif vend > 0 and sold == 0 then
+        out[#out + 1] = { l = ("Sold %d to a vendor at %s each"):format(vend, short(t.vendPrice or 0)), r = GREEN .. "+ " .. short(t.got or 0) .. "|r" }
+    elseif sold > 0 then
+        out[#out + 1] = { l = ("Sold %d at auction and %d to a vendor"):format(sold, vend), r = GREEN .. "+ " .. short(t.got or 0) .. "|r" }
+    end
+    if (t.expired or 0) > 0 then
+        out[#out + 1] = { l = GREY .. ("Came back unsold %d time%s|r"):format(t.expired, t.expired == 1 and "" or "s") }
+    end
+    if (t.lost or 0) > 0 then
+        out[#out + 1] = { l = GREY .. ("%d not counted: %s|r"):format(t.lost, tostring(t.lostWhy or "removed")) }
+    end
+    local made = J.realized(t)
+    if made then
+        out[#out + 1] = { l = left > 0 and "Profit made so far" or "Profit made", r = (made >= 0 and GREEN or RED) .. signed(made, short) .. "|r" }
+    end
+    if left > 0 then
+        local listed = math.min(t.listed or 0, left)
+        local expect, known = 0, t.cost ~= nil
+        if listed > 0 then
+            local net = floor((t.price or 0) * (1 - ns.Deals.cfg.cut)) * listed
+            expect = expect + net
+            out[#out + 1] = { l = ("On the auction house: %d at %s each"):format(listed, short(t.price or 0)), r = ORANGE .. "+ " .. short(net) .. "|r" }
+        end
+        local rest = left - listed
+        local held
+        for _, e in ipairs(byKey[t.key] or {}) do if e.action ~= "LISTED" then held = held or e end end
+        if rest > 0 then
+            if held then
+                local _, _, net = Se:Numbers(held)
+                expect = expect + (net or 0) * rest
+                local where = held.action == "MAIL" and "In the mailbox" or held.action == "HOLD" and "Held in your bags" or "In your bags"
+                out[#out + 1] = { l = ("%s: %d, at the live price"):format(where, rest), r = ORANGE .. "+ " .. short((net or 0) * rest) .. "|r" }
+            else
+                known = false
+                out[#out + 1] = { l = GREY .. ("%d not found in bags or mailbox yet|r"):format(rest) }
+            end
+        end
+        if known then
+            local p = expect - t.cost * left
+            out[#out + 1] = { l = "Profit if this sells", r = (p >= 0 and ORANGE or RED) .. signed(p, short) .. "|r" }
+        end
+        -- what to do: one recommendation per state this trade is in
+        for _, e in ipairs(byKey[t.key] or {}) do
+            if (e.action == "LISTED" and listed > 0) or (e.action ~= "LISTED" and rest > 0) then adviceLines(out, e) end
+        end
+    end
+    out[#out + 1] = { rule = true }
+end
+
+-- everything the drawer shows, as a flat list of lines
+function UI:DrawerLines(entries)
+    local J, Se, S, St = ns.Journal, ns.Seller, ns.Sniper, ns.Store
+    local short = Se.short
+    local out, byKey = {}, {}
+    for _, e in ipairs(entries) do
+        byKey[e.key] = byKey[e.key] or {}
+        table.insert(byKey[e.key], e)
+    end
+    local key = self.sel
+    if key then
+        -- ONE ITEM: the market as last read, then your trades in it
+        local now = GetServerTime()
+        out[#out + 1] = { l = WHITE .. S.nameOf(key) .. "|r", big = true }
+        out[#out + 1] = { head = "MARKET" }
+        local function fact(l, v) out[#out + 1] = { l = l, r = v or (GREY .. "not known yet|r") } end
+        fact("Cheapest listing", St.p[key] and (short(St.p[key]) .. GREY .. "  " .. ago(St.t[key]) .. "|r"))
+        local ft = St.ft[key]
+        fact("Market price, from the full listing", (ft and St.fp[key]) and (short(St.fp[key]) .. GREY .. "  " .. ago(ft) .. "|r"))
+        local tr = St:Trend(key, now, 24)
+        fact("Change in 24 hours", tr and ((tr >= 0 and GREEN or RED) .. ("%+d%%|r"):format(floor(tr * 100 + 0.5))))
+        local rate = St:Rate(key, 100)
+        fact("Sold per hour, measured", rate and tostring(floor(rate + 0.5)))
+        local paid = St:Sold(key, now, 48 * 3600)
+        fact("Buyers really paid, last 48h", paid and short(paid))
+        local v = S.vendorOf(key)
+        fact("A vendor pays", v and v > 0 and short(v) or (GREY .. "nothing|r"))
+        local why = S.reasons and S.reasons[key]
+        if why then
+            why = tostring(why):gsub("%$(%d+)", function(c) return short(tonumber(c)) end)
+            for i, l in ipairs(wrap("Last check: " .. why, 60)) do out[#out + 1] = { l = GREY .. l .. "|r" } end
+        end
+        local trades = J:Trades(key)
+        out[#out + 1] = { head = ("YOUR TRADES IN THIS ITEM (%d)"):format(#trades) }
+        if #trades == 0 then out[#out + 1] = { l = GREY .. "You have not bought this item with the addon.|r" } end
+        for _, t in ipairs(trades) do tradeLines(out, t, byKey, short) end
+        return out
+    end
+    -- EVERYTHING: totals, open trades, finished trades
+    local s = J:Totals()
+    local trades = J:Trades()
+    local open, done, expect = {}, {}, 0
+    for _, t in ipairs(trades) do
+        if J.left(t) > 0 then open[#open + 1] = t else done[#done + 1] = t end
+    end
+    for _, e in ipairs(entries) do
+        local paid, _, net = Se:Numbers(e)
+        if paid and e.action ~= "HOLD" and not (e.action == "LISTED" and e.live == 0) then
+            local each = e.action == "LISTED" and floor((e.listed.price or 0) * (1 - ns.Deals.cfg.cut)) or net
+            expect = expect + (each - paid) * e.count
+        end
+    end
+    out[#out + 1] = { head = "ALL TRADES" }
+    out[#out + 1] = { l = "Bought so far", r = ("%d trade%s, %s spent"):format(s.trades, s.trades == 1 and "" or "s", short(s.spent)) }
+    out[#out + 1] = { l = "Finished / still open", r = ("%d / %d"):format(s.finished, s.open) }
+    out[#out + 1] = { l = "Profit made on what has sold", r = (s.profit >= 0 and GREEN or RED) .. signed(s.profit, short) .. "|r" }
+    out[#out + 1] = { l = "Profit if everything open sells", r = (expect >= 0 and ORANGE or RED) .. signed(expect, short) .. "|r" }
+    out[#out + 1] = { head = ("OPEN (%d)"):format(#open) }
+    if #open == 0 then out[#out + 1] = { l = GREY .. "Nothing open. Buy a deal on the Trades tab.|r" } end
+    for _, t in ipairs(open) do tradeLines(out, t, byKey, short) end
+    out[#out + 1] = { head = ("FINISHED (%d)"):format(#done) }
+    if #done == 0 then out[#out + 1] = { l = GREY .. "Nothing has sold yet.|r" } end
+    for _, t in ipairs(done) do tradeLines(out, t, byKey, short) end
+    return out
+end
+
+function UI:CreateDrawer()
+    local d = CreateFrame("Frame", "AuctionMeshDrawer", frame)
+    d:SetWidth(DRAWER_W)
+    d:SetPoint("TOPLEFT", frame, "TOPRIGHT", 1, 0)
+    d:SetPoint("BOTTOMLEFT", frame, "BOTTOMRIGHT", 1, 0)
+    d:EnableMouse(true)
+    d.art = d:CreateTexture(nil, "BACKGROUND", nil, -8)
+    d.art:SetAllPoints()
+    d.art:SetColorTexture(0.045, 0.05, 0.06, 0.97)
+    outline(d, LINE)
+    d.title = d:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    d.title:SetPoint("TOPLEFT", 12, -14)
+    d.title:SetText("DETAILS")
+    d.all = button(d, 90, "All trades", function() UI.sel = nil; UI.dscroll = 0; UI:Render() end)
+    d.all:SetPoint("TOPRIGHT", -12, -8)
+    d.hint = d:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    d.hint:SetPoint("BOTTOMLEFT", 12, 10)
+    d.hint:SetPoint("BOTTOMRIGHT", -12, 10)
+    d.hint:SetJustifyH("LEFT"); d.hint:SetWordWrap(false)
+    d.lines = {}
+    for i = 1, DLINES do
+        local y = -38 - (i - 1) * DLINE_H
+        local l = d:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        l:SetPoint("TOPLEFT", 12, y)
+        l:SetJustifyH("LEFT"); l:SetWordWrap(false)
+        local v = d:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        v:SetPoint("TOPRIGHT", -12, y)
+        v:SetJustifyH("RIGHT"); v:SetWordWrap(false)
+        local rule = d:CreateTexture(nil, "ARTWORK")
+        rule:SetPoint("TOPLEFT", 12, y - 7); rule:SetPoint("TOPRIGHT", -12, y - 7); rule:SetHeight(1)
+        rule:SetColorTexture(LINE[1], LINE[2], LINE[3], 0.6)
+        d.lines[i] = { label = l, value = v, rule = rule }
+    end
+    d:EnableMouseWheel(true)
+    d:SetScript("OnMouseWheel", function(_, delta)
+        UI.dscroll = math.max(0, (UI.dscroll or 0) - (delta or 0) * 4)
+        UI:Render()
+    end)
+    d:Hide()
+    frame.drawer = d
+
+    -- the handle on the panel's right edge: opens and closes the drawer
+    local h = button(frame, 18, "", function() UI:ToggleDrawer() end)
+    h:SetHeight(112)
+    h:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Details")
+        GameTooltip:AddLine("Every trade from purchase to sale, its profit,\nand what to do with what you hold.", 0.8, 0.8, 0.8)
+        GameTooltip:Show()
+    end)
+    h:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame.handle = h
+    self:PlaceDrawer()
+end
+
+function UI:PlaceDrawer()
+    local d, h = frame.drawer, frame.handle
+    local open = AuctionMeshDB.cfg.drawer == true
+    d:SetShown(open)
+    h:ClearAllPoints()
+    h:SetPoint("TOPLEFT", open and d or frame, "TOPRIGHT", 0, -40)
+    h:SetText(open and "<\n\nH\nI\nD\nE" or ">\n\nD\nE\nT\nA\nI\nL\nS")
+end
+
+function UI:ToggleDrawer(on)
+    self:Create()
+    if on == nil then on = not (AuctionMeshDB.cfg.drawer == true) end
+    AuctionMeshDB.cfg.drawer = on and true or false
+    self:PlaceDrawer()
+    self:Render()
+end
+
+function UI:RenderDrawer(entries)
+    local d = frame.drawer
+    if not d or not d:IsShown() then return end
+    local lines = self:DrawerLines(entries)
+    self.drawerLines = lines
+    local h = frame:GetHeight()
+    local vis = type(h) == "number" and h > 0 and math.max(6, math.min(DLINES, floor((h - 38 - 28) / DLINE_H))) or 28
+    local off = math.max(0, math.min(self.dscroll or 0, #lines - vis))
+    self.dscroll = off
+    d.all:SetShown(self.sel ~= nil)
+    d.title:SetText(self.sel and "DETAILS: ONE ITEM" or "DETAILS")
+    for i = 1, DLINES do
+        local w, ln = d.lines[i], (i <= vis) and lines[i + off] or nil
+        if not ln then
+            w.label:SetText(""); w.value:SetText(""); w.rule:Hide()
+        else
+            w.rule:SetShown(ln.rule == true)
+            w.label:SetWidth(ln.r and (DRAWER_W - 24 - 130) or (DRAWER_W - 24))
+            w.label:SetText(ln.head and (GREY .. ln.head .. "|r") or ln.l or "")
+            w.value:SetText(ln.r or "")
+        end
+    end
+    d.hint:SetText(#lines > vis and ("lines %d-%d of %d (mouse wheel). Click an item on the left for its details."):format(off + 1, math.min(#lines, off + vis), #lines)
+        or "Click an item on the left for its details.")
 end
 
 function UI:Open(tab)

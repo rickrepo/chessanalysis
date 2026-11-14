@@ -131,6 +131,9 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         Store:Attach(r)
         r.learn = r.learn or {}
         ns.Learn:Attach(r.learn)
+        db.journal = db.journal or {}
+        ns.Journal:Attach(db.journal)
+        ns.Journal:Sync(db.flips, db.listed, function(key) return C_Item.GetItemInfo(key) or ("item:" .. key) end)
         r.tune = r.tune or {}
         ns.Tuner:Attach(r.tune)
         if db.cfg.tune == false then ns.Tuner.cfg.enabled = false end
@@ -321,6 +324,9 @@ SlashCmdList.AUCTIONMESH = function(input)
         else
             say(ns.Learn:Summary())
         end
+    elseif cmd == "details" then
+        if not ns.UI:IsShown() then ns.UI:Open() end
+        ns.UI:ToggleDrawer()
     elseif cmd == "limits" then
         -- what has been measured on this client, this session
         local G, M = ns.Gate, ns.measure and ns.measure.last
@@ -355,7 +361,7 @@ SlashCmdList.AUCTIONMESH = function(input)
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
     else
-        say("/amesh = open the window | learn | limits [on|off|reset] | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
+        say("/amesh = open the window | details | learn | limits [on|off|reset] | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
         say("Sharing: /amesh channel <name> [password] | guild | sync.   Scanning: /amesh scope money/all | swarm | focus <types>")
     end
 end

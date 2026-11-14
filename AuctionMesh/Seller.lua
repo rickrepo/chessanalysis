@@ -18,6 +18,7 @@ ns.Seller = Seller
 
 local floor, min, max = math.floor, math.min, math.max
 local DURATION = 1          -- 12h: cheapest deposit
+local DURATION_HOURS = 12
 local PRICE_TTL = 90        -- a computed post price is trusted this long
 local HOLD_TTL = 600        -- re-check held items after this
 local PRICE_TIMEOUT = 6
@@ -199,6 +200,7 @@ function Seller:SellVendor(onlyKey)
                 local f = flips()[key]
                 earned = earned + ((f and f.sell) or 0) * gone
                 if f and not f.unknownCost then Seller.Realize(((f.sell or 0) - (f.cost or 0)) * gone) end
+                if ns.Journal then ns.Journal:Vendored(key, gone, (f and f.sell) or 0) end
                 Seller.ForgetUnits(key, gone)
             end
         end
@@ -276,6 +278,7 @@ function Seller:RecordSale(i)
     self.lastSale, self.lastSaleAt = sig, now
     local unit = floor(bid / count)
     ns.Log("SOLD %s x%d for %d each (invoice)", tostring(key), count, unit)
+    if ns.Journal then ns.Journal:Sold(key, count, unit, bid - (cut or floor(bid * Deals.cfg.cut))) end
     if ns.Sync then ns.Sync:ObserveSold(key, unit, count) end
     local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
     local profitText = ""
@@ -377,6 +380,7 @@ function Seller:Reconcile()
                 flips()[key] = { kind = "FLIP", units = n, cost = L.cost or 0, unknownCost = (L.cost == nil),
                                  sell = L.price, at = now, proof = "auction expired, returned by mail" }
                 AuctionMeshDB.listed[key] = nil
+                if ns.Journal then ns.Journal:Expired(key, n) end
                 if ns.Learn then ns.Learn:Outcome(key, false) end
                 say(("|cffff8040Expired unsold:|r %d x %s came back by mail. It is on the Bags tab again."):format(n, nameOf(key)))
                 returned = true
@@ -394,9 +398,12 @@ function Seller:Reconcile()
                 bagCount[key] or 0, inMail, missing)
             say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from the Bags tab.|r")
                 :format(nameOf(key), missing))
+            if ns.Journal then ns.Journal:Dropped(key, missing, "not found in bags or mailbox") end
             if have <= 0 then flips()[key] = nil; self.prices[key] = nil else f.units = have end
         end
     end
+    -- the journal follows what the mailbox check just established
+    if ns.Journal then ns.Journal:Sync(flips(), AuctionMeshDB.listed, nameOf) end
 end
 
 ---------------------------------------------------------------- AH pricing (background) and posting (click)
@@ -561,6 +568,7 @@ function Seller:CheckPosted()
             AuctionMeshDB.listed[q.key] = { qty = posted, price = q.price, cost = cost, at = GetServerTime(), plan = plan }
         end
     end
+    if ns.Journal then ns.Journal:Posted(q.key, min(gone, q.qty), q.price) end
     self.ForgetUnits(q.key, min(gone, q.qty))
     self.prices[q.key] = nil
     say(("Posted %dx %s at %s each, deposit %s (%s)."):format(min(gone, q.qty), nameOf(q.key), money(q.price), money(q.deposit), q.why))
@@ -596,6 +604,7 @@ function Seller.LogBuy(key, kind, units, cost, sell)
     AuctionMeshDB.buys = log
     log[#log + 1] = { key = key, kind = kind, units = units, cost = cost, sell = sell, t = GetServerTime() }
     while #log > 500 do table.remove(log, 1) end
+    if ns.Journal then ns.Journal:Bought(key, nameOf(key), kind, units, cost, sell) end
 end
 
 -- Rebuilds missing Flip Bag entries from the last 3 days of purchases still in your bags.
@@ -636,6 +645,10 @@ function Seller:Track(key, cost)
     local kind = (vendor and (not market or vendor >= floor(market * 0.95))) and "VENDOR" or "FLIP"
     flips()[key] = { kind = kind, sell = (kind == "VENDOR") and vendor or (market or 0), units = have,
                      cost = cost or 0, unknownCost = (cost == nil), at = GetServerTime() }
+    if ns.Journal then
+        ns.Journal:Dropped(key, nil, "tracked again by hand")
+        ns.Journal:Bought(key, nameOf(key), kind, have, cost, flips()[key].sell, "added by hand")
+    end
     say(("Tracking %dx %s as %s%s."):format(have, nameOf(key), kind,
         cost and "" or " (cost unknown, so it posts at market: check the price before you click)"))
     self.prices[key] = nil
@@ -697,6 +710,76 @@ end
 ---------------------------------------------------------------- window hooks (the window lives in UI.lua)
 
 -- Re-render; with show=true also open the window on the SELL tab if there is something to do.
+-- ONE RECOMMENDATION for a holding: what to do with it now, and why. Built
+-- only from what is known for certain (live price, your cost, the cheapest
+-- listing from the last radar read, measured sales per hour, mailbox invoices).
+-- Returns the text and a tone: "do" (act now), "wait", or "warn".
+function Seller:Advice(e)
+    local key = e.key
+    local St, cfg = ns.Store, Deals.cfg
+    local paid, _, _, profit = self:Numbers(e)
+    local rate = St.Rate and St:Rate(key, 100) or nil
+    local sells = (rate and rate >= 1) and (" About %d sell an hour."):format(floor(rate + 0.5)) or ""
+    local function signed(c) return (c >= 0 and "+ " or "- ") .. short(math.abs(c)) end
+    if e.action == "MAIL" then
+        return "Visit a mailbox to collect it.", "do"
+    elseif e.action == "VENDOR" then
+        return profit and ("Sell it to any vendor: %s, guaranteed."):format(signed(profit * e.count)) or "Sell it to any vendor.", "do"
+    elseif e.action == "AH" then
+        local p = self.prices[key]
+        if p and p.price then
+            if not paid then
+                return ("Post at %s each (Bags tab). Your cost is not known, so check that price yourself first."):format(short(p.price)), "warn"
+            end
+            local each = floor(p.price * (1 - cfg.cut)) - paid
+            return ("Post %d at %s each (Bags tab, Post): %s after the cut.%s"):format(e.count, short(p.price), signed(each * e.count), sells), "do"
+        end
+        return ahOpen() and "Its live price is being checked. Post appears on the Bags tab in a moment."
+            or "Open the auction house: the live price is checked, then press Post.", "do"
+    elseif e.action == "HOLD" then
+        local low = St.p[key]
+        local text = "Hold: do not sell now."
+        if paid and low then
+            local each = floor(low * (1 - cfg.cut)) - paid
+            text = ("Hold: the cheapest listing is %s. Selling under it now would be %s each."):format(short(low), signed(each))
+        end
+        local tr = St.Trend and St:Trend(key, GetServerTime(), 24) or nil
+        if tr then text = text .. (" Price moved %+d%% in 24h."):format(floor(tr * 100 + 0.5)) end
+        return text .. " It is re-checked every time the auction house is open.", "wait"
+    end
+    -- LISTED
+    local L = e.listed
+    local price = L.price or 0
+    if e.live == 0 then
+        local _, _, nextIn, soldKeys = self:SalesMoney()
+        if soldKeys[key] then
+            return "Sold. The gold is in the mail" .. (nextIn and (", next arrival in about %d min"):format(max(1, floor(nextIn / 60 + 0.5))) or "")
+                .. ". Collect it at a mailbox.", "do"
+        end
+        return "No longer listed: it sold or it expired. A mailbox visit tells which.", "do"
+    end
+    local hoursLeft = DURATION_HOURS - (GetServerTime() - (L.at or GetServerTime())) / 3600
+    local expires = hoursLeft > 0 and (" Runs out in about %s."):format(hoursLeft >= 1 and (floor(hoursLeft + 0.5) .. "h") or (max(1, floor(hoursLeft * 60)) .. " min")) or ""
+    local t, low = St.t[key], St.p[key]
+    local fresh = t and GetServerTime() - t < 600
+    if fresh and low and low < price then
+        local gap = price - low
+        local repost = Deals.round(low - cfg.undercut, cfg)
+        local each = paid and (floor(repost * (1 - cfg.cut)) - paid) or nil
+        if gap <= max(1, price * 0.03) then
+            return ("Wait. Undercut by only %s each: the cheaper units sell first, then yours.%s%s"):format(short(gap), sells, expires), "wait"
+        elseif each and each * e.count >= cfg.minProfit then
+            return ("Someone lists at %s. Cancel yours (the game's Auctions tab) and post again at %s: still %s. The posting fee is paid again.")
+                :format(short(low), short(repost), signed(each * e.count)), "do"
+        elseif each then
+            return ("Wait. Someone lists at %s; going under that would leave %s, less than your minimum.%s If it runs out it comes back by mail.")
+                :format(short(low), signed(each * e.count), expires), "wait"
+        end
+        return ("Someone lists at %s, under your %s.%s"):format(short(low), short(price), expires), "wait"
+    end
+    return ("Wait. No cheaper listing%s.%s%s"):format(fresh and " in the last radar read" or " seen (no recent radar read)", sells, expires), "wait"
+end
+
 function Seller:Refresh(show)
     local UI = ns.UI
     if not UI then return end
@@ -711,6 +794,7 @@ function Seller.Realize(copper)
 end
 
 function Seller:Untrack(key)
+    if ns.Journal then ns.Journal:Dropped(key, nil, "removed from tracking by you") end
     flips()[key] = nil
     if AuctionMeshDB.listed then AuctionMeshDB.listed[key] = nil end
     self.prices[key] = nil

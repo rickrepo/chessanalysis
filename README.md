@@ -83,6 +83,51 @@ The bar at the top right is on every tab.
 | teal | `Tuned: 1.6 requests a second, 94% in use` | Nothing being tried; the bar is how much of the request budget is in use |
 | empty | `Paused while you click` / `Idle: the auction house is closed` | Nothing is being sent |
 
+### Details: the drawer on the right
+
+A slim **DETAILS** handle sits on the panel's right edge. Clicking it slides a second panel out to the right (click again, or `/amesh details`, to hide it). The mouse wheel scrolls it.
+
+```
+ ALL TRADES
+ Bought so far                              3 trades, 2s 76c spent
+ Finished / still open                                      2 / 1
+ Profit made on what has sold                           + 3s 43c
+ Profit if everything open sells                        + 3s 18c
+ OPEN (1)
+ Linen Cloth x6                                         9 min ago
+ Bought at 20c each                                     - 1s 20c
+ On the auction house: 6 at 77c each                    + 4s 38c
+ Profit if this sells                                   + 3s 18c
+ DO    Someone lists at 70c. Cancel yours (the game's Auctions
+       tab) and post again at 69c: still + 2s 70c. The posting
+       fee is paid again.
+ FINISHED (2)
+ Copper Ore x12                                        23 min ago
+ Bought at 3c each                                          - 36c
+ Sold 12 to a vendor at 5c each                             + 60c
+ Profit made                                                + 24c
+```
+
+* **Every purchase is one trade**, followed to its end: bought, listed (at what price), sold (what the buyer really paid, from the sale invoice), sold to a vendor, expired, or removed. Two purchases of the same item are matched oldest first.
+* **Profit made** is only on units that have actually sold. **Profit if this sells** is what the rest brings at the listed or live price, after the cut.
+* **One recommendation per open trade**, marked `DO` (act now), `WAIT` or `CHECK`:
+
+| Where the item is | Recommendation |
+|---|---|
+| In the mailbox | Visit a mailbox to collect it |
+| In your bags, vendor deal | Sell to any vendor, with the guaranteed profit |
+| In your bags, flip, price checked | Post N at the live price, with the profit after the cut and how many sell an hour |
+| In your bags, market below your cost | Hold: what selling under the cheapest listing would lose, and the 24h price change |
+| Listed, nobody cheaper | Wait, with how many sell an hour and when the auction runs out |
+| Listed, undercut by 3% or less | Wait: the cheaper units sell first |
+| Listed, undercut by more, repost still clears your minimum profit | Cancel and post again at 1c under, with the profit that leaves. The posting fee is paid again |
+| Listed, undercut by more, repost not worth it | Wait: says what going under would leave |
+| No longer listed | Sold (invoice seen, gold on its way), or "sold or expired, a mailbox visit tells which" |
+
+* **Click any item row** in the main panel and the drawer shows that item alone: cheapest listing and its age, market price from the full listing, 24h change, units sold per hour, what buyers really paid, vendor price, why the last check was or wasn't a deal, then your trades in it. **All trades** goes back.
+
+The addon never cancels an auction itself; a "cancel and post again" recommendation is something you do in the game's own Auctions tab.
+
 ### The columns
 
 ```
@@ -357,6 +402,7 @@ lua5.1 tests/purchase_test.lua # purchase confirmation + mailbox check
 lua5.1 tests/seller_test.lua   # posting / vendor safety
 lua5.1 tests/sim.lua           # multi-player network simulator
 lua5.1 tests/tuner_test.lua    # request-budget learner: limit, pace trials, split, sharing
+lua5.1 tests/journal_test.lua  # trade journal: purchase to sale, partial sales, expiry, totals
 python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 ```
 

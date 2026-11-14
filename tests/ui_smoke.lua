@@ -261,7 +261,37 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
     -- someone lists cheaper: the auction moves to STUCK LISTINGS
     ns.Store:Put(2589, 70, 900, GetServerTime()); UI:Render()
     check(heads()[3] == "STUCK LISTINGS (1)", "a cheaper listing appears: the auction moves under STUCK LISTINGS")
-    ns.Store:Put(2589, 78, 900, GetServerTime())
+    -- recommendations for that auction, and the drawer's one-item view
+    local listedEntry
+    for _, e in ipairs(Se:Entries()) do if e.action == "LISTED" and e.key == 2589 then listedEntry = e end end
+    local adv, tone = Se:Advice(listedEntry)
+    print("     " .. strip(adv))
+    check(tone == "do" and strip(adv):find("Someone lists at 70c. Cancel yours", 1, true) and strip(adv):find("post again at 69c: still + 2s70c", 1, true),
+        "undercut with profit left: recommends cancel and repost at 69c, and says what is left (+ 2s70c)")
+    ns.Deals.cfg.minProfit = 500
+    adv, tone = Se:Advice(listedEntry)
+    check(tone == "wait" and strip(adv):find("^Wait. Someone lists at 70c; going under that would leave %+ 2s70c, less than your minimum"), "undercut, repost not worth it: recommends waiting")
+    ns.Deals.cfg.minProfit = 20
+    ns.Store.p[2589] = 78 -- the cheaper listing is gone again
+    adv, tone = Se:Advice(listedEntry)
+    print("     " .. strip(adv))
+    check(tone == "wait" and strip(adv):find("^Wait. No cheaper listing in the last radar read") and strip(adv):find("Runs out in about 12h"), "cheapest on the market: wait, with the time the auction has left")
+    do
+        local row
+        for i = 1, #frames do local f = frames[i]; if rawget(f, "detail") and f._shown and rawget(f, "item") and f.item.key == 2589 then row = f end end
+        row._scripts.OnMouseUp(row, "LeftButton")
+        check(AuctionMeshDrawer:IsShown() and UI.sel == 2589, "clicking an item row opens the drawer on that item")
+        local dl = UI.drawerLines
+        for _, l in ipairs(dl) do print("     " .. (l.rule and "----" or strip((l.head or l.l or "")) .. (l.r and ("  |  " .. strip(l.r)) or ""))) end
+        local function has(pat) for _, l in ipairs(dl) do if strip((l.head or l.l or "") .. " | " .. (l.r or "")):find(pat) then return true end end return false end
+        check(has("^MARKET") and has("^Cheapest listing | 78c") and has("^A vendor pays"), "one item: the market as last read")
+        check(has("^YOUR TRADES IN THIS ITEM %\(1%\)") and has("^Bought at 20c each | %- 1s20c") and has("^On the auction house: 6 at 77c each | %+ 4s38c") and has("^Profit if this sells | %+ 3s18c"),
+            "one item: the trade with what was paid, where it is now and the profit if it sells")
+        check(has("^WAIT  No cheaper listing"), "one item: the recommendation, marked WAIT")
+        AuctionMeshDrawer.all._scripts.OnClick(AuctionMeshDrawer.all)
+        check(UI.sel == nil, "'All trades' goes back to the full list")
+        UI:ToggleDrawer(false)
+    end
     -- a sale the game is still holding back, read from the mailbox invoice
     AuctionMeshDB.sales = { waiting = 150, pending = { { amount = 438, at = GetServerTime() + 16 * 60, key = 2589 }, { amount = 90, at = GetServerTime() - 5 } } }
     UI:Render()
@@ -590,6 +620,26 @@ do
     S.searching = { key = 2589, at = T, src = "drop", waited = 2 }; S.lastEval = nil
     S:Evaluate(2589, { { price = 100, qty = 300 }, { price = 101, qty = 300 } }, true)
     check(d.src.drop.n == before + 1, "a check asked for by a price-drop alert is scored against price-drop alerts")
+end
+
+print("detail drawer: every trade from purchase to sale")
+do
+    local J = ns.Journal
+    local function dump(lines) for _, l in ipairs(lines) do print("     " .. (l.rule and "----" or strip((l.head or l.l or "")) .. (l.r and ("  |  " .. strip(l.r)) or ""))) end end
+    local function has(lines, pat) for _, l in ipairs(lines) do if strip((l.head or l.l or "") .. " | " .. (l.r or "")):find(pat) then return true end end return false end
+    UI.tab = "BUY"; UI.sel = nil; UI:ToggleDrawer(true)
+    check(AuctionMeshDrawer:IsShown() and AuctionMeshDB.cfg.drawer == true, "the handle on the right edge opens the drawer")
+    local lines = UI.drawerLines
+    dump(lines)
+    check(has(lines, "^ALL TRADES") and has(lines, "^OPEN %(") and has(lines, "^FINISHED %("), "drawer lists totals, open trades and finished trades")
+    check(has(lines, "Copper Ore x12") and has(lines, "Bought at 3c each | %- 36c") and has(lines, "Sold 12 to a vendor at 5c each | %+ 60c") and has(lines, "Profit made | %+ 24c"),
+        "vendor trade: bought 12 at 3c, sold to a vendor at 5c, profit + 24c")
+    check(has(lines, "Sold 6 at 77c each, after the cut | %+ 4s39c") and has(lines, "Profit made | %+ 3s19c"),
+        "auction trade: what the buyer really paid (from the invoice) and the profit made")
+    local s = J:Totals()
+    check(s.trades >= 3 and s.finished >= 2, ("journal totals: %d trades, %d finished, %d open"):format(s.trades, s.finished, s.open))
+    UI:ToggleDrawer(false)
+    check(not AuctionMeshDrawer:IsShown() and AuctionMeshDB.cfg.drawer == false, "the handle closes it again")
 end
 
 print(("\n%d passed, %d failed"):format(pass, fail))
