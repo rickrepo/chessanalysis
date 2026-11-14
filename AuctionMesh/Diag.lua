@@ -72,7 +72,14 @@ end
 
 ---------------------------------------------------------------- the gate
 
-local Gate = { interval = 0.6, nextAt = 0, outstanding = 0, changedAt = 0, lastError = 0, errors = 0 }
+-- MEASURED LIMIT (from real logs of this client): the auction house takes one
+-- request at a time. The server answers in ~0.15s, then the client stays locked
+-- for ~0.5s more and fires AUCTION_HOUSE_THROTTLED_SYSTEM_READY. Floor: one
+-- request per ~0.62s (about 1.6 a second), whatever the request is (category
+-- sweep, item search, next page, price quote, post).
+-- So: no extra spacing of our own (it only wastes budget), and the next
+-- request is sent from the READY event itself instead of from a polling timer.
+local Gate = { interval = 0.05, nextAt = 0, outstanding = 0, changedAt = 0, lastError = 0, errors = 0, sentCount = 0 }
 ns.Gate = Gate
 
 -- True when background work must stay silent: the AuctionMesh panel is not
@@ -104,8 +111,8 @@ function Gate:Ready()
     -- Safety: if the server never confirmed, don't wait forever.
     if self.outstanding > 0 and now - self.changedAt > 5 then self.outstanding = 0 end
     if self.errors > 0 and now - self.lastError > 60 then
-        self.errors, self.interval = 0, 0.6
-        Log("GATE relaxed: spacing back to 0.6s")
+        self.errors, self.interval = 0, 0.05
+        Log("GATE relaxed: back to the client's own pace")
     end
     return now >= self.nextAt and self.outstanding <= 0 and C_AuctionHouse.IsThrottledMessageSystemReady()
 end
@@ -129,7 +136,7 @@ end
 function Gate:Penalize(why)
     local now = GetTime()
     self.errors, self.lastError = self.errors + 1, now
-    self.interval = math.min(3, self.interval * 1.5)
+    self.interval = math.min(3, math.max(0.6, self.interval * 1.5))
     self.nextAt = now + 5
     self.penaltyUntil = now + 2
     Log("GATE backoff (%s): pause 5s, spacing now %.2fs", why, self.interval)
@@ -165,7 +172,12 @@ local function isAHError(msg)
 end
 
 local function onEvent(_, event, ...)
-    if event == "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT" then
+    if event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
+        -- The lock just opened: send the next request this very frame.
+        if ns.OnAHReady then ns.OnAHReady() end
+        return -- too frequent to be worth a log line each
+    elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT" then
+        Gate.sentCount, Gate.sawSent = Gate.sentCount + 1, true
         Gate.outstanding, Gate.changedAt = Gate.outstanding + 1, GetTime()
     elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED" then
         Gate.outstanding, Gate.changedAt = math.max(0, Gate.outstanding - 1), GetTime()

@@ -72,7 +72,7 @@ Sniper.VENDOR_SOLD = VENDOR_SOLD
 Sniper.STAPLES = STAPLES
 local WATCH_MIN = 300             -- routine full look at a watched item (keeps its market price current)
 local TRIGGER_MIN = 20            -- never fully re-read the same item sooner than this on a trigger
-local SEARCH_TIMEOUT = 6
+local SEARCH_TIMEOUT = 3
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
 
 Sniper.verified = {}   -- key -> deal (+ key, at, commodity)
@@ -155,9 +155,20 @@ function Sniper:Budget() return math.max(0, GetMoney()) end
 local SORTS
 function Sniper:Search(key)
     SORTS = SORTS or { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } }
+    -- The client silently refuses to send a search for an item whose details it
+    -- has not loaded yet (seen in real logs: the request never leaves, and the
+    -- queue then sat waiting for an answer). Ask for the details and move on;
+    -- the item is retried a little later.
+    if C_Item.GetItemInfo(key) == nil then
+        if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(key) end
+        self.checkedAt[key] = GetTime() - TRIGGER_MIN + 4 -- retry in ~4s
+        local Se = ns.Seller
+        if Se and Se.pending and Se.pending.key == key then Se.pending = nil end
+        return false
+    end
     ns.Gate:Use("search " .. tostring(key))
     C_AuctionHouse.SendSearchQuery(C_AuctionHouse.MakeItemKey(key), SORTS, true)
-    self.searching = { key = key, at = GetTime() }
+    self.searching = { key = key, at = GetTime(), sent = ns.Gate.sentCount }
     self.checkedAt[key] = GetTime()
     self.stats.checks = self.stats.checks + 1
     ns.lastQuery = "sniper"
@@ -221,6 +232,8 @@ function Sniper:Evaluate(key, rows, commodity)
         end
     end
     self.last = { key = key, deal = deal ~= nil, reason = reason, at = GetTime() }
+    self.reasons = self.reasons or {}
+    self.reasons[key] = deal and "DEAL FOUND" or reason -- why this item was or was not a deal, by item
     if self.searching and self.searching.key == key then self.searching = nil end
     dirty()
 end
@@ -266,9 +279,16 @@ function Sniper:AddTrigger(key, why, price, market)
     if not self.active or key <= 0 or self.isItem[key] or self.verified[key] or self:Since(key) < TRIGGER_MIN then return end
     self.triggers = self.triggers or {}
     if not self.triggers[key] then
-        self.triggers[key] = true
+        -- Score = how much there is to gain. Each confirmation costs one of our
+        -- ~1.6 requests a second, so the most valuable look always goes first:
+        -- vendor-price hits (guaranteed) ahead of everything, then the biggest gap.
+        local score = 0
+        if market and price and market > 0 then score = (market - price) / market end
+        if why and why:find("vendor", 1, true) then score = score + 10 end
+        if why and why:find("friend", 1, true) then score = score + 1 end
+        self.triggers[key] = score
         self.triggers[#self.triggers + 1] = key
-        ns.Log("TRIGGER %s: %s (lowest %s, market %s)", tostring(key), tostring(why), tostring(price), tostring(market))
+        ns.Log("TRIGGER %s: %s (lowest %s, market %s, score %.2f)", tostring(key), tostring(why), tostring(price), tostring(market), score)
     end
 end
 
@@ -392,7 +412,9 @@ function Sniper:NextCheck()
     -- Radar hits: the sweep saw a price worth a full look.
     local tr = self.triggers
     while tr and #tr > 0 do
-        local k = table.remove(tr, 1)
+        local bi = 1
+        for i = 2, #tr do if (tr[tr[i]] or 0) > (tr[tr[bi]] or 0) then bi = i end end
+        local k = table.remove(tr, bi)
         tr[k] = nil
         if not self.verified[k] and self:Since(k) >= TRIGGER_MIN then return k end
     end
@@ -480,7 +502,17 @@ end
 function Sniper:Tick()
     if not self.active then return end
     local now = GetTime()
-    if self.searching and now - self.searching.at > SEARCH_TIMEOUT then self.searching = nil end
+    local sr = self.searching
+    if sr then
+        -- A request the client never transmitted: free the queue after 0.4s, not 3.
+        local unsent = ns.Gate.sawSent and sr.sent == ns.Gate.sentCount and now - sr.at > 0.4 and not sr.needMore
+        if unsent then ns.Log("SEARCH %s was not transmitted by the client; skipped", tostring(sr.key)) end
+        if unsent or now - sr.at > SEARCH_TIMEOUT then
+            local Se = ns.Seller
+            if Se and Se.pending and Se.pending.key == sr.key then Se.pending = nil end
+            self.searching = nil
+        end
+    end
     local qd = self.queued
     if qd then
         if now - qd.at > 5 then
@@ -519,8 +551,12 @@ function Sniper:Tick()
     local S = ns.Swarm
     if S and S.active and S.current and S.current.phase == "query" then return end
     if not self.priority and S and S.active and not S.idle and ns.lastQuery == "sniper" then return end
-    local key = self:NextCheck()
-    if key then self:Search(key) end
+    -- an item whose details aren't loaded is skipped at no cost; try the next one
+    for _ = 1, 3 do
+        local key = self:NextCheck()
+        if not key then return end
+        if self:Search(key) ~= false then return end
+    end
 end
 
 function Sniper:Screen()

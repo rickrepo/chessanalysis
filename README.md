@@ -92,6 +92,25 @@ Only deals that were just checked against the live listings appear here, with th
 * A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
 * The **Mode** button at the bottom switches between **Vendor only** (every deal is guaranteed) and **Vendor + Flips**. `/amesh vendor` does the same. In vendor-only mode no flip checks are made, so more of the search budget goes to vendor deals.
 
+### The request limit, and how the addon spends it
+
+Measured from real logs of this client:
+
+* The auction house takes **one request at a time**. The server answers in about 0.15s, then the client stays locked for about 0.5s more. Floor: one request per ~0.62s, about **1.6 requests a second**, whatever the request is (category sweep, item search, next page, price quote, post).
+* A search for an item whose details aren't loaded is **never transmitted**. Waiting for its answer wastes the queue.
+
+What the addon does with that:
+
+| Rule | Why |
+|---|---|
+| The next request is sent from the game's "ready" event, in the same frame | A polling timer left about 18% of the budget idle |
+| No extra spacing of its own | The client's lock is the limit; more spacing only wastes budget (it still backs off after a server error) |
+| The sweep asks for the whole materials class in one request | Asking per sub-category returns the same items for about 12 requests |
+| The sweep interval is computed from the sweep's measured cost, so sweeps use about 30% of the budget | 1 request per sweep gives a radar every 8s; 6 requests, every 13s |
+| The other 70% goes to confirmations, best first: vendor-price hits, then the biggest price gap | Each confirmation costs one request, so the most valuable one goes first |
+| Items whose details aren't loaded are skipped at no cost and retried in a few seconds | Avoids the dead wait described above |
+| A request the client did not transmit is dropped after 0.4s | It used to block the queue for 6s |
+
 ### How it looks for deals (the radar)
 
 The auction house offers two kinds of search, and they cost the same one request each:
@@ -101,7 +120,7 @@ The auction house offers two kinds of search, and they cost the same one request
 
 AuctionMesh uses the cheap, wide one as its radar and spends the narrow one only where it pays:
 
-1. **Sweep.** Every 45 seconds it re-reads the crafting-material categories. That's about a dozen requests for every crafting material on the auction house.
+1. **Sweep.** It re-reads the whole crafting-materials class every 8 to 20 seconds (the interval follows the sweep's measured cost).
 2. **Trigger.** A full item search is queued only when the sweep shows something: the lowest price is at or under vendor price, is 20% or more under the known market price, or fell 15% or more since the last sweep.
 3. **Confirm.** One item search loads the full listing and the deal rules decide.
 4. **Volume for free.** A drop in an item's listed quantity between two sweeps means units were bought, so every material's trading volume is measured without extra requests.

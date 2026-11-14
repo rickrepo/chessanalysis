@@ -179,6 +179,17 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         C_Timer.NewTicker(30, function() Sync:Tidy() end)
         C_Timer.NewTicker(150, function() if Comm:Route() then Sync:Beacon() end end)
         ns.sessionStart, ns.realizedAtLogin = GetTime(), AuctionMeshDB.realized or 0
+        -- EVENT-DRIVEN PUMP. The instant the auction house unlocks, send the next
+        -- request: first the sniper (a click you made, a trigger, a price check),
+        -- then the sweep. The slow timers remain only as a safety net.
+        ns.OnAHReady = function()
+            if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
+            local before = ns.Gate.usedAt
+            Sniper:Tick()
+            if ns.Gate.usedAt ~= before and ns.Gate.usedAt == GetTime() then return end -- the slot is taken
+            Swarm:Step()
+            if Swarm.current and Swarm.current.phase == "claimed" then Swarm:Step() end
+        end
         if seeded > 0 or pruned > 0 then
             say(("%d prices loaded (%d from central DB, %d expired)."):format(Store.n, seeded, pruned))
         end

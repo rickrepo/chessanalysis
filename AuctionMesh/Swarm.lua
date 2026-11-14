@@ -29,7 +29,10 @@ ns.Swarm = Swarm
 local floor, random = math.floor, math.random
 
 Swarm.cfg = {
-    fresh = 45,           -- a category is re-read this often: the sweep IS the sniper's radar
+    fresh = 20,           -- seconds between sweeps of a category; re-tuned from the sweep's measured cost
+    adaptive = true,      -- keep sweeps at about `sweepShare` of the request budget
+    sweepShare = 0.30,    -- the rest goes to confirming triggers and routine readings
+    perRequest = 0.65,    -- measured seconds per auction house request on this client
     claimTTL = 90,        -- a claim with no "done" expires after this
     unitTimeout = 60,     -- give up on a unit whose results never complete
     tick = 0.2,
@@ -73,7 +76,10 @@ end
 function Swarm:BuildUnits()
     local list, AH = {}, C_AuctionHouse
     for _, c in ipairs(SCOPES[self.scope] or SCOPES.mats) do
-        local subs = AH.GetAuctionItemSubClasses and AH.GetAuctionItemSubClasses(c)
+        -- One query for the whole class returns every item in it; asking per
+        -- sub-category returns the same items for more requests. (Per
+        -- sub-category remains available: Swarm.cfg.bySubclass = true.)
+        local subs = self.cfg.bySubclass and AH.GetAuctionItemSubClasses and AH.GetAuctionItemSubClasses(c)
         if subs and #subs > 0 then
             for _, s in ipairs(subs) do list[#list + 1] = self.unitId(c, s) end
         else
@@ -175,10 +181,13 @@ function Swarm:Step()
     end
 
     if cur.phase == "claimed" then
-        if clock - cur.at < self.cfg.claimWait or not ex.ready() then return end
+        -- the pause for competing claims only matters when friends are online
+        local wait = (ns.peerAt and clock - ns.peerAt < 600) and self.cfg.claimWait or 0
+        if clock - cur.at < wait or not ex.ready() then return end
         if ns.Sniper and not ns.Sniper:YieldTo("swarm") then return end
         self.resultsSeen = false
         ex.start(cur.unit)
+        cur.requests = 1
         ns.lastQuery = "swarm"
         self.stats.queries = self.stats.queries + 1
         cur.phase, cur.at = "query", clock
@@ -193,10 +202,12 @@ function Swarm:Step()
             self.claims[cur.unit] = nil
             note(2, cur.unit)
             self.stats.units = self.stats.units + 1
+            self:Tune(cur.unit, cur.requests or 1)
             self.current = nil
         elseif ex.ready() and not (ns.Sniper and ns.Sniper:Busy()) and not (ns.Seller and ns.Seller:Busy()) then
             self.resultsSeen = false
             ex.more()
+            cur.requests = (cur.requests or 1) + 1
             self.stats.pages = self.stats.pages + 1
             cur.at = clock
         end
@@ -238,6 +249,24 @@ function Swarm:Coverage()
     local n = 0
     for _ in pairs(workers) do n = n + 1 end
     return fresh, #self.units, n
+end
+
+-- BUDGET. A full sweep of everything in scope costs R requests (measured, not
+-- assumed: it depends on how many items are listed). At ~0.65s per request the
+-- sweep interval that spends `sweepShare` of the budget is R * 0.65 / share.
+-- Fewer requests per sweep -> faster radar, automatically.
+function Swarm:Tune(unit, requests)
+    self.unitReq = self.unitReq or {}
+    self.unitReq[unit] = requests
+    if not self.cfg.adaptive then return end
+    local total = 0
+    for _, u in ipairs(self.units) do total = total + (self.unitReq[u] or 1) end
+    local fresh = total * self.cfg.perRequest / self.cfg.sweepShare
+    fresh = math.max(8, math.min(90, floor(fresh + 0.5)))
+    if fresh ~= self.cfg.fresh then
+        if ns.Log then ns.Log("SWEEP costs %d request(s): radar interval set to %ds", total, fresh) end
+        self.cfg.fresh = fresh
+    end
 end
 
 -- Seconds until the stalest category is due for a rescan (0 = scanning now).

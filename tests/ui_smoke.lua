@@ -324,10 +324,10 @@ ITEMS[2318] = { "Light Leather", 2 }
 LIST[2318] = { { 10, 4 }, { 30, 200 }, { 31, 300 }, { 32, 400 } }
 ns.Store:Put(2318, 10, 904, GetServerTime()); gold = 900
 S.priority = 2318; advance(3)
-check(S.verified[2318] == nil and tostring(S.last.reason):find("measuring how fast"), "first reading: price gap seen, but no deal until volume is measured")
+check(S.verified[2318] == nil and tostring(S.reasons[2318]):find("measuring how fast"), "first reading: price gap seen, but no deal until volume is measured")
 -- nobody buys for two minutes
 advance(60); S.checkedAt = {}; S.priority = 2318; advance(3); advance(60); S.checkedAt = {}; S.priority = 2318; advance(3)
-check(S.verified[2318] == nil and tostring(S.last.reason):find("not a popular item"), "nothing sold while watching: rejected as not a popular item")
+check(S.verified[2318] == nil and tostring(S.reasons[2318]):find("not a popular item"), "nothing sold while watching: rejected as not a popular item")
 -- now other players buy 150 from the market price level over the next minutes
 LIST[2318][2][2] = 50
 advance(60); S.checkedAt = {}; S.priority = 2318; advance(3)
@@ -357,7 +357,7 @@ UI.tab = "BUY"
 print("sharing: a friend's sweep triggers a check here; next-step line")
 ns.Deals.cfg.requireTurnover = false
 S.verified, S.checkedAt, S.floor, S.sweep, S.triggers = {}, {}, {}, {}, {}
-LIST[2592], LIST[2589], LIST[2770] = nil, nil, nil -- leftovers from earlier sections
+LIST[2592], LIST[2589], LIST[2770], LIST[500], LIST[2318], LIST[2319] = nil, nil, nil, nil, nil, nil -- leftovers from earlier sections
 ITEMS[4234] = { "Heavy Leather", 2 }
 LIST[4234] = { { 60, 4 }, { 190, 300 }, { 191, 300 } }
 ns.Store:PutFair(4234, 190, GetServerTime()); gold = 900
@@ -375,8 +375,41 @@ print("     " .. nx)
 check(nx:find("NEXT: Press Buy on Heavy Leather: pay 2s40c, make +", 1, true), "NEXT line says exactly what to press and what it makes")
 S.verified[4234] = nil
 
+print("request budget (limits measured from real logs)")
+do
+    -- a search for an item whose details are not loaded is never sent, and costs nothing
+    local n2 = #sent
+    S.searching = nil
+    check(S:Search(987654) == false and #sent == n2 and S.searching == nil, "item details not loaded: no request is spent and the queue is not blocked")
+    -- the best trigger is confirmed first
+    S.triggers, S.verified, S.checkedAt = {}, {}, {}
+    ITEMS[11] = { "A", 2 }; ITEMS[12] = { "B", 2 }; ITEMS[13] = { "C", 2 }
+    S:AddTrigger(11, "20% under market", 80, 100)
+    S:AddTrigger(12, "at or under vendor price", 5, 100)
+    S:AddTrigger(13, "20% under market", 40, 100)
+    S.priority = nil; ns.Seller.pending = nil
+    local a, b, c3 = S:NextCheck(), S:NextCheck(), S:NextCheck()
+    check(a == 12 and b == 13 and c3 == 11, "triggers are confirmed best-first: vendor hit, then the biggest gap, then the smaller one")
+    -- one request sweeps the whole class; the radar interval follows the measured cost
+    local Sw = ns.Swarm
+    check(#Sw.units == 1, "the sweep asks for the whole materials class in one request (was one per sub-category)")
+    Sw.cfg.adaptive = true
+    Sw:Tune(Sw.units[1], 1); local f1 = Sw.cfg.fresh
+    Sw:Tune(Sw.units[1], 6); local f6 = Sw.cfg.fresh
+    check(f1 == 8 and f6 == 13, ("radar interval follows the sweep's real cost: 1 request -> every %ds, 6 requests -> every %ds"):format(f1, f6))
+    Sw:Tune(Sw.units[1], 1)
+    -- the queue moves the instant the auction house unlocks
+    S.triggers, S.verified, S.checkedAt = {}, {}, {}
+    LIST[2589] = { { 100, 300 }, { 101, 300 } }
+    S:AddTrigger(2589, "price just dropped", 90, 100)
+    local n3 = #sent; S.searching = nil; S.queued = nil; ns.Gate.nextAt = 0
+    ns.OnAHReady()
+    check(#sent == n3 + 1 and sent[#sent] == "search2589", "the next request goes out in the same frame the auction house unlocks")
+    advance(1); S.verified[2589] = nil; LIST[2589] = nil
+end
+
 print("timers")
-S:RebuildBackground(); UI.tab = "BUY"; S.searching = nil; S.last = nil; S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)
+S:RebuildBackground(); UI.tab = "BUY"; S.searching = nil; S.last = nil; S.lastEval = nil; S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)
 UI.notice = nil; UI:Render()
 local st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end

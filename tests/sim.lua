@@ -276,7 +276,7 @@ local function swarmRun(nPeers, focusFor)
         local S = P.ns.Swarm
         S.units = units
         S.active = true
-        S.cfg.fresh = 300          -- one full pass is what this test measures
+        S.cfg.fresh, S.cfg.adaptive = 300, false -- one full pass is what this test measures
         P.ns.peerAt = NOW          -- friends are online, so work-sharing notes are sent
         if focusFor and focusFor[i] then S:SetFocus(focusFor[i]) end
         -- Fake AH: 1 query per second per player, 1-3 pages per category,
