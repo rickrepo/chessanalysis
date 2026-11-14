@@ -134,6 +134,8 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         db.journal = db.journal or {}
         ns.Journal:Attach(db.journal)
         ns.Journal:Sync(db.flips, db.listed, function(key) return C_Item.GetItemInfo(key) or ("item:" .. key) end)
+        r.scout = r.scout or {}
+        ns.Scout:Attach(r.scout)
         r.tune = r.tune or {}
         ns.Tuner:Attach(r.tune)
         if db.cfg.tune == false then ns.Tuner.cfg.enabled = false end
@@ -332,6 +334,33 @@ function Do.Trends(n)
     table.sort(list, function(a, b) return math.abs(a.tr) > math.abs(b.tr) end)
     for i = #list, (n or 10) + 1, -1 do list[i] = nil end
     return list
+end
+
+-- The daily report: one block of text with what the addon measured, to share.
+function Do.Report()
+    local errors = 0
+    for line in ns.Diag:Text():gmatch("[^\n]+") do
+        if line:find("GATE backoff", 1, true) or line:find("PURCHASE FAILED", 1, true) then errors = errors + 1 end
+    end
+    local text = ns.Scout:Report({
+        version = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or "?",
+        realm = realmKey(), gold = GetMoney(), vendorOf = Sniper.vendorOf, vendorSold = Sniper.VENDOR_SOLD,
+        classOf = Sniper.classSub, sharing = Do.SharingText(), errors = errors,
+    })
+    ns.Diag:ShowText("AuctionMesh daily report: click in the box, Ctrl+A then Ctrl+C, and paste it to Claude", text)
+    return text
+end
+
+function Do.FocusMode()
+    local mode = ns.Scout:SetMode()
+    local _, _, text = Sniper:FocusSet()
+    UI:Notice("Laser focus: " .. ns.Scout.MODE_NAMES[mode] .. ". " .. text, true)
+end
+
+function Do.FocusCode(text)
+    local ok, msg = ns.Scout:ApplyCode(text)
+    UI:Notice((ok and "|cff33ff66" or "|cffff8040") .. msg .. "|r", true)
+    return ok
 end
 
 -- The game's addon list next to the minimap opens the panel (no command needed).

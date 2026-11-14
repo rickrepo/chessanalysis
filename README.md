@@ -125,6 +125,7 @@ A slim **DETAILS** handle sits on the panel's right edge. Clicking it slides a s
 | No longer listed | Sold (invoice seen, gold on its way), or "sold or expired, a mailbox visit tells which" |
 
 * The drawer has three views, **Trades | Activity | Market**. Activity is the log of everything that happened to your gold and items; Market lists the biggest 24-hour price moves and what sells fastest.
+* The Market view starts with the **prime items** (see Laser focus below).
 * **Click any item row** in the main panel and the drawer shows that item alone: cheapest listing and its age, market price from the full listing, 24h change, units sold per hour, what buyers really paid, vendor price, why the last check was or wasn't a deal, then your trades in it. **Trades** goes back.
 
 The addon never cancels an auction itself; a "cancel and post again" recommendation is something you do in the game's own Auctions tab.
@@ -139,14 +140,58 @@ Nothing has to be typed in chat. The Setup tab has a control for everything that
 | Profit a flip must leave after the auction house cut | A percentage box. Self-tuning nudges it from how trades turn out |
 | What to look for | Vendor deals + flips, or vendor deals only (every deal guaranteed) |
 | What the radar reads | Click to change: crafting materials (fastest), all money-makers, whole auction house |
+| Laser focus | Click to change: off, prime items (picked from measured activity), or my own list |
+| Focus code | A box and **Apply**, for a code you were given (see below) |
 | The panel | Inside the auction house window or a window of its own; opens by itself on or off |
 | Share prices with friends | Channel name, password, **Join**; or **Use my guild**. The line underneath says who you are connected to |
 | Self-tuning | One switch for the pace, the split of requests and the profit bar. **Forget what was learned** needs a second click |
-| If something looks wrong | **Log**, **Last session's log**, **Rebuild from purchases** |
+| Share with Claude | **Daily report** (once a day), **Log** and **Last session's log** (when something looks wrong), **Rebuild from purchases** |
 
 Hovering a button explains it. Below the controls is everything the request engine has learned.
 
 To track an item you bought some other way, drag it from your bags onto the panel.
+
+### Laser focus: only where money moves fast
+
+The addon counts what it sees, per item, and keeps the counts between sessions: how many units sell an hour (from quantity leaving the listing between radar reads), how much gold that is, how often the cheapest listing is 20% or more under the market, how many deals were confirmed, and how long deals lasted before someone else took them.
+
+An item is **prime** when all of these hold:
+
+* it has been watched for at least 10 minutes and is measured to sell **30 or more an hour**;
+* it has a market price from a full listing;
+* you can afford it;
+* vendors don't sell it, and an auction of it hasn't just expired on you.
+
+Prime items are ranked by gold traded per hour x (how often it dips + 2%) x (1 + deals found). The drawer's **Market** view lists them with the reason, and clicking any item shows whether it is prime and, if not, why.
+
+The **Laser focus** button on the Setup tab has three positions:
+
+| Position | What the addon does |
+|---|---|
+| Off | Watches the 50 most-listed materials, each fully checked every 5 minutes (as before) |
+| Prime items | Looks for flips only on the 12 best prime items, each fully checked every **30 seconds**. With fewer than 3 prime items measured it says so and keeps watching everything |
+| My own list | The same, on items you chose: click an item, then **Add to my focus list** in the drawer; or paste a focus code |
+
+Vendor-price deals are shown whatever the focus, because they are guaranteed. Everything the radar reads is still counted, so the prime list keeps improving while you are focused.
+
+One limit of the measurement: units leaving a listing are counted as sold. A seller cancelling an auction looks the same, so "sells an hour" can be somewhat high.
+
+### The daily report, and focus codes
+
+**Daily report** on the Setup tab opens one block of text. Select all, copy, and paste it to Claude once a day. It is about 5 to 20 thousand characters and contains:
+
+* settings and the current focus;
+* each of the last 7 days: minutes the addon was working, radar reads, checks, deals found and their profit, purchases, deals that vanished before a buy, failed buys;
+* your last 30 trades from purchase to sale, with profit and hours to sell;
+* the last 40 deals seen and what became of each (bought, gone after N seconds, failed);
+* why checks were not deals, counted;
+* reads, dips and deals by hour of the day;
+* the market table: for the 40 items with the most gold traded per hour, and any item with a dip or a deal, the prices, vendor price, units sold per hour, 6h and 24h change, dips, deals, and prime or the reason it is not;
+* what the request engine has learned.
+
+It holds no character name. All money in it is in copper.
+
+From that, Claude can send back a **focus code**, for example `AMF1:2589,2592,c7.5,m25,p150`. Paste it into the Focus code box and press **Apply**. A number is an item to focus on, `c7.5` is a category (its prime items are included), `m25` sets the flip profit to 25% and `p150` sets the smallest deal to 1s 50c. Applying a code switches laser focus to that list.
 
 ### The columns
 
@@ -421,6 +466,7 @@ lua5.1 tests/seller_test.lua   # posting / vendor safety
 lua5.1 tests/sim.lua           # multi-player network simulator
 lua5.1 tests/tuner_test.lua    # request-budget learner: limit, pace trials, split, sharing
 lua5.1 tests/journal_test.lua  # trade journal: purchase to sale, partial sales, expiry, totals
+lua5.1 tests/scout_test.lua    # opportunity counts, prime items, laser focus, focus codes, daily report
 python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 ```
 
@@ -428,6 +474,7 @@ python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 
 * **Not yet run in the real client.** The protocol logic is tested offline against stubbed WoW APIs. The AH calls follow the retail `C_AuctionHouse` API, which Auctioneer's Forever build also uses.
 * **The request engine's learning is tested with a fake clock only.** The rules (pause steps, trial lengths, split limits) are sensible starting values, not values proven on a live realm. The Setup tab shows what it actually measured; the log has a `TUNER` line for every change it makes.
+* **Prime items use starting thresholds** (30 sold an hour, 10 minutes of watching, top 12). They are meant to be adjusted from the daily reports.
 * **The two "Sold" lines** rely on the game's sale invoices (`seller_temp_invoice` with its arrival time). If this realm delivers sale gold with no delay, "still on its way" simply stays empty.
 * If the client blocks automatic `SendBrowseQuery` (an `ADDON_ACTION_BLOCKED` message appears), automatic price reading will not work on this client; tell me and I'll add a button for it.
 * While the swarm runs, it uses the AH browse list, so don't browse by hand at the same time.

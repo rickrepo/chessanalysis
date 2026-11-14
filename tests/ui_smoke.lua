@@ -460,7 +460,12 @@ AuctionMeshDrawer.views.activity._scripts.OnClick(AuctionMeshDrawer.views.activi
 check(UI.drawerLines[1].head == ("RECENT ACTIVITY (%d)"):format(#hist) and strip(UI.drawerLines[2].l):find(strip(hist[1].m):sub(1, 20), 1, true),
     "the drawer's Activity view lists it, newest first")
 AuctionMeshDrawer.views.market._scripts.OnClick(AuctionMeshDrawer.views.market)
-check(UI.drawerLines[1].head == "BIGGEST PRICE MOVES, 24 HOURS", "the drawer's Market view shows price moves and what sells fastest")
+do
+    local hs = {}
+    for _, l in ipairs(UI.drawerLines) do if l.head then hs[#hs + 1] = l.head end end
+    check(hs[1]:find("^PRIME ITEMS") and hs[2] == "BIGGEST PRICE MOVES, 24 HOURS" and hs[3] == "WHAT SELLS FASTEST, MEASURED",
+        "the drawer's Market view shows prime items, price moves and what sells fastest")
+end
 for _, l in ipairs(UI.drawerLines) do print("     " .. strip((l.head or l.l or "")) .. (l.r and ("  |  " .. strip(l.r)) or "")) end
 UI.dview = "trades"; UI:ToggleDrawer(false)
 
@@ -684,6 +689,60 @@ do
     check(s.trades >= 3 and s.finished >= 2, ("journal totals: %d trades, %d finished, %d open"):format(s.trades, s.finished, s.open))
     UI:ToggleDrawer(false)
     check(not AuctionMeshDrawer:IsShown() and AuctionMeshDB.cfg.drawer == false, "the handle closes it again")
+end
+
+print("laser focus and the daily report, inside the running addon")
+do
+    local Sc, cfg = ns.Scout, AuctionMeshDB.cfg
+    UI.tab = "HISTORY"; UI.notice = nil; UI:Render()
+    local sp = AuctionMeshFrame.setup
+    check(sp.focus._text == "Off: watch everything", "Setup shows laser focus is off")
+    -- the scan counted what it saw
+    local day = Sc:Day()
+    print(("     today: %d reads, %d checks, %d deals, %d bought, %d gone, %d failed, %.0f s working"):format(day.reads, day.checks, day.deals, day.bought, day.gone, day.fails, day.secs))
+    check(day.checks > 0 and day.deals >= 3 and day.bought >= 2 and day.secs > 5, "the day's counts were kept while the addon ran (checks, deals, purchases, working time)")
+    -- own list from a focus code
+    sp.code:SetText("AMF1:2589"); sp.apply._scripts.OnClick(sp.apply); UI:Render()
+    check(cfg.focusMode == "list" and cfg.focusItems[1] == 2589 and sp.focus._text == "My own list (1)" and sp.code._text == "", "pasting a focus code and pressing Apply focuses on that item")
+    S.verified, S.checkedAt, S.triggers, S.sweep = {}, {}, {}, {}
+    S:RebuildBackground()
+    check(#S.background == 1 and S.background[1] == 2589 and S.background.focus and S.watchMin == 30, "the watch list is now only the focus item, checked every 30s instead of every 5 minutes")
+    ITEMS[4306] = { "Silk Cloth", 150 }
+    ns.Store.fp[4306], ns.Store.ft[4306] = 400, GetServerTime()
+    ns.Store.fp[2589], ns.Store.ft[2589] = 80, GetServerTime()
+    S:OnSweep(4306, 200, 50)
+    check(S.triggers[4306] == nil, "an item outside the focus: a 50%-under-market listing is not chased as a flip")
+    S:OnSweep(2589, 40, 50)
+    check(S.triggers[2589] ~= nil, "the focus item: the same kind of listing is checked at once")
+    S:OnSweep(4306, 100, 50)
+    check(S.triggers[4306] ~= nil, "outside the focus but under vendor price: still checked (guaranteed profit is never filtered)")
+    check(Sc.d.items[4306].r == 2 and Sc.d.items[4306].d == 2, "everything the radar reads is still counted, focus or not")
+    S.triggers = {}
+    UI.tab = "BUY"; UI.notice = nil; UI:Render()
+    check(strip(AuctionMeshFrame.status._text):find("Focus on 1 item.", 1, true), "the Trades tab says what the focus is")
+    -- the drawer: add / remove from the focus list
+    UI.sel = 4306; UI:ToggleDrawer(true)
+    local fb = AuctionMeshDrawer.focus
+    check(fb:IsShown() and fb._text == "Add to my focus list", "one item in the drawer: a button to add it to your focus list")
+    fb._scripts.OnClick(fb)
+    check(Sc:InList(4306) and fb._text == "Remove from my focus", "one click adds it")
+    fb._scripts.OnClick(fb)
+    check(not Sc:InList(4306), "one click removes it")
+    UI.sel = nil; UI:ToggleDrawer(false)
+    -- the report button
+    UI.tab = "HISTORY"; UI:Render()
+    sp.report._scripts.OnClick(sp.report)
+    local text = AuctionMeshLogFrame.edit._text
+    check(AuctionMeshLogFrame:IsShown() and text:find("=== AUCTIONMESH DAILY REPORT v1 ===", 1, true) and text:find("=== END OF REPORT ===", 1, true), "Daily report opens one block of text to copy")
+    check(text:find("focus code: AMF1:2589", 1, true) and text:find("-- TRADES", 1, true) and text:find("Linen Cloth(2589)", 1, true) and text:find("-- ENGINE", 1, true),
+        "it has the focus, the trades, the market table and the engine's figures")
+    print(("     report: %d characters, %d lines"):format(#text, select(2, text:gsub("\n", "\n")) + 1))
+    AuctionMeshLogFrame:Hide()
+    sp.focus._scripts.OnClick(sp.focus); UI:Render() -- list -> off
+    check(cfg.focusMode == "off" and sp.focus._text == "Off: watch everything", "the focus button cycles back to off")
+    S:RebuildBackground()
+    check(not S.background.focus and S.watchMin == 300, "focus off: the normal watch list is back")
+    UI.tab = "BUY"; UI:Render()
 end
 
 print(("\n%d passed, %d failed"):format(pass, fail))

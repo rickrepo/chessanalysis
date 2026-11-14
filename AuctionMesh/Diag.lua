@@ -281,7 +281,13 @@ end
 ---------------------------------------------------------------- copy window
 
 local win
+local LOG_TITLE = "AuctionMesh log: click in the box, Ctrl+A then Ctrl+C, and paste it to Claude"
 function Diag:Show(previous)
+    self:ShowText(LOG_TITLE, self:Text(previous), true)
+end
+
+-- A window with one block of text to copy (the log, or the daily report).
+function Diag:ShowText(titleText, text, isLog)
     if not win then
         win = CreateFrame("Frame", "AuctionMeshLogFrame", UIParent, "BackdropTemplate")
         win:SetSize(720, 460)
@@ -296,7 +302,7 @@ function Diag:Show(previous)
         win:SetScript("OnDragStop", win.StopMovingOrSizing)
         local title = win:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         title:SetPoint("TOPLEFT", 10, -10)
-        title:SetText("AuctionMesh log: click in the box, Ctrl+A then Ctrl+C, and paste it to Claude")
+        win.title = title
         local close = CreateFrame("Button", nil, win, "UIPanelCloseButton")
         close:SetPoint("TOPRIGHT", 0, 0)
         local scroll = CreateFrame("ScrollFrame", "AuctionMeshLogScroll", win, "UIPanelScrollFrameTemplate")
@@ -316,8 +322,11 @@ function Diag:Show(previous)
         local clr = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
         clr:SetSize(110, 22); clr:SetPoint("LEFT", sel, "RIGHT", 8, 0); clr:SetText("Clear log")
         clr:SetScript("OnClick", function() Diag:Clear(); edit:SetText(Diag:Text()) end)
+        win.clr = clr
     end
-    win.edit:SetText(self:Text(previous))
+    win.title:SetText(titleText or LOG_TITLE)
+    win.clr:SetShown(isLog == true)
+    win.edit:SetText(text or "")
     win:Show()
     win.edit:SetFocus()
     win.edit:HighlightText()

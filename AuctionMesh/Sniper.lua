@@ -71,6 +71,7 @@ for _, id in ipairs({
 Sniper.VENDOR_SOLD = VENDOR_SOLD
 Sniper.STAPLES = STAPLES
 local WATCH_MIN = 300             -- routine full look at a watched item (keeps its market price current)
+local FOCUS_MIN = 30              -- with laser focus on: each focus item gets a full look this often
 local TRIGGER_MIN = 20            -- never fully re-read the same item sooner than this on a trigger
 local SEARCH_TIMEOUT = 3 -- default; the Tuner replaces it with a figure from the measured pace
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
@@ -221,6 +222,11 @@ function Sniper:Evaluate(key, rows, commodity)
             self.stats.deals = self.stats.deals + 1
             if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
         end
+        self.dealSeen = self.dealSeen or {}
+        if not self.dealSeen[key] then
+            self.dealSeen[key] = GetTime()
+            if ns.Scout then ns.Scout:Deal(key, deal) end
+        end
         self.verified[key] = deal
         ns.Log("DEAL %s %s: buy %d for %d, sell %d each, profit %d, sells %s/h, eta %s min (rows: %s)", deal.kind, tostring(key),
             deal.units, deal.cost, deal.sell, deal.profit, tostring(deal.rate and floor(deal.rate)), tostring(deal.eta and floor(deal.eta)),
@@ -228,6 +234,12 @@ function Sniper:Evaluate(key, rows, commodity)
     else
         self.verified[key] = nil
         if #rows == 0 then reason = "none listed" end
+        if ns.Scout then
+            ns.Scout:NoDeal(key, reason)
+            -- a deal we had on screen is gone without us buying it: how long did it last?
+            local seen = self.dealSeen and self.dealSeen[key]
+            if seen then ns.Scout:Gone(key, GetTime() - seen); self.dealSeen[key] = nil end
+        end
         ns.Log("NO DEAL %s: %s (rows: %s)", tostring(key), tostring(reason), self.RowsText(rows))
         -- A real deal that is only too big for our purse: tell friends, one of them may afford it.
         if reason and (reason:find("more than you can spend", 1, true) or reason:find("more than you have", 1, true)) then
@@ -256,6 +268,24 @@ end
 --   * lowest price fell 15% or more since the previous sweep.
 -- The same sweep also measures volume: a drop in the listed quantity between
 -- two sweeps means units were bought.
+-- (class, subclass) of an item, for category focus
+local function classSub(key)
+    local _, _, _, _, _, classID, subID = C_Item.GetItemInfoInstant(key)
+    return classID, subID
+end
+Sniper.classSub = classSub
+Sniper.VENDOR_SOLD = VENDOR_SOLD
+
+-- The focus items right now (nil = no limit) and the sentence that says so.
+function Sniper:FocusSet()
+    if not ns.Scout or not ns.Scout.d then return nil, {}, "" end
+    return ns.Scout:Focus(self:Budget(), VENDOR_SOLD, classSub)
+end
+function Sniper:InFocus(key)
+    local set = self:FocusSet()
+    return set == nil or set[key] == true
+end
+
 function Sniper:OnSweep(key, price, qty)
     if not self.active or key <= 0 or self.isItem[key] then return end
     local now = GetTime()
@@ -269,13 +299,15 @@ function Sniper:OnSweep(key, price, qty)
             Store:AddTurnover(key, gone > 0 and gone or 0, dt)
         end
     end
+    local ft = Store.ft[key]
+    local market = (ft and GetServerTime() - ft <= 1800) and Store.fp[key] or nil
+    if ns.Scout then ns.Scout:Read(key, price, market) end -- counted for every item, affordable or not
     if price > self:Budget() then return end
     local why
     local v = self.vendorOf(key)
-    local ft = Store.ft[key]
-    local market = (ft and GetServerTime() - ft <= 1800) and Store.fp[key] or nil
     if v and price <= floor(v / (1 + Deals.cfg.vendorMargin)) then why = "at or under vendor price"
     elseif VENDOR_SOLD[key] or not Deals.cfg.flips then return
+    elseif not self:InFocus(key) then return -- laser focus: flips only on the focus items
     elseif market and price <= market * 0.8 then why = "20% under market"
     elseif prev and price <= prev.p * 0.85 then why = "price just dropped"
     end
@@ -322,7 +354,7 @@ function Sniper:PeekNext()
     local i = q.i
     for _ = 1, #q do
         if i > #q then i = 1 end
-        if not self.isItem[q[i]] and self:Since(q[i]) > WATCH_MIN then return q[i], i end
+        if not self.isItem[q[i]] and self:Since(q[i]) > (self.watchMin or WATCH_MIN) then return q[i], i end
         i = i + 1
     end
 end
@@ -451,7 +483,7 @@ function Sniper:NextCheck()
         if q.i > #q then q.i = 1; q.rounds = (q.rounds or 0) + 1 end
         local k = q[q.i]
         q.i = q.i + 1
-        if not self.isItem[k] and self:Since(k) > WATCH_MIN then return k, "routine" end
+        if not self.isItem[k] and self:Since(k) > (self.watchMin or WATCH_MIN) then return k, "routine" end
     end
     return nil
 end
@@ -460,6 +492,22 @@ end
 -- busiest markets get the most new listings, so that is where mistakes appear.
 function Sniper:RebuildBackground()
     local budget, now = self:Budget(), GetServerTime()
+    do  -- LASER FOCUS: only the focus items, each fully checked every FOCUS_MIN seconds
+        local set, flist = self:FocusSet()
+        if set and Deals.cfg.flips then
+            local list = {}
+            for _, key in ipairs(flist) do
+                local p = Store.p[key]
+                if not self.isItem[key] and (not p or p <= budget) then list[#list + 1] = key end
+            end
+            if #list > 0 then
+                list.i, list.staples, list.focus = 1, #list, true
+                self.background, self.watchMin = list, FOCUS_MIN
+                return
+            end
+        end
+        self.watchMin = WATCH_MIN
+    end
     local scope = ns.Swarm and ns.Swarm.ScopeClasses and ns.Swarm:ScopeClasses() or PROFESSION
     local list, seen = {}, {}
     -- Staples first. Ones whose known lowest price is above your gold are skipped.
@@ -505,7 +553,7 @@ function Sniper:HasWork()
     local q = self.background
     if q then
         for i = 1, #q do
-            if not self.isItem[q[i]] and self:Since(q[i]) > WATCH_MIN then return true end
+            if not self.isItem[q[i]] and self:Since(q[i]) > (self.watchMin or WATCH_MIN) then return true end
         end
     end
     return false
@@ -564,6 +612,11 @@ function Sniper:Tick()
         else C_AuctionHouse.RequestMoreItemSearchResults(s.itemKey) end
         return
     end
+    if ns.Scout then
+        -- time the engine is actually working (auction house and panel open), for the daily report
+        if self.tickAt and not ns.Gate:UserBusy() and AuctionHouseFrame and AuctionHouseFrame:IsShown() then ns.Scout:Online(now - self.tickAt) end
+        self.tickAt = now
+    end
     if self:Busy() or not ns.Gate:Ready() then return end
     if ns.Seller and ns.Seller:Busy() then return end
     if self.needOwned and C_AuctionHouse.QueryOwnedAuctions then
@@ -595,7 +648,7 @@ function Sniper:Screen()
     end
     local cands = Deals.candidates(Store, self:Budget(), GetServerTime(), self.vendorOf, nil, 40)
     for i = #cands, 1, -1 do
-        if cands[i].kind == "FLIP" and VENDOR_SOLD[cands[i].key] then table.remove(cands, i) end
+        if cands[i].kind == "FLIP" and (VENDOR_SOLD[cands[i].key] or not self:InFocus(cands[i].key)) then table.remove(cands, i) end
     end
     self.candidates = cands
     dirty()
@@ -767,6 +820,8 @@ function Sniper:OnPurchase(ok, why)
         local d = b.deal
         if b.item and b.vendor and b.vendor > 0 then d = setmetatable({ sell = b.vendor }, { __index = b.deal }) end
         recordFlip(d, b.units, spent, why)
+        if ns.Scout then ns.Scout:Bought(b.key, b.units, spent) end
+        if self.dealSeen then self.dealSeen[b.key] = nil end
         self.bought[b.key] = (self.bought[b.key] or 0) + b.units
         if b.item then
             b.deal.units, b.deal.cost = b.deal.units - b.units, b.deal.cost - (b.total or 0)
@@ -774,6 +829,8 @@ function Sniper:OnPurchase(ok, why)
         end
     else
         ns.Log("PURCHASE FAILED %s: %s", tostring(b.key), tostring(why))
+        if ns.Scout then ns.Scout:Fail(b.key, why) end
+        if self.dealSeen then self.dealSeen[b.key] = nil end
         say(("|cffff4040Purchase NOT completed:|r %s (%s). Nothing was recorded."):format(nameOf(b.key), why or "refused"))
     end
     self.verified[b.key] = nil

@@ -193,6 +193,10 @@ local function buyStatus(n)
     local name, lines = S.nameOf, {}
     local q = S.background
     local mode = ns.Deals.cfg.flips and "" or (GREEN .. "Vendor-only.|r ")
+    if ns.Deals.cfg.flips and (AuctionMeshDB.cfg.focusMode or "off") ~= "off" then
+        local set, flist = S:FocusSet()
+        mode = set and (TEAL .. ("Focus on %d item%s.|r "):format(#flist, #flist == 1 and "" or "s")) or (GREY .. "Focus: still measuring.|r ")
+    end
 
     -- line 1: now / next
     if G:UserBusy() then
@@ -397,6 +401,11 @@ function UI:RenderSetup()
     sp.dock:SetText(cfg.dock ~= false and "Inside the auction house" or "A window of its own")
     sp.auto:SetText(cfg.autoOpen and "Opens by itself: on" or "Opens by itself: off")
     sp.tune:SetText(ns.Tuner.cfg.enabled and "Self-tuning: on" or "Self-tuning: off")
+    do
+        local _, flist = ns.Sniper:FocusSet()
+        local mode = cfg.focusMode or "off"
+        sp.focus:SetText(ns.Scout.MODE_NAMES[mode] .. ((mode ~= "off" and #flist > 0) and (" (%d)"):format(#flist) or ""))
+    end
     sp.forget:SetText((self.forgetUntil and GetTime() < self.forgetUntil) and "Click again to forget" or "Forget what was learned")
     sp.share:SetText(GREY .. ns.Do.SharingText() .. "|r")
     if not sp.margin:HasFocus() then sp.margin:SetText(tostring(cfg.margin or floor(ns.Deals.cfg.margin * 100 + 0.5))) end
@@ -768,7 +777,7 @@ function UI:Create()
     -- to remember), then what the request engine has learned.
     local sp = CreateFrame("Frame", nil, frame)
     sp:SetPoint("TOPLEFT", 14, -40); sp:SetPoint("TOPRIGHT", -14, -40)
-    sp:SetHeight(400)
+    sp:SetHeight(430)
     heading(sp, 0, "SETTINGS")
     local function setting(y, text)
         local l = sp:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -802,7 +811,7 @@ function UI:Create()
         b:SetScript("OnLeave", function() GameTooltip:Hide() end)
         return b
     end
-    local ROW = 24
+    local ROW = 22
     local function y(n) return -20 - (n - 1) * ROW end
 
     setting(y(1), "Smallest profit worth showing a deal for")
@@ -825,29 +834,42 @@ function UI:Create()
         "Click to change. Crafting materials is the fastest. Reading more of the auction house makes each round slower.")
     sp.scope:SetPoint("TOPRIGHT", 0, y(4) + 5)
 
-    setting(y(5), "The panel")
+    setting(y(5), "Laser focus: look for flips only on")
+    sp.focus = tip(button(sp, 250, "", function() ns.Do.FocusMode() end),
+        "Click to change.\nOff: every material is watched.\nPrime items: the addon picks the items measured to sell fastest with the most gold moving, and checks each one every 30 seconds.\nMy own list: items you added in the drawer, or a focus code.\nVendor-price deals are always shown, whatever the focus.")
+    sp.focus:SetPoint("TOPRIGHT", 0, y(5) + 5)
+
+    setting(y(6), "Focus code (paste one you were given)")
+    sp.apply = tip(button(sp, 50, "Apply", function()
+        if ns.Do.FocusCode(sp.code:GetText()) then sp.code:SetText("") end
+    end), "A focus code starts with AMF1: and lists the items to focus on. Applying it switches laser focus to that list.")
+    sp.apply:SetPoint("TOPRIGHT", 0, y(6) + 5)
+    sp.code = box(196, false, 400)
+    sp.code:SetPoint("RIGHT", sp.apply, "LEFT", -8, 0)
+
+    setting(y(7), "The panel")
     sp.dock = tip(button(sp, 170, "", function() ns.Do.Dock(AuctionMeshDB.cfg.dock == false) end),
         "Inside the auction house window, or as a window of its own that you can drag anywhere.")
-    sp.dock:SetPoint("TOPRIGHT", 0, y(5) + 5)
+    sp.dock:SetPoint("TOPRIGHT", 0, y(7) + 5)
     sp.auto = tip(button(sp, 150, "", function() ns.Do.Auto(not AuctionMeshDB.cfg.autoOpen) end),
         "On: the panel opens and starts reading prices when you open the auction house. Off: click the AuctionMesh tab under the auction house window.")
     sp.auto:SetPoint("RIGHT", sp.dock, "LEFT", -6, 0)
 
-    setting(y(6), "Share prices with friends: channel name, password")
+    setting(y(8), "Share prices with friends: channel name, password")
     sp.join = tip(button(sp, 50, "Join", function() ns.Do.Channel(sp.chan:GetText(), sp.pass:GetText()) end),
         "Everyone in your group types the same channel name and password. The channel is hidden and only carries addon data.")
-    sp.join:SetPoint("TOPRIGHT", 0, y(6) + 5)
+    sp.join:SetPoint("TOPRIGHT", 0, y(8) + 5)
     sp.pass = box(90, false, 20)
     sp.pass:SetPoint("RIGHT", sp.join, "LEFT", -8, 0)
     sp.chan = box(90, false, 20)
     sp.chan:SetPoint("RIGHT", sp.pass, "LEFT", -10, 0)
 
-    sp.share = setting(y(7), "")
+    sp.share = setting(y(9), "")
     sp.guild = tip(button(sp, 110, "Use my guild", function() ns.Do.Guild() end),
         "Share with guild members who run the addon instead of a private channel.")
-    sp.guild:SetPoint("TOPRIGHT", 0, y(7) + 5)
+    sp.guild:SetPoint("TOPRIGHT", 0, y(9) + 5)
 
-    setting(y(8), "Self-tuning: pace, split of requests, profit bar")
+    setting(y(10), "Self-tuning: pace, split of requests, profit bar")
     sp.forget = tip(button(sp, 170, "Forget what was learned", function()
         -- two clicks, so it can't happen by accident
         if UI.forgetUntil and GetTime() < UI.forgetUntil then
@@ -858,22 +880,26 @@ function UI:Create()
             UI:Dirty()
         end
     end), "Clears the measured request limit, the pace, the split and the record of how trades turned out. Needs a second click.")
-    sp.forget:SetPoint("TOPRIGHT", 0, y(8) + 5)
+    sp.forget:SetPoint("TOPRIGHT", 0, y(10) + 5)
     sp.tune = button(sp, 110, "", function() ns.Do.Tuning(not ns.Tuner.cfg.enabled) end)
     sp.tune:SetPoint("RIGHT", sp.forget, "LEFT", -6, 0)
 
-    setting(y(9), "If something looks wrong")
-    sp.restore = tip(button(sp, 170, "Rebuild from purchases", function() ns.Seller:Restore() end),
+    setting(y(11), "Share with Claude")
+    sp.restore = tip(button(sp, 150, "Rebuild from purchases", function() ns.Seller:Restore() end),
         "Rebuilds the Bags list from the last 3 days of recorded purchases, for items that are still in your bags. To track anything else, drag it from your bags onto this panel.")
-    sp.restore:SetPoint("TOPRIGHT", 0, y(9) + 5)
+    sp.restore:SetPoint("TOPRIGHT", 0, y(11) + 5)
     local oldLog = tip(button(sp, 120, "Last session's log", function() ns.Diag:Show(true) end), "The log from before the last reload or login.")
     oldLog:SetPoint("RIGHT", sp.restore, "LEFT", -6, 0)
-    local log = tip(button(sp, 50, "Log", function() ns.Diag:Show() end), "Everything the addon did this session, to copy and share when something looks wrong.")
+    local log = tip(button(sp, 50, "Log", function() ns.Diag:Show() end), "Everything the addon did this session, step by step. Share it when something looks wrong.")
     log:SetPoint("RIGHT", oldLog, "LEFT", -6, 0)
+    sp.report = tip(button(sp, 100, "Daily report", function() ns.Do.Report() end),
+        "One block of text to copy and paste to Claude once a day: what sold, what was found, what was missed, which items move the most gold, and how the engine is doing. It is what Claude needs to tell you where to focus.")
+    sp.report:SetPoint("RIGHT", log, "LEFT", -6, 0)
+    outline(sp.report, ACCENT)
 
-    heading(sp, y(10) - 12, "REQUEST ENGINE: WHAT IT HAS LEARNED")
+    heading(sp, y(12) - 18, "REQUEST ENGINE: WHAT IT HAS LEARNED")
     sp.rows = {}
-    for i = 1, 8 do sp.rows[i] = ledgerRow(sp, y(10) - 28 - (i - 1) * 15) end
+    for i = 1, 8 do sp.rows[i] = ledgerRow(sp, y(12) - 34 - (i - 1) * 15) end
     sp:Hide()
     frame.setup = sp
 
@@ -975,7 +1001,7 @@ end
 local LAYOUT = {
     BUY = { next = -182, status = -200, statusH = 38, top = 246 },
     SELL = { next = -40, status = -58, statusH = 38, top = 104 },
-    HISTORY = { status = -280, statusH = 14, top = 470 },
+    HISTORY = { status = -304, statusH = 14, top = 480 },
 }
 function UI:Layout()
     local tab = self.tab
@@ -1200,6 +1226,21 @@ function UI:DrawerLines(entries)
         return out
     elseif not key and view == "market" then
         -- what the price history and the volume measurements say
+        -- where the money moves: the prime items, with the reason each one is prime
+        local set, flist, ftext = S:FocusSet()
+        local prime = ns.Scout:Prime(S:Budget(), S.VENDOR_SOLD)
+        out[#out + 1] = { head = ("PRIME ITEMS: FAST SELLERS WITH GOLD MOVING (%d)"):format(#prime) }
+        for _, l in ipairs(wrap(ftext, 62)) do out[#out + 1] = { l = GREY .. l .. "|r" } end
+        if #prime == 0 then
+            for _, l in ipairs(wrap("None yet. An item is prime once it has been watched for 10 minutes and is measured to sell 30 or more an hour.", 62)) do
+                out[#out + 1] = { l = GREY .. l .. "|r" }
+            end
+        end
+        for i = 1, math.min(12, #prime) do
+            local f = prime[i]
+            out[#out + 1] = { l = ((set and set[f.key]) and TEAL .. "> |r" or "") .. S.nameOf(f.key), r = short(f.market), prime = f.key }
+            out[#out + 1] = { l = GREY .. "   " .. ns.Scout:Why(f, short) .. "|r" }
+        end
         local moves = ns.Do.Trends(12)
         out[#out + 1] = { head = "BIGGEST PRICE MOVES, 24 HOURS" }
         if #moves == 0 then out[#out + 1] = { l = GREY .. "Not yet: the price history needs a few hours of readings.|r" } end
@@ -1224,6 +1265,13 @@ function UI:DrawerLines(entries)
         -- ONE ITEM: the market as last read, then your trades in it
         local now = GetServerTime()
         out[#out + 1] = { l = WHITE .. S.nameOf(key) .. "|r", big = true }
+        do  -- is it prime, and why or why not
+            local f = ns.Scout:Facts(key, now)
+            local score, why = ns.Scout:Score(f, S:Budget(), S.VENDOR_SOLD[key])
+            for _, l in ipairs(wrap(score and ("Prime item: " .. ns.Scout:Why(f, short) .. ".") or ("Not a prime item: " .. why .. "."), 62)) do
+                out[#out + 1] = { l = (score and TEAL or GREY) .. l .. "|r" }
+            end
+        end
         out[#out + 1] = { head = "MARKET" }
         local function fact(l, v) out[#out + 1] = { l = l, r = v or (GREY .. "not known yet|r") } end
         fact("Cheapest listing", St.p[key] and (short(St.p[key]) .. GREY .. "  " .. ago(St.t[key]) .. "|r"))
@@ -1290,7 +1338,7 @@ function UI:CreateDrawer()
     d.views = {}
     local prev
     for _, v in ipairs({ { "trades", "Trades" }, { "activity", "Activity" }, { "market", "Market" } }) do
-        local b = button(d, 80, v[2], function() UI.sel, UI.dview, UI.dscroll = nil, v[1], 0; UI:Render() end)
+        local b = button(d, 70, v[2], function() UI.sel, UI.dview, UI.dscroll = nil, v[1], 0; UI:Render() end)
         if prev then b:SetPoint("LEFT", prev, "RIGHT", 6, 0) else b:SetPoint("TOPLEFT", 12, -8) end
         d.views[v[1]] = b
         prev = b
@@ -1313,6 +1361,16 @@ function UI:CreateDrawer()
         rule:SetColorTexture(LINE[1], LINE[2], LINE[3], 0.6)
         d.lines[i] = { label = l, value = v, rule = rule }
     end
+    -- shown for one item: put it on, or take it off, your own focus list
+    d.focus = button(d, 150, "", function()
+        if not UI.sel then return end
+        local on = ns.Scout:Toggle(UI.sel)
+        UI:Notice(on and "Added to your focus list. Laser focus uses it when set to 'My own list' (Setup tab)."
+            or "Removed from your focus list.", true)
+        UI:Render()
+    end)
+    d.focus:SetPoint("TOPRIGHT", -12, -8)
+    d.focus:Hide()
     d:EnableMouseWheel(true)
     d:SetScript("OnMouseWheel", function(_, delta)
         UI.dscroll = math.max(0, (UI.dscroll or 0) - (delta or 0) * 4)
@@ -1362,6 +1420,8 @@ function UI:RenderDrawer(entries)
     local off = math.max(0, math.min(self.dscroll or 0, #lines - vis))
     self.dscroll = off
     for name, b in pairs(d.views) do outline(b, (not self.sel and (self.dview or "trades") == name) and ACCENT or LINE) end
+    d.focus:SetShown(self.sel ~= nil)
+    if self.sel then d.focus:SetText(ns.Scout:InList(self.sel) and "Remove from my focus" or "Add to my focus list") end
     for i = 1, DLINES do
         local w, ln = d.lines[i], (i <= vis) and lines[i + off] or nil
         if not ln then
