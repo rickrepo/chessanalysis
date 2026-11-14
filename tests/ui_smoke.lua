@@ -354,6 +354,27 @@ local hr = rowsTextHist and rowsTextHist() or nil
 for i = 1, math.min(4, #hist) do print("     " .. strip(hist[i].m)) end
 UI.tab = "BUY"
 
+print("sharing: a friend's sweep triggers a check here; next-step line")
+ns.Deals.cfg.requireTurnover = false
+S.verified, S.checkedAt, S.floor, S.sweep, S.triggers = {}, {}, {}, {}, {}
+LIST[2592], LIST[2589], LIST[2770] = nil, nil, nil -- leftovers from earlier sections
+ITEMS[4234] = { "Heavy Leather", 2 }
+LIST[4234] = { { 60, 4 }, { 190, 300 }, { 191, 300 } }
+ns.Store:PutFair(4234, 190, GetServerTime()); gold = 900
+check(ns.Sync:PeerCount() == 0, "nobody connected yet")
+-- a friend's addon broadcasts the lowest price it just saw (a normal "D" message)
+local bld = ns.Codec.newDelta(GetServerTime()); bld:add(4234, 60, 604, GetServerTime())
+local n1 = #sent
+ns.Sync.Dispatch(bld:finish(), "Friend-Realm"); advance(3)
+local c = 0; for i = n1 + 1, #sent do if sent[i] == "search4234" then c = c + 1 end end
+check(ns.Sync:PeerCount() == 1, "the friend shows up as connected")
+check(c == 1 and S.verified[4234] and S.verified[4234].units == 4, "the friend's price update triggered one check here and the deal is confirmed")
+UI.tab = "BUY"; UI.notice = nil; UI:Render()
+local nx = strip(AuctionMeshFrame.next._text)
+print("     " .. nx)
+check(nx:find("NEXT: Press Buy on Heavy Leather: pay 2s40c, make +", 1, true), "NEXT line says exactly what to press and what it makes")
+S.verified[4234] = nil
+
 print("timers")
 S:RebuildBackground(); UI.tab = "BUY"; S.searching = nil; S.last = nil; S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)
 UI.notice = nil; UI:Render()

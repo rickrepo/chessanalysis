@@ -215,6 +215,10 @@ function Sniper:Evaluate(key, rows, commodity)
         self.verified[key] = nil
         if #rows == 0 then reason = "none listed" end
         ns.Log("NO DEAL %s: %s (rows: %s)", tostring(key), tostring(reason), self.RowsText(rows))
+        -- A real deal that is only too big for our purse: tell friends, one of them may afford it.
+        if reason and (reason:find("more than you can spend", 1, true) or reason:find("more than you have", 1, true)) then
+            Sync:Hint(key)
+        end
     end
     self.last = { key = key, deal = deal ~= nil, reason = reason, at = GetTime() }
     if self.searching and self.searching.key == key then self.searching = nil end
@@ -253,12 +257,18 @@ function Sniper:OnSweep(key, price, qty)
     elseif market and price <= market * 0.8 then why = "20% under market"
     elseif prev and price <= prev.p * 0.85 then why = "price just dropped"
     end
-    if not why or self.verified[key] or self:Since(key) < TRIGGER_MIN then return end
+    if not why then return end
+    self:AddTrigger(key, why, price, market)
+end
+
+-- Queues one full look at an item (from our sweep, a friend's sweep or a friend's hint).
+function Sniper:AddTrigger(key, why, price, market)
+    if not self.active or key <= 0 or self.isItem[key] or self.verified[key] or self:Since(key) < TRIGGER_MIN then return end
     self.triggers = self.triggers or {}
     if not self.triggers[key] then
         self.triggers[key] = true
         self.triggers[#self.triggers + 1] = key
-        ns.Log("TRIGGER %s: %s (lowest %d, market %s)", tostring(key), why, price, tostring(market))
+        ns.Log("TRIGGER %s: %s (lowest %s, market %s)", tostring(key), tostring(why), tostring(price), tostring(market))
     end
 end
 
@@ -483,7 +493,9 @@ function Sniper:Tick()
         end
         return dirty()
     end
-    if now - (self.lastScreen or 0) > 5 then self:Screen(); self.lastScreen = now end
+    -- The radar finds new deals; this pass over the whole price table only has
+    -- to expire old ones and catch what the radar could not see, so it runs rarely.
+    if now - (self.lastScreen or 0) > 15 then self:Screen(); self.lastScreen = now end
     -- Re-pick the watch list every 5 minutes (or right away while it is still empty).
     local bg = self.background
     if now - (self.lastBg or 0) > ((bg and #bg > 0) and 300 or 5) then self:RebuildBackground(); self.lastBg = now end

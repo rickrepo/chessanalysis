@@ -26,7 +26,7 @@ ns.UI = UI
 local floor, min = math.floor, math.min
 local ROWS, ROW_H, WIDTH = 12, 26, 720
 local MAXROWS = 18 -- rows that exist; how many are shown depends on the panel's height
-local TOP = 124    -- y where the list starts
+local TOP = 146    -- y where the list starts
 
 -- NATIVE LOOK. The panel is built from the game's own interface pieces, so it
 -- looks like whatever the game looks like: the auction house's background art,
@@ -236,10 +236,49 @@ local function buyStatus(n)
     if Sw and Sw.active and #Sw.units > 0 then
         local fresh, total = Sw:Coverage()
         local left = Sw:NextRescan() or 0
-        lines[#lines + 1] = ("%sRadar: every crafting material re-read every %ds (%d of %d categories current, next in %s).|r"):format(
-            GREY, Sw.cfg.fresh, fresh, total, clock(left))
+        local peers = ns.Sync:PeerCount()
+        lines[#lines + 1] = ("%sRadar: every crafting material re-read every %ds (%d of %d current, next in %s).  %s|r"):format(
+            GREY, Sw.cfg.fresh, fresh, total, clock(left),
+            peers > 0 and (GREEN .. ("Sharing live with %d other player%s."):format(peers, peers == 1 and "" or "s"))
+            or "Not sharing: nobody else is connected (/amesh channel or a shared guild).")
     end
     return table.concat(lines, "\n")
+end
+
+-- The single most useful thing to do right now, in plain words, with the gold it makes.
+local function nextStep(deals, entries, short)
+    local S, Se = ns.Sniper, ns.Seller
+    local b = S.buying
+    if b and b.phase == "confirm" then
+        return ("Press |cffffd100Confirm|r to pay %s for %d x %s."):format(short(b.total or 0), b.units, S.nameOf(b.key))
+    end
+    if #deals > 0 and ahOpen() then
+        local d = deals[1]
+        local units, total = S.NextBuy(d)
+        return ("Press |cffffd100Buy|r on %s: pay %s, make %s+%s|r%s."):format(S.nameOf(d.key), short(total), GREEN, short(d.profit),
+            d.kind == "VENDOR" and " (guaranteed: sell to a vendor)" or (d.eta and (" (resale, sells in ~%d min)"):format(math.max(1, floor(d.eta + 0.5))) or " (resale)"))
+    end
+    local n = { AH = 0, VENDOR = 0, MAIL = 0, HOLD = 0, LISTED = 0 }
+    local gain, sold = { AH = 0, VENDOR = 0 }, 0
+    for _, e in ipairs(entries) do
+        n[e.action] = (n[e.action] or 0) + 1
+        local _, _, _, profit = Se:Numbers(e)
+        if gain[e.action] and profit then gain[e.action] = gain[e.action] + profit * e.count end
+        if e.action == "LISTED" and e.live == 0 then sold = sold + 1 end
+    end
+    if n.AH > 0 and ahOpen() then
+        return ("Open |cffffd100PORTFOLIO|r and press |cffffd100Post|r: %d item(s) to list for %s+%s|r."):format(n.AH, GREEN, short(gain.AH))
+    end
+    if n.VENDOR > 0 then
+        return merchantOpen() and ("Press |cffffd100Sell all to vendor|r to collect %s+%s|r profit."):format(GREEN, short(gain.VENDOR))
+            or ("Visit any vendor: %d item(s) to sell for %s+%s|r profit."):format(n.VENDOR, GREEN, short(gain.VENDOR))
+    end
+    if n.MAIL > 0 then return ("Visit a mailbox: %d purchase(s) to collect."):format(n.MAIL) end
+    if sold > 0 then return "Visit a mailbox: an auction sold or expired." end
+    if n.AH > 0 then return ("Open the auction house: %d item(s) to post for %s+%s|r."):format(n.AH, GREEN, short(gain.AH)) end
+    if not ahOpen() then return "Open the auction house to look for deals." end
+    if n.LISTED > 0 then return "Nothing to do: your auctions are listed and deals are being watched." end
+    return "Nothing to do yet: watching for deals. A sound plays when one appears."
 end
 
 ---------------------------------------------------------------- render
@@ -292,6 +331,7 @@ function UI:Render()
             and ("%sCOMING IN: +%s|r  %swhen these are sold|r"):format(back >= inv and GREEN or RED, short(back - inv), GREY)
             or (GREY .. "Nothing to sell|r"))
     end
+    frame.next:SetText("|cffffd100NEXT:|r " .. nextStep(deals, entries, short))
     local status = self.tab == "BUY" and buyStatus(#deals) or Se:Instructions(entries)
     if self.tab == "HISTORY" then
         status = #list == 0 and (GREY .. "Nothing yet. Purchases, mailbox pick-ups, posts and sales are listed here.|r") or ""
@@ -342,6 +382,14 @@ function UI:Render()
         local profit = back - invested
         text = ("Holding: paid %s  >  expect back %s  =  %s%s%s|r"):format(short(invested), short(back),
             profit >= 0 and GREEN or RED, profit >= 0 and "+" or "", short(profit))
+    end
+    do
+        local made = (AuctionMeshDB.realized or 0) - (ns.realizedAtLogin or 0)
+        local hours = (GetTime() - (ns.sessionStart or GetTime())) / 3600
+        if made ~= 0 and hours > 0.05 then
+            text = text .. ("%s   Session %s%s%s|r (%s an hour)"):format(text ~= "" and "  |" or "", made >= 0 and GREEN or RED,
+                made >= 0 and "+" or "", short(made), short(made / hours))
+        end
     end
     frame.footer:SetText(text .. more)
     frame.post:SetShown(self.tab == "SELL" and ahOpen())
@@ -527,10 +575,15 @@ function UI:Create()
     lbl:SetPoint("RIGHT", frame.minS, "LEFT", -10, 0)
     lbl:SetText("Min profit per deal")
 
+    -- NEXT STEP: one plain instruction, always the most profitable thing to do now
+    frame.next = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    frame.next:SetPoint("TOPLEFT", 14, -66)
+    frame.next:SetPoint("TOPRIGHT", -14, -66)
+    frame.next:SetJustifyH("LEFT"); frame.next:SetWordWrap(false)
     frame.status = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    frame.status:SetPoint("TOPLEFT", 14, -66)
-    frame.status:SetPoint("TOPRIGHT", -14, -66)
-    frame.status:SetHeight(36)
+    frame.status:SetPoint("TOPLEFT", 14, -86)
+    frame.status:SetPoint("TOPRIGHT", -14, -86)
+    frame.status:SetHeight(38)
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
 
     -- the list sits in one of the game's inset frames
@@ -627,8 +680,9 @@ function UI:Create()
         if UI.notice and GetTime() >= UI.notice.till then UI.notice = nil; UI.dirty = true end
         local paused = ns.Gate:UserBusy()
         if paused ~= UI.wasPaused then UI.wasPaused = paused; UI.dirty = true end
-        -- Timers tick while the BUY tab is open at the auction house.
-        if UI.tab == "BUY" and ahOpen() then UI.dirty = true end
+        -- Timers tick twice a second while the BUY tab is open at the auction house.
+        UI.tick = (UI.tick or 0) + 1
+        if UI.tab == "BUY" and ahOpen() and UI.tick % 3 == 0 then UI.dirty = true end
         if UI.dirty then UI:Render() end
     end)
     frame:Hide()

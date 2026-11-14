@@ -12,6 +12,9 @@
 --                                            kind 1 = starting, 2 = finished
 --   F <base> {zig(key) fair 0 age}*          market prices read from full live listings
 --   R <base> {zig(key) unit qty age}*        real sales (from sale invoices)
+--   P <ver>                                  presence beacon
+--   O <zig(key)>                             "deal here I can't afford": friends check it
+--   Y <base> {zig(key) price 0 age}*          price-history points for a newly online friend
 --
 -- Live path: scans -> Observe() -> only net-new data is queued -> coalesced
 -- for 150 ms -> packed ~18 records per 255-byte message -> LIVE lane. If an
@@ -238,6 +241,10 @@ function Sync:OnDelta(msg, sender)
         end
         if Store:Put(key, p, q, t) then
             stats.applied = stats.applied + 1
+            -- SHARED RADAR: a friend's sweep just showed a new lowest price. Treat it
+            -- exactly like our own sweep, so a deal a friend's scan uncovers is
+            -- checked here within a second, without us spending a sweep on it.
+            if ns.Sniper and ns.Sniper.OnSweep and now - t < 120 then ns.Sniper:OnSweep(key, p, q) end
         else
             stats.ignored = stats.ignored + 1
         end
@@ -254,6 +261,79 @@ function Sync:OnDelta(msg, sender)
     if not ok then stats.rejected = stats.rejected + 1 end
 end
 
+---------------------------------------------------------------- presence, hints, history
+
+Sync.peers = {} -- sender -> clock() when we last heard anything from them
+
+-- How many other players' addons we have heard from in the last 7 minutes.
+function Sync:PeerCount()
+    local n, now = 0, self.clock()
+    for name, at in pairs(self.peers) do
+        if now - at < 420 then n = n + 1 else self.peers[name] = nil end
+    end
+    return n
+end
+
+-- "P": I'm here. Sent every few minutes so everyone can see who is connected.
+function Sync:Beacon()
+    Comm:Enqueue(Comm.CONTROL, "P" .. Codec.uint(PROTO))
+end
+
+-- "O <key>": I found a deal on this item that I can't afford. A friend with
+-- more gold gets it checked on their side at once.
+function Sync:Hint(key)
+    self.hinted = self.hinted or {}
+    local now = self.clock()
+    if self.hinted[key] and now - self.hinted[key] < 300 then return end
+    self.hinted[key] = now
+    Comm:Enqueue(Comm.LIVE, "O" .. Codec.uint(Codec.zig(key)))
+end
+
+function Sync:OnHint(msg, sender)
+    local z = Codec.readUInt(msg, 2)
+    if not z then return end
+    if ns.Sniper and ns.Sniper.AddTrigger then ns.Sniper:AddTrigger(Codec.unzig(z), "a friend spotted a deal") end
+end
+
+-- "Y": price-history points (6h, 24h, 3 days and 7 days back) for the items we
+-- know best, so a friend who just logged in has trends straight away. One peer
+-- answers: everyone waits a random moment and stays quiet if they hear another's answer.
+function Sync:OfferHistory()
+    if self.clock() - (self.histHeardAt or -1000) < 30 then return end
+    local now = self.serverTime()
+    local keys = {}
+    for key, h in pairs(Store.hist or {}) do keys[#keys + 1] = { key, #h } end
+    table.sort(keys, function(a, b) return a[2] > b[2] end)
+    local b, sent = Codec.newDelta(now, "Y"), 0
+    for i = 1, math.min(#keys, 40) do
+        local key = keys[i][1]
+        for _, hoursAgo in ipairs({ 6, 24, 72, 168 }) do
+            local price, age = Store:PriceAt(key, now, hoursAgo)
+            if price then
+                local t = now - age * 3600
+                if not b:add(key, price, 0, t) then
+                    Comm:Enqueue(Comm.BULK, b:finish())
+                    b = Codec.newDelta(now, "Y")
+                    b:add(key, price, 0, t)
+                end
+                sent = sent + 1
+            end
+        end
+    end
+    local m = b:finish()
+    if m then Comm:Enqueue(Comm.BULK, m) end
+    self.histHeardAt = self.clock()
+    return sent
+end
+
+function Sync:OnHistory(msg, sender)
+    self.histHeardAt = self.clock()
+    local now = self.serverTime()
+    Codec.decodeDelta(msg, function(key, price, _, t)
+        if price > 0 and price < 1e13 and t <= now and t >= now - 8 * 24 * 3600 then Store:RecordAt(key, price, t) end
+    end)
+end
+
 ---------------------------------------------------------------- catch-up
 
 function Sync:Hello()
@@ -267,6 +347,8 @@ end
 function Sync:OnHello(msg, sender)
     local ver, pos = Codec.readUInt(msg, 2)
     if not ver or ver ~= PROTO then return end
+    -- someone just came online: one of us sends them price history
+    self.after(3 + random() * 6, function() Sync:OfferHistory() end)
     local since
     since, pos = Codec.readUInt(msg, pos)
     if not since then return end
@@ -407,12 +489,16 @@ local OPS = {
     [67] = Sync.OnScanNote, -- C
     [70] = Sync.OnFair,     -- F
     [82] = Sync.OnSold,     -- R
+    [79] = Sync.OnHint,     -- O
+    [89] = Sync.OnHistory,  -- Y
+    [80] = function() end,  -- P (presence: handled in Dispatch)
 }
 
 Sync.OPS = OPS -- other modules (Swarm) register their opcodes here
 
 function Sync.Dispatch(msg, sender)
     ns.peerAt = Sync.clock() -- someone else on the mesh is online
+    Sync.peers[sender] = ns.peerAt
     local f = OPS[msg:byte(1) or 0]
     if f then f(Sync, msg, sender) end
 end

@@ -21,6 +21,19 @@ Open the auction house. One window opens next to it and price scanning starts by
 
 With the auction house open, the panel is **inside the auction house window**: it covers the content area, is exactly that window's size, and opens, moves and closes with it. An **AuctionMesh** tab under the window switches between the game's own screens and the panel; clicking any of the game's tabs also switches back. At a vendor or mailbox it appears as a compact separate window. `/amesh dock off` makes it a separate window everywhere.
 
+### NEXT: one instruction
+
+Under the headline, one line always says the most profitable thing to do right now, with the gold it makes:
+
+```
+NEXT: Press Buy on Heavy Leather: pay 2s40c, make +4s80c (resale, sells in ~12 min).
+NEXT: Visit a mailbox: 1 purchase(s) to collect.
+NEXT: Open PORTFOLIO and press Post: 2 item(s) to list for +3s18c.
+NEXT: Visit any vendor: 1 item(s) to sell for +24c profit.
+```
+
+The footer shows this session's banked profit and the rate per hour.
+
 ### The look
 
 The panel is assembled from the game's own interface pieces, so it takes on the game's look instead of bringing its own:
@@ -97,6 +110,22 @@ AuctionMesh uses the cheap, wide one as its radar and spends the narrow one only
 Compared with re-reading 50 items one by one, this covers every crafting material and uses fewer requests. It should also spot a new cheap listing within one sweep instead of one round. With friends on the same channel the sweep is shared: each category is read by one of you.
 
 The game's full-download scan (`/amesh scan`, one request for the entire auction house, allowed once per 15 minutes) is still available.
+
+### Sharing with other players, live
+
+Everyone running AuctionMesh on the same hidden channel (or in the same guild) is one network. Nothing extra to set up beyond `/amesh channel <name> <password>` once per person. What travels between you, within a second or two:
+
+| Shared | What it does for you |
+|---|---|
+| Lowest price and quantity of every item a friend's sweep sees | **Shared radar:** a friend's sweep triggers a deal check on your side, without you spending a sweep on it |
+| Which category each of you is sweeping | The sweep is split: each category is read by one of you |
+| Market prices from full readings | Fills everyone's price history database |
+| Real sale prices from invoices | Everyone knows what buyers actually paid |
+| "Deal here I can't afford" hints | A friend with more gold gets it checked immediately |
+| Price history (6h, 24h, 3 days, 7 days back) when someone logs in | A newcomer has trends straight away |
+| A presence signal every few minutes | The radar line shows "Sharing live with N other players" (or says nobody is connected) |
+
+Limit set by the game: each player can send about one hidden message a second, so this carries prices and signals, not bulk data.
 
 ### The price history database
 

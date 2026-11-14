@@ -159,6 +159,21 @@ function Store:Record(key, price, t)
     end
 end
 
+-- Inserts a history point received from a friend (any hour, kept in order).
+-- An hour we already have is left alone. Returns true if it was added.
+function Store:RecordAt(key, price, t)
+    local hour = floor(t / 3600)
+    local h = self.hist[key]
+    if not h then h = {}; self.hist[key] = h end
+    local at = #h + 1
+    for i = 1, #h, 3 do
+        if h[i] == hour then return false end
+        if h[i] > hour then at = i; break end
+    end
+    table.insert(h, at, -1); table.insert(h, at, price); table.insert(h, at, hour)
+    return true
+end
+
 -- Price `hoursAgo` hours back: the record closest to that time, accepted when
 -- it is between half and one-and-a-half times that far back. Returns price, ageHours.
 function Store:PriceAt(key, now, hoursAgo)

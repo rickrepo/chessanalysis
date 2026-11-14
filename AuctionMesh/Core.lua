@@ -177,6 +177,8 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             C_Timer.After(2 + math.random() * 3, function() Sync:Hello() end)
         end)
         C_Timer.NewTicker(30, function() Sync:Tidy() end)
+        C_Timer.NewTicker(150, function() if Comm:Route() then Sync:Beacon() end end)
+        ns.sessionStart, ns.realizedAtLogin = GetTime(), AuctionMeshDB.realized or 0
         if seeded > 0 or pruned > 0 then
             say(("%d prices loaded (%d from central DB, %d expired)."):format(Store.n, seeded, pruned))
         end
