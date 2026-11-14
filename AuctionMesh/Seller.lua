@@ -157,7 +157,7 @@ function Seller:Instructions(entries)
         lines[#lines + 1] = ("|cffaaaaaa%d auction(s) listed. The gold arrives by mail when they sell.|r"):format(n.LISTED)
     end
     if #lines == 0 then
-        lines[1] = "|cffaaaaaaNothing to sell. Items you buy on the Deals tab appear here.|r"
+        lines[1] = "|cffaaaaaaNothing to sell. Items you buy on the Trades tab appear here.|r"
     end
     if self.posting then table.insert(lines, 1, "|cffffffffPosting " .. nameOf(self.posting.key) .. "...|r") end
     return table.concat(lines, "\n")
@@ -190,7 +190,7 @@ function Seller:SellVendor(onlyKey)
     self.selling = true
     local i = 0
     local function finish()
-        -- Count what actually left the bags; only that is removed from the Money tab.
+        -- Count what actually left the bags; only that is removed from the Bags tab.
         Seller:ScanBags()
         local earned = 0
         for key, was in pairs(before) do
@@ -294,6 +294,26 @@ function Seller:RecordSale(i)
 end
 
 -- Counts every item attached to mail in the inbox (nil until the mailbox is opened).
+-- Sale gold as last seen at the mailbox: in the mailbox now, still on its way,
+-- seconds until the next arrival, and the items those sales were for.
+function Seller:SalesMoney()
+    local s = AuctionMeshDB.sales
+    local waiting, onway, nextAt, keys = 0, 0, nil, {}
+    if not s then return waiting, onway, nil, keys end
+    local now = GetServerTime()
+    waiting = s.waiting or 0
+    for _, p in ipairs(s.pending or {}) do
+        if p.at <= now then
+            waiting = waiting + p.amount
+        else
+            onway = onway + p.amount
+            if not nextAt or p.at < nextAt then nextAt = p.at end
+        end
+        if p.key then keys[p.key] = true end
+    end
+    return waiting, onway, nextAt and (nextAt - now) or nil, keys
+end
+
 function Seller:ScanMail()
     local shown, total = GetInboxNumItems()
     local counts = {}
@@ -307,6 +327,29 @@ function Seller:ScanMail()
         end
     end
     self.mailCount = counts
+    -- Sales, read from the invoices themselves (no guessing): gold that is in
+    -- the mailbox now, and gold from sales the game is still holding back,
+    -- with the time the game says it will arrive.
+    if GetInboxInvoiceInfo then
+        local sales = { waiting = 0, pending = {} }
+        for i = 1, shown or 0 do
+            local kind, itemName, _, bid, _, deposit, cut, _, etaHour, etaMin = GetInboxInvoiceInfo(i)
+            local _, _, _, _, moneyAmt = GetInboxHeaderInfo(i)
+            if kind == "seller" and (moneyAmt or 0) > 0 then
+                sales.waiting = sales.waiting + moneyAmt
+            elseif kind == "seller_temp_invoice" and bid and bid > 0 then
+                local mins = 0
+                if etaHour and etaMin and GetGameTime then
+                    local h, m = GetGameTime()
+                    mins = ((etaHour * 60 + etaMin) - ((h or 0) * 60 + (m or 0))) % 1440
+                    if mins > 720 then mins = 0 end -- the time has already passed
+                end
+                sales.pending[#sales.pending + 1] = { amount = bid + (deposit or 0) - (cut or 0), at = GetServerTime() + mins * 60,
+                    key = AuctionMeshDB.names and AuctionMeshDB.names[itemName] or nil }
+            end
+        end
+        AuctionMeshDB.sales = sales
+    end
     -- More than ~50 mails: the client only shows part of the inbox, so we can't be sure.
     self.mailComplete = (total or shown or 0) <= (shown or 0)
 end
@@ -335,7 +378,7 @@ function Seller:Reconcile()
                                  sell = L.price, at = now, proof = "auction expired, returned by mail" }
                 AuctionMeshDB.listed[key] = nil
                 if ns.Learn then ns.Learn:Outcome(key, false) end
-                say(("|cffff8040Expired unsold:|r %d x %s came back by mail. It is on the Money tab again."):format(n, nameOf(key)))
+                say(("|cffff8040Expired unsold:|r %d x %s came back by mail. It is on the Bags tab again."):format(n, nameOf(key)))
                 returned = true
             end
         end
@@ -349,7 +392,7 @@ function Seller:Reconcile()
             local missing = f.units - have
             ns.Log("RECONCILE %s: expected %d, bags %d, mail %d -> removing %d", tostring(key), f.units,
                 bagCount[key] or 0, inMail, missing)
-            say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from the Money tab.|r")
+            say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from the Bags tab.|r")
                 :format(nameOf(key), missing))
             if have <= 0 then flips()[key] = nil; self.prices[key] = nil else f.units = have end
         end
@@ -479,7 +522,7 @@ function Seller:Post(key)
     if not ok then
         ns.Log("POST refused by client for %s", tostring(key))
         self.posting = nil
-        say("The game refused that post. " .. nameOf(key) .. " stays on the Money tab.")
+        say("The game refused that post. " .. nameOf(key) .. " stays on the Bags tab.")
         return
     end
     self:Refresh()
@@ -488,7 +531,7 @@ function Seller:Post(key)
         local q = Seller.posting
         if q and q.key == key and q.at == Seller.posting.at then
             Seller.posting = nil
-            say(nameOf(key) .. " wasn't posted (no change in your bags); it's still on the Money tab.")
+            say(nameOf(key) .. " wasn't posted (no change in your bags); it's still on the Bags tab.")
             Seller:Refresh()
         end
     end)
@@ -528,7 +571,7 @@ function Seller:OnError(msg)
     ns.Log("POST error for %s: %s", tostring(self.posting.key), tostring(msg))
     self.posting = nil
     self.quietUntil = GetTime() + 2
-    say("Post failed: " .. tostring(msg) .. ". Item kept on the Money tab; press again in a moment.")
+    say("Post failed: " .. tostring(msg) .. ". Item kept on the Bags tab; press again in a moment.")
     self:Refresh()
 end
 
@@ -610,13 +653,19 @@ Seller.AcceptDrop = acceptDrop
 
 ---------------------------------------------------------------- the numbers per item
 
--- Short money text: 1g20s, 35s40c, 79c (colored like coins).
+-- Money as text: 42g 58s 88c.
 local function short(c)
     if not c then return "?" end
-    -- The game's own coin icons (gold / silver / copper), exactly as its auction house shows prices.
-    if not ns.plainMoney and C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then
+    -- In the game: plain text with spaces, "42g 58s 88c", taking the colour of
+    -- the line it is on (white = held, green = earned, orange = depends on a sale).
+    if not ns.plainMoney then
         local v = math.abs(floor(c + 0.5))
-        return (c < 0 and "-" or "") .. C_CurrencyInfo.GetCoinTextureString(v)
+        local g, sv, cp = floor(v / 10000), floor(v / 100) % 100, v % 100
+        local out
+        if g > 0 then out = ("%dg %02ds %02dc"):format(g, sv, cp)
+        elseif sv > 0 then out = ("%ds %02dc"):format(sv, cp)
+        else out = ("%dc"):format(cp) end
+        return (c < 0 and "-" or "") .. out
     end
     local neg = c < 0
     c = math.abs(floor(c + 0.5))

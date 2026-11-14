@@ -131,6 +131,9 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         Store:Attach(r)
         r.learn = r.learn or {}
         ns.Learn:Attach(r.learn)
+        r.tune = r.tune or {}
+        ns.Tuner:Attach(r.tune)
+        if db.cfg.tune == false then ns.Tuner.cfg.enabled = false end
         if db.cfg.autoTune == false then ns.Learn.cfg.autoTune = false end
         local pruned = Store:Prune(GetServerTime() - Sync.cfg.maxAge)
         local hItems, hRecords = Store:TrimHistory(GetServerTime())
@@ -180,7 +183,13 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             C_Timer.After(2 + math.random() * 3, function() Sync:Hello() end)
         end)
         C_Timer.NewTicker(30, function() Sync:Tidy() end)
-        C_Timer.NewTicker(150, function() if Comm:Route() then Sync:Beacon() end end)
+        C_Timer.NewTicker(150, function()
+            if Comm:Route() then
+                Sync:Beacon()
+                -- with friends connected, pass on what has been measured (at most every 10 minutes)
+                if ns.peerAt and GetTime() - ns.peerAt < 600 then ns.Tuner:Share() end
+            end
+        end)
         ns.sessionStart, ns.realizedAtLogin = GetTime(), AuctionMeshDB.realized or 0
         ns.measure = {} -- live measurements of the request limit and sweep cost
         -- EVENT-DRIVEN PUMP. The instant the auction house unlocks, send the next
@@ -319,6 +328,17 @@ SlashCmdList.AUCTIONMESH = function(input)
             or "Request limit: not measured yet (open the auction house with the panel open).")
         say(M and ("Sweep: %d materials in %d request(s); largest page returned %d results; radar every %ds."):format(M.items, M.requests, M.pageMax, Swarm.cfg.fresh)
             or "Sweep: not measured yet.")
+        for _, l in ipairs(ns.Tuner:Lines()) do say(l[1] .. ": " .. l[2]) end
+        if rest == "reset" then
+            local r = AuctionMeshDB.realms[realmKey()]
+            r.tune = {}
+            ns.Tuner:Attach(r.tune)
+            say("Everything learned about the request limit was cleared; measuring again.")
+        elseif rest == "off" or rest == "on" then
+            ns.Tuner.cfg.enabled = rest == "on"
+            cfg.tune = rest == "on"
+            say(rest == "on" and "The addon adjusts its own pace and split again." or "Pace and split are frozen at their current values (still measured).")
+        end
     elseif cmd == "status" then
         local cs, ss = Comm.stats, Sync.stats
         local chatType, target = Comm:Route()
@@ -335,7 +355,7 @@ SlashCmdList.AUCTIONMESH = function(input)
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
     else
-        say("/amesh = open the window | learn | limits | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
+        say("/amesh = open the window | learn | limits [on|off|reset] | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
         say("Sharing: /amesh channel <name> [password] | guild | sync.   Scanning: /amesh scope money/all | swarm | focus <types>")
     end
 end

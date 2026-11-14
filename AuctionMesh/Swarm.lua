@@ -151,7 +151,7 @@ Swarm.exec = {
     ready = function() return ns.Gate:Ready() end,
     start = function(u)
         local c, s = Swarm.unitParts(u)
-        ns.Gate:Use(("swarm browse class %d sub %s"):format(c, tostring(s)))
+        ns.Gate:Use(("swarm browse class %d sub %s"):format(c, tostring(s)), "browse")
         C_AuctionHouse.SendBrowseQuery({
             searchString = "",
             sorts = { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } },
@@ -160,7 +160,7 @@ Swarm.exec = {
         })
     end,
     full = function() return C_AuctionHouse.HasFullBrowseResults() end,
-    more = function() ns.Gate:Use("swarm next page"); C_AuctionHouse.RequestMoreBrowseResults() end,
+    more = function() ns.Gate:Use("swarm next page", "page"); C_AuctionHouse.RequestMoreBrowseResults() end,
     gotResults = function() return Swarm.resultsSeen end,
 }
 
@@ -262,7 +262,7 @@ function Swarm:Tune(unit, requests)
     local total = 0
     for _, u in ipairs(self.units) do total = total + (self.unitReq[u] or 1) end
     local fresh = total * self.cfg.perRequest / self.cfg.sweepShare
-    fresh = math.max(8, math.min(90, floor(fresh + 0.5)))
+    fresh = math.max(3, math.min(90, floor(fresh + 0.5)))
     local M = ns.measure
     if M then
         -- what this sweep actually was: items seen, requests used, largest page
@@ -277,6 +277,14 @@ function Swarm:Tune(unit, requests)
 end
 
 -- Seconds until the stalest category is due for a rescan (0 = scanning now).
+-- The Tuner moved the split or the measured cost: recompute the radar interval.
+function Swarm:Retune()
+    if not self.cfg.adaptive or not self.unitReq or #self.units == 0 then return end
+    local total = 0
+    for _, u in ipairs(self.units) do total = total + (self.unitReq[u] or 1) end
+    self.cfg.fresh = math.max(3, math.min(90, floor(total * self.cfg.perRequest / self.cfg.sweepShare + 0.5)))
+end
+
 function Swarm:NextRescan()
     if #self.units == 0 then return nil end
     local now, soonest = self.serverTime(), math.huge

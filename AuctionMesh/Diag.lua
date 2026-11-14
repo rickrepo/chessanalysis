@@ -110,10 +110,6 @@ function Gate:Ready()
     if self:UserBusy() then return false end
     -- Safety: if the server never confirmed, don't wait forever.
     if self.outstanding > 0 and now - self.changedAt > 5 then self.outstanding = 0 end
-    if self.errors > 0 and now - self.lastError > 60 then
-        self.errors, self.interval = 0, 0.05
-        Log("GATE relaxed: back to the client's own pace")
-    end
     return now >= self.nextAt and self.outstanding <= 0 and C_AuctionHouse.IsThrottledMessageSystemReady()
 end
 
@@ -127,19 +123,23 @@ function Gate:ReadyForUser()
 end
 
 -- Call right before sending a request.
-function Gate:Use(what)
+-- kind ("browse", "page", "search", "more") marks a background request the
+-- Tuner learns from; your own clicks pass no kind.
+function Gate:Use(what, kind)
     self.nextAt = GetTime() + self.interval
     self.usedAt = GetTime()
+    if ns.Tuner then ns.Tuner:Sent(kind) end
     Log("SEND %s", what)
 end
 
 function Gate:Penalize(why)
     local now = GetTime()
     self.errors, self.lastError = self.errors + 1, now
-    self.interval = math.min(3, math.max(0.6, self.interval * 1.5))
     self.nextAt = now + 5
     self.penaltyUntil = now + 2
-    Log("GATE backoff (%s): pause 5s, spacing now %.2fs", why, self.interval)
+    -- The Tuner decides whether the pace itself has to change (and remembers it).
+    local counted = ns.Tuner and ns.Tuner:Failed(why)
+    Log("GATE backoff (%s): pause 5s%s", why, counted and "; counted against the current pace" or "")
 end
 
 ---------------------------------------------------------------- hooks & events
@@ -179,11 +179,14 @@ local function onEvent(_, event, ...)
         if Gate.sentAt then
             local dt = GetTime() - Gate.sentAt
             Gate.sentAt = nil
+            if ns.Tuner then ns.Tuner:Answered(dt) end
             if dt > 0.2 and dt < 10 then
                 local old = Gate.cycle
                 Gate.cycle = old and (old * 0.9 + dt * 0.1) or dt
                 Gate.cycleN = (Gate.cycleN or 0) + 1
-                if ns.Swarm and Gate.cycleN >= 5 then ns.Swarm.cfg.perRequest = math.max(0.4, math.min(3, Gate.cycle)) end
+                if ns.Swarm and Gate.cycleN >= 5 and not (ns.Tuner and ns.Tuner.d) then
+                    ns.Swarm.cfg.perRequest = math.max(0.4, math.min(3, Gate.cycle))
+                end
                 local shown = Gate.cycleShown
                 if Gate.cycleN >= 10 and (not shown or math.abs(Gate.cycle - shown) > shown * 0.2) then
                     Gate.cycleShown = Gate.cycle
@@ -191,8 +194,15 @@ local function onEvent(_, event, ...)
                 end
             end
         end
-        -- The lock just opened: send the next request this very frame.
-        if ns.OnAHReady then ns.OnAHReady() end
+        -- The lock just opened: send the next request this very frame, unless
+        -- the Tuner has learned that this server needs a short pause first.
+        local gap = ns.Tuner and ns.Tuner:Gap() or 0
+        if gap > 0 then
+            Gate.nextAt = math.max(Gate.nextAt, GetTime() + gap)
+            C_Timer.After(gap + 0.01, function() if ns.OnAHReady then ns.OnAHReady() end end)
+        elseif ns.OnAHReady then
+            ns.OnAHReady()
+        end
         return -- too frequent to be worth a log line each
     elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_SENT" then
         Gate.sentCount, Gate.sawSent = Gate.sentCount + 1, true

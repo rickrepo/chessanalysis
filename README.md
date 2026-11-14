@@ -4,97 +4,109 @@ AuctionMesh is a WoW Forever addon (Midnight retail client, interface 16001) tha
 
 ## How to use it
 
-Open the auction house. One window opens next to it and price scanning starts by itself. The window has two tabs.
+Open the auction house. The panel opens inside the auction house window and price reading starts by itself. It has three tabs and a bar at the top right.
 
 ```
- AuctionMesh                                   Gold: 32s00c
- [ Deals (2) ] [ Money (3) ] [ History ]
- Scanning prices: 34 of 100 categories done. Press Buy. What you see is exactly what you get.
- ---------------------------------------------------------------------------
- Copper Ore                                                          [ Buy ]
-   SAFE  Buy 12 for 36c  >  vendor pays 60c  >  +24c
- Linen Cloth                                                         [ Buy ]
-   FLIP  Buy 6 for 1s20c  >  resell at 77c each  >  +3s12c (not guaranteed)
+ [ Trades ] [ Bags ] [ Setup ]              [#########------]
+                                    Tuned: 1.6 requests a second, 94% in use
+ MONEY
+ Gold on this character now                               42g 58s 88c
+ Sold: waiting in the mailbox now                        + 1g 33s 67c
+ Sold: still on its way                      + 8g 55s 62c  next 16 min
+ Listed: if it sells at the listed prices                + 6g 46s 21c
+ Bought, not listed yet: at the live price               + 3g 58s 66c
+ ---------------------------------------------------------------------
+ Total when it has all sold                               62g 53s 04c
+ Not counted: 2 held items that cost 53s 50c (tab Bags).
+
+ NEXT  Press Buy on Copper Ore: pay 36c, make +24c (guaranteed: sell to a vendor).
+
+ DEALS TO BUY NOW (2)     BUY        MARKET   SPREAD   VOLUME    PROFIT
+ Copper Ore               12 @ 3c    5c       +67%     instant   +24c    [ Buy ]
+ Linen Cloth              6 @ 20c    78c      +285%    40/h      +3s 18c [ Buy ]
+ STUCK LISTINGS (1)       QTY        COST     MARKET   STATUS    P / L
+ Wool Cloth x5            5          34c      1s 60c   UNDERCUT  +5s 90c
 ```
+
+* **Trades** is the money and the market: what you have, deals you can buy right now, and your own auctions.
+* **Bags** is what you hold and the one thing to do with each item: post it, sell it to a vendor, collect it from the mailbox, or wait.
+* **Setup** has the settings, what the request engine has learned, and recent activity.
+* The mouse wheel scrolls a list that is longer than the panel.
 
 ### Where the panel lives
 
 With the auction house open, the panel is **inside the auction house window**: it covers the content area, is exactly that window's size, and opens, moves and closes with it. An **AuctionMesh** tab under the window switches between the game's own screens and the panel; clicking any of the game's tabs also switches back. At a vendor or mailbox it appears as a compact separate window. `/amesh dock off` makes it a separate window everywhere.
 
-### NEXT  one instruction
+### NEXT: one instruction
 
-Under the headline, one line always says the most profitable thing to do right now, with the gold it makes:
+One line always says the most profitable thing to do right now, with the gold it makes:
 
 ```
 NEXT  Press Buy on Heavy Leather: pay 2s40c, make +4s80c (resale, sells in ~12 min).
 NEXT  Visit a mailbox: 1 purchase(s) to collect.
-NEXT  Open Money and press Post: 2 item(s) to list for +3s18c.
+NEXT  Open Bags and press Post: 2 item(s) to list for +3s18c.
 NEXT  Visit any vendor: 1 item(s) to sell for +24c profit.
 ```
 
-The footer shows this session's banked profit and the rate per hour.
+The line at the bottom of the Trades tab shows the profit on the deals on screen, the profit banked so far, and this session's rate per hour.
 
 ### The look
 
 A flat dark panel with thin one-pixel outlines, after a layout picked by the user:
 
-* three tabs, **Deals | Money | History**; the selected one has a teal outline;
+* three tabs, **Trades | Bags | Setup**; the selected one has a teal outline;
 * grey small-caps headings over a thin rule, instead of framed boxes;
 * label on the left, amount on the right, and a ruled total line;
-* colour carries meaning: white = gold you hold, teal = waiting at the mailbox, orange = depends on a sale, green = profit;
-* the game's coin icons for every price;
+* money is plain text, `42g 58s 88c`, in the colour of its line: white = gold you hold, green = sold and in the mailbox, teal = sold and on its way, orange = depends on a sale;
 * one line per row. The longer explanation ("Buy 6 for …, relist at …") is in the tooltip when you hover a row.
 
 Only the **AuctionMesh** tab under the auction house window uses the game's own tab style, so it sits naturally next to the game's tabs.
 
 ### MONEY: what you really have
 
-The top of the **Money** tab answers one question, how much gold this becomes once everything has sold:
+The top of the **Trades** tab answers one question: how much gold does this become once everything has sold?
+
+* **Sold: waiting in the mailbox now** and **Sold: still on its way** are read from the sale invoices in your mailbox, so they are real sales. The game holds sale gold back for a while and the invoice says until when; "next 16 min" is the next arrival. These two lines are as of your last mailbox visit.
+* **Listed** is your live auctions at their listed prices, after the 5% cut.
+* **Bought, not listed yet** is what is in your bags or mailbox waiting to be sold, at the live price (the vendor price for vendor deals).
+* **Not counted:** items held because the price fell below what you paid, and auctions that are no longer listed but have no sale invoice yet. Such an auction either sold or expired; a mailbox visit tells which, and until then the addon does not call it sold.
+
+### The bar: what the engine is doing
+
+The bar at the top right is on every tab.
+
+| Bar | Text | Meaning |
+|---|---|---|
+| orange, filling up | `Measuring the server's limit: 14 of 20 requests` | First minutes on a realm: timing how fast the server answers |
+| orange, filling up | `Trying a shorter pause (0.00s): 12 of 30 requests` | An experiment is running; it is kept only if all 30 requests succeed |
+| orange, full | `Radar share 30% > 35%` | The split of requests was just changed |
+| teal | `Tuned: 1.6 requests a second, 94% in use` | Nothing being tried; the bar is how much of the request budget is in use |
+| empty | `Paused while you click` / `Idle: the auction house is closed` | Nothing is being sent |
+
+### The columns
 
 ```
-MONEY
-Gold on this character now                                  31s 04c
-Auction ended (sold or expired): collect at a mailbox             -
-Listed: if it sells at the listed prices                  + 4s 38c
-Bought, not sold yet: at the live price                           -
--------------------------------------------------------------------
-Total when it has all sold                                  35s 42c
-Amounts are after the 5% auction house cut.
-```
+ DEALS TO BUY NOW (1)   BUY          MARKET   SPREAD   VOLUME    PROFIT
+ Light Leather          4 @ 10c      30c      +190%    2857/h    +68c   [ Buy ]
 
-* **Auction ended** is an auction of yours that is no longer listed. It either sold or expired; which one is only known at the mailbox, so the addon doesn't call it sold.
-* **Bought, not sold yet** covers purchases still in the mailbox or your bags, valued at the live price (vendor price for vendor deals).
-* Items held because the price fell below what you paid are not counted; the grey line under the total says how many and what they cost.
-* "Profit banked so far" (top right) is profit from sales that actually completed.
-
-
-### The layout
-
-The window is laid out like a trading screen. The top strip shows **BALANCE**, **IN POSITIONS** (gold tied up in items you hold) and **OPEN P/L** (expected profit on them). Both tabs use the same columns:
-
-```
- ITEM            BUY          MARKET   SPREAD   VOLUME    PROFIT
- Light Leather   4 @ 10c      30c      +190%    2857/h    +68c   [ Buy ]
-   FLIP  Buy 4 for 40c, relist at 29c (750 listed at 30c+, sells in ~1 min)
-
- ITEM            QTY          COST     MARKET   STATUS    P / L
- Wool Cloth      1            34c      1s60c    READY     +1s18c [ Post ]
+ TO POST AT THE AUCTION HOUSE (1)  QTY   COST     MARKET   STATUS    P / L
+ Wool Cloth                        1     34c      1s 60c   READY     +1s 18c [ Post ]
 ```
 
 * **SPREAD** is the gap between what you pay and what you sell for.
 * **VOLUME** is units sold per hour, measured by watching the listing. Vendor deals say "instant".
-* On the Money tab, a `*` after MARKET means the price is the plan from when you bought; it becomes the live price once checked.
+* On the Bags tab, a `*` after MARKET means the price is the plan from when you bought; it becomes the live price once checked.
 
-### Listed auctions and banked profit
+### Your auctions and banked profit
 
-* An auction you post stays on the Money tab as **LISTED** with its quantity, cost, your price and expected profit. It shows **UNDERCUT** when the latest sweep saw someone cheaper, and **SOLD?** when it is no longer among your auctions (collect the gold from the mailbox).
-* **BANKED** in the top strip is profit actually made: vendor sales, plus auction sales once you collect the gold (sale price minus the auction house cut minus what you paid).
+* An auction you post is shown on the Trades tab under **LISTED** with its quantity, cost, your price and expected profit. It moves under **STUCK LISTINGS** when the latest radar read saw someone cheaper, and under **ENDED, CHECK A MAILBOX** when it is no longer among your auctions.
+* **Banked so far** (bottom of the Trades tab) is profit actually made: vendor sales, plus auction sales once you collect the gold (sale price minus the auction house cut minus what you paid).
 
-### History tab
+### Recent activity (Setup tab)
 
-Everything that happened to your gold and items, newest first: "Bought: 7 x … for 1s40c", "Collected from mailbox: 7 x … is now in your bags", "Posted 1x Wool Cloth at 1s60c", "Sold: …", and purchases that were cancelled. When the addon takes a purchase out of your mailbox it also says so in chat and at the top of the window.
+Everything that happened to your gold and items, newest first: "Bought: 7 x … for 1s 40c", "Collected from mailbox: 7 x … is now in your bags", "Posted 1x Wool Cloth at 1s 60c", "Sold: …", and purchases that did not complete.
 
-### Deals tab
+### Deals (Trades tab)
 
 Only deals that were just checked against the live listings appear here, with the exact quantity and the exact total you'll pay. Nothing is shown from an estimate.
 
@@ -112,7 +124,7 @@ Only deals that were just checked against the live listings appear here, with th
   8. If real sales are on record, the resale price can't exceed what buyers actually paid.
 * **Buy** asks the server for the real total; then you press **Confirm**. If the total is even 1c above what was checked, the purchase is cancelled and the deal is re-checked.
 * A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
-* The **Mode** button at the bottom switches between **Vendor only** (every deal is guaranteed) and **Vendor + Flips**. `/amesh vendor` does the same. In vendor-only mode no flip checks are made, so more of the search budget goes to vendor deals.
+* The **What to look for** button on the Setup tab switches between **Vendor only** (every deal is guaranteed) and **Vendor + Flips**. `/amesh vendor` does the same. In vendor-only mode no flip checks are made, so more of the search budget goes to vendor deals.
 
 ### The request limit, and how the addon spends it
 
@@ -126,19 +138,31 @@ What the addon does with that:
 | Rule | Why |
 |---|---|
 | The next request is sent from the game's "ready" event, in the same frame | A polling timer left about 18% of the budget idle |
-| No extra spacing of its own | The client's lock is the limit; more spacing only wastes budget (it still backs off after a server error) |
+| No extra spacing of its own unless the server refuses requests | The client's lock is the limit; more spacing only wastes budget. A pause is added only when learned to be needed (see below) |
 | The sweep asks for the whole materials class in one request | Asking per sub-category returns the same items for about 12 requests |
-| The sweep interval is computed from the sweep's measured cost, so sweeps use about 30% of the budget | 1 request per sweep gives a radar every 8s; 6 requests, every 13s |
-| The other 70% goes to confirmations, best first: vendor-price hits, then the biggest price gap | Each confirmation costs one request, so the most valuable one goes first |
+| The sweep interval is computed from the sweep's measured cost and the learned split (30% of the budget to start with) | 6 requests per sweep at 30% gives a radar every 13s; never more often than every 3s |
+| The rest goes to confirmations, best first: vendor-price hits, then the biggest price gap weighted by how often that kind of alert was real | Each confirmation costs one request, so the most valuable one goes first |
 | Items whose details aren't loaded are skipped at no cost and retried in a few seconds | Avoids the dead wait described above |
 | A request the client did not transmit is dropped after 0.4s | It used to block the queue for 6s |
 
-The addon measures two of these figures itself, live, instead of trusting the numbers above:
+### The request engine learns
 
-* **Seconds per request**, timed from each request to the moment the game unlocks. The sweep interval is computed from this figure, so if the server slows down at busy times the addon follows.
-* **What one sweep really costs:** items returned, requests used, and the largest number of results one request returned.
+The server's limit can't be beaten, so the addon learns how to spend it. Everything below is measured on your realm, remembered between sessions, shown on the **Setup** tab and printed by `/amesh limits`.
 
-Both are shown in the radar line ("Radar: 212 items in 5 requests, re-read every 11s. limit 1.6/s."), printed by `/amesh limits`, and written to the log as `SWEEP measured` and `LIMIT measured`.
+| What is learned | How | What it changes |
+|---|---|---|
+| The limit, per scenario | Seconds from "sent" to "server ready", kept separately for each kind of request (category read, next page, item check, more results) and for each hour of the day | The radar interval is planned with what a request costs at this hour |
+| The safe pace | Requests go out the moment the server is ready. Two refusals within 50 requests add a short pause (0.10s, then 0.25s, 0.5s, 1s) | Fewer refused requests, each of which costs a 5 second stop |
+| A faster pace | After 300 clean requests a shorter pause is **tried** for 30 requests. It is kept if none fails. If one fails, the next try waits twice as long | The pause never stays longer than it has to |
+| Where requests pay | Every item check is scored by what asked for it: vendor-price alert, under-market alert, price-drop alert, friend's hint, watch list | Alerts of a kind that keeps being real are checked first |
+| The split | Once a minute. Alerts waited more than 4s for a check: 5 points move from radar to checks. Nothing waited and the checks were routine: 5 points move to the radar. Radar share stays between 15% and 70% | A calm market gets a fresher radar; a busy one gets faster confirmations |
+| Waste | Requests the client never sent, and answers that never came | An answer is given up after 4 times the measured cost instead of a fixed 3s |
+
+With friends connected, the measured figures are sent on the channel every 10 minutes at most. A friend who has just installed the addon starts from them and then measures for themselves.
+
+These are fixed, bounded rules fed by measurements, not a neural network. `/amesh limits off` freezes the pace and the split (measuring continues), `/amesh limits on` resumes, and `/amesh limits reset` forgets everything learned. The **Self-tuning** button on the Setup tab does the same as on/off.
+
+What one radar read really costs (items returned, requests used, largest page) is also measured and shown in the radar line: "Radar: 212 items in 5 requests, re-read every 11s. limit 1.6/s."
 
 ### How it looks for deals (the radar)
 
@@ -182,7 +206,7 @@ The addon predicts a resale price for every flip. It now checks every prediction
 **What counts as a result**
 
 * **Sold:** when you collect the sale gold, the invoice says what the buyer really paid. That is compared with the price planned at purchase.
-* **Expired:** an auction that comes back unsold in the mail. The addon recognises it, puts it back on the Money tab with what it cost you (so it can be reposted without selling at a loss), and counts the failure.
+* **Expired:** an auction that comes back unsold in the mail. The addon recognises it, puts it back on the Bags tab with what it cost you (so it can be reposted without selling at a loss), and counts the failure.
 
 **What is adjusted** (all bounded; nothing changes before 5 results)
 
@@ -192,7 +216,7 @@ The addon predicts a resale price for every flip. It now checks every prediction
 | **Item record** | An item that expired is not flipped again for 12 hours; 24 after two failures in a row | Up to 48 hours; a sale clears it |
 | **Profit bar** | Under 70% of the last 20 flips sold: bar goes up 5 points. Over 90% sold: down 2 points | Between 12% and 50%; reconsidered once per 10 results |
 
-`/amesh learn` prints the current state, for example: "Learning from 23 finished flips (9 yours, 14 from friends): 87% of the last 20 sold, sales came in at 96% of the planned price. Profit bar: 22%." The History tab shows the same line. `/amesh learn off` stops the profit bar adjusting itself; `/amesh learn reset` clears what was learned.
+`/amesh learn` prints the current state, for example: "Learning from 23 finished flips (9 yours, 14 from friends): 87% of the last 20 sold, sales came in at 96% of the planned price. Profit bar: 22%." The bottom of the Setup tab shows the same line. `/amesh learn off` stops the profit bar adjusting itself; `/amesh learn reset` clears what was learned.
 
 This is scorekeeping and calibration, not a neural network. It needs finished flips to learn from, so it changes nothing at first, and it learns faster the more people on the channel are trading.
 
@@ -205,7 +229,7 @@ AuctionMesh keeps a database of price history inside its own saved data (an addo
   * a deal on an item whose market price fell 10% or more in about 6 hours is refused ("price is falling fast");
   * a slower decline lowers the planned resale price by the same amount;
   * a rising price changes nothing (no optimism is added).
-* **Where you see it:** the MARKET column on the Deals tab shows the 24-hour change next to the price; hovering a deal shows the 6h and 24h change and the 24h range; item tooltips show the 7-day range; `/amesh trends` lists the ten biggest movers.
+* **Where you see it:** the MARKET column on the Trades tab shows the 24-hour change next to the price; hovering a deal shows the 6h and 24h change and the 24h range; item tooltips show the 7-day range; `/amesh trends` lists the ten biggest movers.
 * **Size:** about three numbers per item-hour, only for items that have had a full reading. It is trimmed to 7 days at login.
 
 It needs a few hours of readings before trends appear. The optional central server still stores only the latest price per item; adding history there is a possible next step if you run it.
@@ -219,7 +243,7 @@ The game's addon API has no realm-wide sales history. It offers two real sources
 
 Item tooltips show all three: cheapest listing, market price from the full listing, and what buyers paid.
 
-### Money tab (selling)
+### Bags tab (selling)
 
 Everything you bought is listed here, with what you paid, what it sells for, the profit per item, and the one thing to do with it:
 
@@ -250,12 +274,12 @@ The top line of the window shows the result of your last click for 10 seconds, s
 
 **The posting fee.** The game takes a fee when you list an item and gives it back when the item sells; you lose it only if the auction expires or you cancel. So AuctionMesh keeps the fee aside (it never lets you spend gold you need for posting) but doesn't subtract it from profit. It asks the game for the fee on 1 unit and on 100 units of each item, which also reveals any minimum fee per posting. `Deals.cfg.depositIsCost = true` in `Deals.lua` switches to counting the fee as lost. The first sale you collect writes an `INVOICE` line to the log showing whether the fee came back.
 
-**Clicks are never thrown away.** If the auction house is busy when you press Buy, the click is held and sent the moment the server is free. Background work also stops while your mouse is on a Buy or Post button. Items waiting on the Money tab are priced before anything else is checked.
+**Clicks are never thrown away.** If the auction house is busy when you press Buy, the click is held and sent the moment the server is free. Background work also stops while your mouse is on a Buy or Post button. Items waiting on the Bags tab are priced before anything else is checked.
 
 ### If something goes wrong
 
 * Press **Log** (or type `/amesh log`), then Ctrl+A, Ctrl+C, and paste it to Claude. It records every auction house call, every error, and every decision (which listings a deal was based on, quotes, purchases, posts).
-* `/amesh restore` rebuilds the Money list from your purchase log.
+* `/amesh restore` rebuilds the Bags list from your purchase log.
 * All requests go through one queue, so your clicks go first and background scanning slows down automatically after an "Internal auction error".
 
 ## What WoW lets addons do
@@ -332,12 +356,15 @@ lua5.1 tests/deals_test.lua    # deal rules, posting prices, price history
 lua5.1 tests/purchase_test.lua # purchase confirmation + mailbox check
 lua5.1 tests/seller_test.lua   # posting / vendor safety
 lua5.1 tests/sim.lua           # multi-player network simulator
+lua5.1 tests/tuner_test.lua    # request-budget learner: limit, pace trials, split, sharing
 python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 ```
 
 ## Known limits / to verify in game
 
 * **Not yet run in the real client.** The protocol logic is tested offline against stubbed WoW APIs. The AH calls follow the retail `C_AuctionHouse` API, which Auctioneer's Forever build also uses.
+* **The request engine's learning is tested with a fake clock only.** The rules (pause steps, trial lengths, split limits) are sensible starting values, not values proven on a live realm. `/amesh limits` and the Setup tab show what it actually measured; the log has a `TUNER` line for every change it makes.
+* **The two "Sold" lines** rely on the game's sale invoices (`seller_temp_invoice` with its arrival time). If this realm delivers sale gold with no delay, "still on its way" simply stays empty.
 * If the client blocks automatic `SendBrowseQuery` (an `ADDON_ACTION_BLOCKED` message appears), the swarm switches to manual mode. Bind a key to `/amesh step`; each press scans one step.
 * While the swarm runs, it uses the AH browse list, so don't browse by hand at the same time.
 * The sniper never buys by itself. Every purchase is your click, which the game requires anyway. Check the numbers on expensive buys.

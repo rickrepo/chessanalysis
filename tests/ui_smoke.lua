@@ -155,6 +155,12 @@ local function rowsText()
     end
     return out
 end
+-- only the rows that offer something to buy (your own auctions are listed on the same tab)
+local function dealRows()
+    local out = {}
+    for _, l in ipairs(rowsText()) do if l:find("| SAFE", 1, true) or l:find("| FLIP", 1, true) then out[#out + 1] = l end end
+    return out
+end
 local function click(n) for i = 1, #frames do local f = frames[i]; if rawget(f, "detail") and f._shown and rawget(f, "item") then n = n - 1; if n == 0 then f.btn._scripts.OnClick(f.btn) return end end end end
 local W = AuctionMeshFrame
 check(W == nil, "no window until it is needed")
@@ -183,7 +189,7 @@ check(#r == 2, "exactly the 2 real deals are listed (the 500-unit trap is not)")
 check(r[1] and r[1]:find("Copper Ore") and r[1]:find("SAFE  Buy 12 for 36c, vendor pays 60c | +24c", 1, true), "vendor deal first, exact quantity, total and profit")
 check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c, relist at 77c", 1, true) and r[2]:find("| +3s18c |", 1, true), "flip shows exact buy and resale price")
 check(S.verified[2447] == nil, "Peacebloom (500 cheap units) correctly rejected")
-check(strip(AuctionMeshFrame.headline._text):find("Make now  + 3s42c  (2 deals)", 1, true), "big headline: Make now + 3s42c (2 deals)")
+check(strip(AuctionMeshFrame.footer._text):find("Make now  + 3s42c  (2 deals)", 1, true), "footer: Make now + 3s42c (2 deals)")
 check(morePages >= 3, "partial results: the rest of each listing was requested before judging")
 
 print("buying")
@@ -228,23 +234,52 @@ check(r[1] and r[1]:find("Ready to post") and r[1]:find("Paid 20c  >  Sell 77c  
 click(1); advance(1)
 check(posted[1] and posted[1].qty == 6 and posted[1].price == 77 and AuctionMeshDB.flips[2589] == nil, "one click posted all 6 at 77c; removed after bags confirmed")
 UI.tab = "SELL"; UI.notice = nil; UI:Render()
+check(#rowsText() == 0, "Bags tab is empty once everything is posted")
+UI.tab = "BUY"; UI:Render()
 r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
-check(r[1] and r[1]:find("Linen Cloth x6") and r[1]:find("LISTED") and r[1]:find("+3s18c", 1, true), "the posted auction stays in the portfolio as LISTED with its expected profit")
+check(r[1] and r[1]:find("Linen Cloth x6") and r[1]:find("LISTED") and r[1]:find("+3s18c", 1, true), "the posted auction is on the Trades tab as LISTED with its expected profit")
 check(AuctionMeshDB.realized == 24, "banked profit so far: +24c from the vendor sale")
-do  -- the MONEY section on the Money tab: label on the left, amount on the right, ruled total
+local function heads()
+    local out = {}
+    for i = 1, #frames do local f = frames[i]; if rawget(f, "detail") and f._shown and rawget(f, "sect") then out[#out + 1] = strip(f.head._text) end end
+    return out
+end
+do  -- the MONEY section on the Trades tab: label on the left, amount on the right, ruled total
     local lg = AuctionMeshFrame.ledger
     local function val(row) return strip(row.value._text) end
-    print("     " .. lg.rows[1].label._text .. " | " .. val(lg.rows[1]))
-    print("     " .. lg.rows[3].label._text .. " | " .. val(lg.rows[3]))
+    for i = 1, 5 do print("     " .. lg.rows[i].label._text .. " | " .. val(lg.rows[i])) end
     print("     " .. lg.total.label._text .. " | " .. val(lg.total))
-    check(lg:IsShown() and not AuctionMeshFrame.headline:IsShown(), "Money tab shows the MONEY section instead of the headline")
+    print("     " .. strip(lg.note._text))
+    local hd = heads()
+    print("     sections: " .. table.concat(hd, " / "))
+    check(lg:IsShown(), "Trades tab opens with the MONEY section")
+    check(hd[1] == "DEALS TO BUY NOW (0)" and hd[2]:find("^None right now") and hd[3] == "LISTED (1)", "below it: deals to buy, then your auctions, each under a grey heading")
     check(val(lg.rows[1]) == strip(ns.Seller.short(GetMoney())), "MONEY: gold on this character now")
-    check(val(lg.rows[3]) == "+ 4s38c", "MONEY: 6 listed at 77c = + 4s38c after the 5% cut")
-    check(val(lg.rows[2]) == "-" and val(lg.rows[4]) == "-", "MONEY: nothing ended, nothing waiting to be sold")
+    check(val(lg.rows[4]) == "+ 4s38c", "MONEY: 6 listed at 77c = + 4s38c after the 5% cut")
+    check(val(lg.rows[2]) == "-" and val(lg.rows[3]) == "-" and val(lg.rows[5]) == "-", "MONEY: nothing sold yet, nothing waiting to be listed")
     check(val(lg.total) == strip(ns.Seller.short(GetMoney() + 438)), "MONEY: total when it has all sold = gold + listings")
-    UI.tab = "BUY"; UI:Render()
-    check(not lg:IsShown() and AuctionMeshFrame.headline:IsShown(), "Deals tab shows the headline, not the MONEY section")
+    -- someone lists cheaper: the auction moves to STUCK LISTINGS
+    ns.Store:Put(2589, 70, 900, GetServerTime()); UI:Render()
+    check(heads()[3] == "STUCK LISTINGS (1)", "a cheaper listing appears: the auction moves under STUCK LISTINGS")
+    ns.Store:Put(2589, 78, 900, GetServerTime())
+    -- a sale the game is still holding back, read from the mailbox invoice
+    AuctionMeshDB.sales = { waiting = 150, pending = { { amount = 438, at = GetServerTime() + 16 * 60, key = 2589 }, { amount = 90, at = GetServerTime() - 5 } } }
+    UI:Render()
+    print("     " .. lg.rows[2].label._text .. " | " .. val(lg.rows[2]))
+    print("     " .. lg.rows[3].label._text .. " | " .. val(lg.rows[3]))
+    check(val(lg.rows[2]) == "+ 2s40c", "MONEY: sale gold in the mailbox now (150c there + 90c that has arrived since)")
+    check(val(lg.rows[3]) == "+ 4s38c  next 16 min", "MONEY: sale gold still on its way, with the time of the next arrival")
+    AuctionMeshDB.sales = nil
     UI.tab = "SELL"; UI:Render()
+    check(not lg:IsShown(), "the Bags tab has no MONEY section")
+    UI.tab = "HISTORY"; UI:Render()
+    local sp = AuctionMeshFrame.setup
+    check(sp:IsShown() and sp.rows[1].label._text == "Server limit, measured", "Setup tab: settings and what the request engine has learned")
+    for i = 1, 7 do print("     " .. tostring(sp.rows[i].label._text) .. " | " .. strip(sp.rows[i].value._text)) end
+    local st = UI.barState
+    print("     bar: " .. st.mode .. " " .. ("%.2f"):format(st.fill) .. " " .. st.text)
+    check(st and st.text ~= "" and strip(AuctionMeshFrame.barText._text) == st.text, "the engine bar is on every tab and says what the engine is doing")
+    UI.tab = "BUY"; UI:Render()
 end
 
 print("listings you can't buy (the Zesty Clam case from the real log)")
@@ -263,7 +298,7 @@ click(1); advance(1)
 check(gold == before and S.buying == nil, "server quoted 5s each: nothing bought, nothing spent")
 check(strip(AuctionMeshFrame.status._text):find("Nothing bought, nothing spent"), "the window itself says what happened")
 advance(15)
-check(#rowsText() == 0 and S.verified[500] == nil, "the fake deal does not come back")
+check(#dealRows() == 0 and S.verified[500] == nil, "the fake deal does not come back")
 
 print("vendor-only mode")
 UI:SetVendorOnly(true)
@@ -271,7 +306,7 @@ LIST[2589] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
 LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
 ns.Store:Put(2770, 3, 512, GetServerTime()); ns.Store:Put(2589, 20, 906, GetServerTime())
 S.checkedAt = {}; advance(10)
-r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
+r = dealRows(); for _, l in ipairs(r) do print("     " .. l) end
 check(#r == 1 and r[1]:find("Copper Ore") and r[1]:find("SAFE"), "vendor-only: the guaranteed deal is shown, the flip is not")
 S.priority = 2589; advance(3)
 check(S.verified[2589] == nil, "vendor-only: a flip is rejected even when checked")
@@ -432,9 +467,10 @@ do
     local Sw = ns.Swarm
     check(#Sw.units == 1, "the sweep asks for the whole materials class in one request (was one per sub-category)")
     Sw.cfg.adaptive = true
+    Sw.cfg.sweepShare, Sw.cfg.perRequest = 0.30, 0.65 -- the figures the Tuner starts from
     Sw:Tune(Sw.units[1], 1); local f1 = Sw.cfg.fresh
     Sw:Tune(Sw.units[1], 6); local f6 = Sw.cfg.fresh
-    check(f1 == 8 and f6 == 13, ("radar interval follows the sweep's real cost: 1 request -> every %ds, 6 requests -> every %ds"):format(f1, f6))
+    check(f1 == 3 and f6 == 13, ("radar interval follows the sweep's real cost: 1 request -> every %ds, 6 requests -> every %ds"):format(f1, f6))
     Sw:Tune(Sw.units[1], 1)
     -- the addon measures what one request returns and how fast requests go, instead of assuming
     local function page(n, first)
@@ -447,14 +483,21 @@ do
     Sw:Tune(Sw.units[1], 3)
     local ML = ns.measure.last
     check(ML and ML.items == 123 and ML.requests == 3 and ML.pageMax == 50, "sweep measured: 123 items in 3 requests, largest page 50")
+    local T0 = ns.Tuner.d.n
     for _ = 1, 12 do
+        ns.Gate:Use("test request", "search")
         fire("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT"); advance(0.15)
         fire("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED"); advance(0.5)
         fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
     end
     local G = ns.Gate
-    check(G.cycle and G.cycle > 0.6 and G.cycle < 0.7 and math.abs(Sw.cfg.perRequest - G.cycle) < 1e-9,
-        ("request limit measured live: %.2fs per request, and the sweep interval uses it"):format(G.cycle or 0))
+    local TD = ns.Tuner.d
+    check(G.cycle and G.cycle > 0.6 and G.cycle < 0.7 and TD.n == T0 + 12 and math.abs(Sw.cfg.perRequest - ns.Tuner:Expected()) < 1e-9,
+        ("request limit measured live: %.2fs per request, learned per kind and hour, and the sweep interval uses it"):format(G.cycle or 0))
+    check(TD.kinds.search.n >= 1 and TD.kinds.search.cycle > 0.6 and TD.kinds.search.cycle < 0.7, "the Tuner learned what an item check costs from the live events")
+    ns.Gate:Use("post something"); fire("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT"); advance(0.15)
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED"); advance(0.5); fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    check(TD.n == T0 + 12, "your own clicks are not used for learning")
     G.sawSent = false; Sw:Tune(Sw.units[1], 1)
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
     for l in strip(AuctionMeshFrame.status._text):gmatch("[^\n]+") do if l:find("Radar") then print("     " .. l) end end
@@ -498,6 +541,56 @@ local rate = ns.Store:Rate(2319, 30)
 check(rate and rate > 1000, ("the same sweeps measure volume: 150 units left in a minute (about %d an hour)"):format(rate or 0))
 check(searches() == 1, "no further searches while the deal is already confirmed")
 S.verified[2319] = nil
+
+print("mailbox: sale gold is read from the invoices")
+do
+    local oN, oH, oI = GetInboxNumItems, GetInboxHeaderInfo, GetInboxInvoiceInfo
+    GetInboxNumItems = function() return 2, 2 end
+    GetInboxHeaderInfo = function(i) return nil, nil, nil, nil, (i == 1 and 437 or 0), 0, nil, false end
+    GetInboxInvoiceInfo = function(i)
+        if i == 1 then return "seller", "Linen Cloth", "Buyer", 462, 0, 0, 25 end
+        return "seller_temp_invoice", "Linen Cloth", "Buyer", 500, 0, 100, 25, 60, 21, 30
+    end
+    GetGameTime = function() return 21, 14 end
+    Se:ScanMail()
+    local w, o, nx, keys = Se:SalesMoney()
+    check(w == 437 and o == 575 and nx == 16 * 60, "gold in the mailbox now (437c) and a sale still held back (500 + 100 fee back - 25 cut = 575c, arriving in 16 min)")
+    check(keys[2589] == true, "the pending sale is matched to the item, so its ended auction is not reported as unknown")
+    T = T + 17 * 60
+    w, o = Se:SalesMoney()
+    check(w == 437 + 575 and o == 0, "17 minutes later it counts as waiting in the mailbox")
+    GetInboxNumItems, GetInboxHeaderInfo, GetInboxInvoiceInfo = oN, oH, oI
+    AuctionMeshDB.sales = nil
+end
+
+print("the Tuner inside the running addon")
+do
+    local Tu, G = ns.Tuner, ns.Gate
+    local d = Tu.d
+    -- two refusals close together right after background requests: a pause is learned
+    d.gap.sinceFail = 1000
+    G:Use("test", "search"); G:Penalize("internal auction error")
+    check(Tu:Gap() == 0, "one refusal: no change of pace")
+    G:Use("test", "search"); G:Penalize("internal auction error")
+    check(Tu:Gap() == 0.10, "a second refusal soon after: requests now wait 0.10s after the server is ready")
+    G.outstanding, G.nextAt, G.penaltyUntil = 0, 0, 0
+    S.triggers, S.verified, S.checkedAt, S.searching, S.queued = {}, {}, {}, nil, nil
+    LIST[2589] = { { 100, 300 }, { 101, 300 } }
+    S:AddTrigger(2589, "price just dropped", 90, 100)
+    local n4 = #sent
+    G.sentAt = nil; fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    check(#sent == n4, "server ready: nothing is sent in that frame while the pause applies")
+    advance(0.3)
+    check(#sent > n4, "0.1s later the request goes out")
+    G:Use("you click Post"); T = T + 3; G:Penalize("you are doing that too fast")
+    check(d.gap.stats[2] == nil or d.gap.stats[2].fail == 0, "an error after your own click is not counted against the pace")
+    d.gap.i = 1
+    -- checks are scored by what asked for them
+    local before = d.src.drop.n
+    S.searching = { key = 2589, at = T, src = "drop", waited = 2 }; S.lastEval = nil
+    S:Evaluate(2589, { { price = 100, qty = 300 }, { price = 101, qty = 300 } }, true)
+    check(d.src.drop.n == before + 1, "a check asked for by a price-drop alert is scored against price-drop alerts")
+end
 
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)
