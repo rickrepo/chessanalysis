@@ -8,7 +8,7 @@ Open the auction house. One window opens next to it and price scanning starts by
 
 ```
  AuctionMesh                                   Gold: 32s00c
- [ BUY (2) ] [ SELL (3) ]
+ [ Deals (2) ] [ Money (3) ] [ History ]
  Scanning prices: 34 of 100 categories done. Press Buy. What you see is exactly what you get.
  ---------------------------------------------------------------------------
  Copper Ore                                                          [ Buy ]
@@ -21,30 +21,52 @@ Open the auction house. One window opens next to it and price scanning starts by
 
 With the auction house open, the panel is **inside the auction house window**: it covers the content area, is exactly that window's size, and opens, moves and closes with it. An **AuctionMesh** tab under the window switches between the game's own screens and the panel; clicking any of the game's tabs also switches back. At a vendor or mailbox it appears as a compact separate window. `/amesh dock off` makes it a separate window everywhere.
 
-### NEXT: one instruction
+### NEXT  one instruction
 
 Under the headline, one line always says the most profitable thing to do right now, with the gold it makes:
 
 ```
-NEXT: Press Buy on Heavy Leather: pay 2s40c, make +4s80c (resale, sells in ~12 min).
-NEXT: Visit a mailbox: 1 purchase(s) to collect.
-NEXT: Open PORTFOLIO and press Post: 2 item(s) to list for +3s18c.
-NEXT: Visit any vendor: 1 item(s) to sell for +24c profit.
+NEXT  Press Buy on Heavy Leather: pay 2s40c, make +4s80c (resale, sells in ~12 min).
+NEXT  Visit a mailbox: 1 purchase(s) to collect.
+NEXT  Open Money and press Post: 2 item(s) to list for +3s18c.
+NEXT  Visit any vendor: 1 item(s) to sell for +24c profit.
 ```
 
 The footer shows this session's banked profit and the rate per hour.
 
 ### The look
 
-The panel is assembled from the game's own interface pieces, so it takes on the game's look instead of bringing its own:
+A flat dark panel with thin one-pixel outlines, after a layout picked by the user:
 
-* the auction house's own background art, list stripes and row highlight;
-* the game's tab style for BUY / PORTFOLIO / HISTORY, and a real tab after the auction house's own tabs for switching to AuctionMesh;
-* the game's inset frame around the list and its gold column headings;
+* three tabs, **Deals | Money | History**; the selected one has a teal outline;
+* grey small-caps headings over a thin rule, instead of framed boxes;
+* label on the left, amount on the right, and a ruled total line;
+* colour carries meaning: white = gold you hold, teal = waiting at the mailbox, orange = depends on a sale, green = profit;
 * the game's coin icons for every price;
 * one line per row. The longer explanation ("Buy 6 for …, relist at …") is in the tooltip when you hover a row.
 
-Each piece is checked before use. If this client doesn't have one, a plain fallback is drawn in its place.
+Only the **AuctionMesh** tab under the auction house window uses the game's own tab style, so it sits naturally next to the game's tabs.
+
+### MONEY: what you really have
+
+The top of the **Money** tab answers one question, how much gold this becomes once everything has sold:
+
+```
+MONEY
+Gold on this character now                                  31s 04c
+Auction ended (sold or expired): collect at a mailbox             -
+Listed: if it sells at the listed prices                  + 4s 38c
+Bought, not sold yet: at the live price                           -
+-------------------------------------------------------------------
+Total when it has all sold                                  35s 42c
+Amounts are after the 5% auction house cut.
+```
+
+* **Auction ended** is an auction of yours that is no longer listed. It either sold or expired; which one is only known at the mailbox, so the addon doesn't call it sold.
+* **Bought, not sold yet** covers purchases still in the mailbox or your bags, valued at the live price (vendor price for vendor deals).
+* Items held because the price fell below what you paid are not counted; the grey line under the total says how many and what they cost.
+* "Profit banked so far" (top right) is profit from sales that actually completed.
+
 
 ### The layout
 
@@ -61,18 +83,18 @@ The window is laid out like a trading screen. The top strip shows **BALANCE**, *
 
 * **SPREAD** is the gap between what you pay and what you sell for.
 * **VOLUME** is units sold per hour, measured by watching the listing. Vendor deals say "instant".
-* On the PORTFOLIO tab, a `*` after MARKET means the price is the plan from when you bought; it becomes the live price once checked.
+* On the Money tab, a `*` after MARKET means the price is the plan from when you bought; it becomes the live price once checked.
 
 ### Listed auctions and banked profit
 
-* An auction you post stays on the PORTFOLIO tab as **LISTED** with its quantity, cost, your price and expected profit. It shows **UNDERCUT** when the latest sweep saw someone cheaper, and **SOLD?** when it is no longer among your auctions (collect the gold from the mailbox).
+* An auction you post stays on the Money tab as **LISTED** with its quantity, cost, your price and expected profit. It shows **UNDERCUT** when the latest sweep saw someone cheaper, and **SOLD?** when it is no longer among your auctions (collect the gold from the mailbox).
 * **BANKED** in the top strip is profit actually made: vendor sales, plus auction sales once you collect the gold (sale price minus the auction house cut minus what you paid).
 
-### HISTORY tab
+### History tab
 
 Everything that happened to your gold and items, newest first: "Bought: 7 x … for 1s40c", "Collected from mailbox: 7 x … is now in your bags", "Posted 1x Wool Cloth at 1s60c", "Sold: …", and purchases that were cancelled. When the addon takes a purchase out of your mailbox it also says so in chat and at the top of the window.
 
-### BUY tab
+### Deals tab
 
 Only deals that were just checked against the live listings appear here, with the exact quantity and the exact total you'll pay. Nothing is shown from an estimate.
 
@@ -160,7 +182,7 @@ The addon predicts a resale price for every flip. It now checks every prediction
 **What counts as a result**
 
 * **Sold:** when you collect the sale gold, the invoice says what the buyer really paid. That is compared with the price planned at purchase.
-* **Expired:** an auction that comes back unsold in the mail. The addon recognises it, puts it back in your PORTFOLIO with what it cost you (so it can be reposted without selling at a loss), and counts the failure.
+* **Expired:** an auction that comes back unsold in the mail. The addon recognises it, puts it back on the Money tab with what it cost you (so it can be reposted without selling at a loss), and counts the failure.
 
 **What is adjusted** (all bounded; nothing changes before 5 results)
 
@@ -170,7 +192,7 @@ The addon predicts a resale price for every flip. It now checks every prediction
 | **Item record** | An item that expired is not flipped again for 12 hours; 24 after two failures in a row | Up to 48 hours; a sale clears it |
 | **Profit bar** | Under 70% of the last 20 flips sold: bar goes up 5 points. Over 90% sold: down 2 points | Between 12% and 50%; reconsidered once per 10 results |
 
-`/amesh learn` prints the current state, for example: "Learning from 23 finished flips (9 yours, 14 from friends): 87% of the last 20 sold, sales came in at 96% of the planned price. Profit bar: 22%." The HISTORY tab shows the same line. `/amesh learn off` stops the profit bar adjusting itself; `/amesh learn reset` clears what was learned.
+`/amesh learn` prints the current state, for example: "Learning from 23 finished flips (9 yours, 14 from friends): 87% of the last 20 sold, sales came in at 96% of the planned price. Profit bar: 22%." The History tab shows the same line. `/amesh learn off` stops the profit bar adjusting itself; `/amesh learn reset` clears what was learned.
 
 This is scorekeeping and calibration, not a neural network. It needs finished flips to learn from, so it changes nothing at first, and it learns faster the more people on the channel are trading.
 
@@ -183,7 +205,7 @@ AuctionMesh keeps a database of price history inside its own saved data (an addo
   * a deal on an item whose market price fell 10% or more in about 6 hours is refused ("price is falling fast");
   * a slower decline lowers the planned resale price by the same amount;
   * a rising price changes nothing (no optimism is added).
-* **Where you see it:** the MARKET column on the BUY tab shows the 24-hour change next to the price; hovering a deal shows the 6h and 24h change and the 24h range; item tooltips show the 7-day range; `/amesh trends` lists the ten biggest movers.
+* **Where you see it:** the MARKET column on the Deals tab shows the 24-hour change next to the price; hovering a deal shows the 6h and 24h change and the 24h range; item tooltips show the 7-day range; `/amesh trends` lists the ten biggest movers.
 * **Size:** about three numbers per item-hour, only for items that have had a full reading. It is trimmed to 7 days at login.
 
 It needs a few hours of readings before trends appear. The optional central server still stores only the latest price per item; adding history there is a possible next step if you run it.
@@ -197,7 +219,7 @@ The game's addon API has no realm-wide sales history. It offers two real sources
 
 Item tooltips show all three: cheapest listing, market price from the full listing, and what buyers paid.
 
-### PORTFOLIO tab (selling)
+### Money tab (selling)
 
 Everything you bought is listed here, with what you paid, what it sells for, the profit per item, and the one thing to do with it:
 
@@ -228,12 +250,12 @@ The top line of the window shows the result of your last click for 10 seconds, s
 
 **The posting fee.** The game takes a fee when you list an item and gives it back when the item sells; you lose it only if the auction expires or you cancel. So AuctionMesh keeps the fee aside (it never lets you spend gold you need for posting) but doesn't subtract it from profit. It asks the game for the fee on 1 unit and on 100 units of each item, which also reveals any minimum fee per posting. `Deals.cfg.depositIsCost = true` in `Deals.lua` switches to counting the fee as lost. The first sale you collect writes an `INVOICE` line to the log showing whether the fee came back.
 
-**Clicks are never thrown away.** If the auction house is busy when you press Buy, the click is held and sent the moment the server is free. Background work also stops while your mouse is on a Buy or Post button. Items waiting on the SELL tab are priced before anything else is checked.
+**Clicks are never thrown away.** If the auction house is busy when you press Buy, the click is held and sent the moment the server is free. Background work also stops while your mouse is on a Buy or Post button. Items waiting on the Money tab are priced before anything else is checked.
 
 ### If something goes wrong
 
 * Press **Log** (or type `/amesh log`), then Ctrl+A, Ctrl+C, and paste it to Claude. It records every auction house call, every error, and every decision (which listings a deal was based on, quotes, purchases, posts).
-* `/amesh restore` rebuilds the SELL list from your purchase log.
+* `/amesh restore` rebuilds the Money list from your purchase log.
 * All requests go through one queue, so your clicks go first and background scanning slows down automatically after an "Internal auction error".
 
 ## What WoW lets addons do

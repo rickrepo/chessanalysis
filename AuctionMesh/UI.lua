@@ -13,8 +13,9 @@
 --   | Paid 4s > back 19s = +15s            [Flips: ON] [Post next] |
 --   +-------------------------------------------------------------+
 --
--- BUY tab: only deals verified against live listings, with the exact
--- quantity and total you will pay. SELL tab: everything you bought, what you
+-- Deals tab: only deals verified against live listings, with the exact
+-- quantity and total you will pay. Money tab: what you hold and what it
+-- becomes when everything has sold, then everything you bought, what you
 -- paid, what it sells for, and the one thing to do with it.
 -- Rendering is throttled (5x per second, only while shown and only if changed).
 local _, ns = ...
@@ -26,20 +27,14 @@ ns.UI = UI
 local floor, min = math.floor, math.min
 local ROWS, ROW_H, WIDTH = 12, 26, 720
 local MAXROWS = 18 -- rows that exist; how many are shown depends on the panel's height
+local ACCENT = { 0.30, 0.86, 0.76 }  -- teal: selected tab, primary action
+local LINE = { 0.34, 0.36, 0.40 }    -- grey outline
+local TEAL = "|cff4ddbc2"
 local TOP = 146    -- y where the list starts
 
--- NATIVE LOOK. The panel is built from the game's own interface pieces, so it
--- looks like whatever the game looks like: the auction house's background art,
--- its list stripes and row highlight, its tabs, its inset frame, its coin icons.
--- Every piece is checked first; if this client doesn't have one, a plain
--- fallback is used, so a missing texture can never break the panel.
-local function atlas(tex, name)
-    if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name) then
-        tex:SetAtlas(name)
-        return true
-    end
-    return false
-end
+-- FLAT LOOK (a layout the user picked): dark panel, one-pixel outlines, grey
+-- small-caps headings, coin icons from the game. Only the tab that sits under
+-- the auction house window uses the game's own tab template.
 local function tryFrame(kind, name, parent, template)
     local ok, f = pcall(CreateFrame, kind, name, parent, template)
     return ok and f or nil
@@ -270,7 +265,7 @@ local function nextStep(deals, entries, short)
         if e.action == "LISTED" and e.live == 0 then sold = sold + 1 end
     end
     if n.AH > 0 and ahOpen() then
-        return ("Open |cffffd100PORTFOLIO|r and press |cffffd100Post|r: %d item(s) to list for %s+%s|r."):format(n.AH, GREEN, short(gain.AH))
+        return ("Open |cffffd100Money|r and press |cffffd100Post|r: %d item(s) to list for %s+%s|r."):format(n.AH, GREEN, short(gain.AH))
     end
     if n.VENDOR > 0 then
         return merchantOpen() and ("Press |cffffd100Sell all to vendor|r to collect %s+%s|r profit."):format(GREEN, short(gain.VENDOR))
@@ -291,39 +286,60 @@ function UI:Render()
     if not frame or not frame:IsShown() then return end
     local Se, short = ns.Seller, ns.Seller.short
     local deals, entries = buyRows(), Se:Entries()
-    do  -- account strip: balance, money in open positions, open profit/loss
-        local inv, back = 0, 0
+    self:Layout()
+    do  -- top right: profit actually banked
+        local rz = AuctionMeshDB.realized or 0
+        frame.gold:SetText(("%sProfit banked so far|r  %s%s%s|r"):format(GREY, rz >= 0 and GREEN or RED, rz >= 0 and "+ " or "- ", short(math.abs(rz))))
+    end
+    if self.tab == "SELL" then
+        -- MONEY: what you hold, what is already earned, what depends on a sale
+        -- "ended" = an auction of yours that is no longer listed: it sold or it
+        -- expired. Which one is only known at the mailbox, so it is not called sold.
+        local ended, listed, bought, held, heldCost = 0, 0, 0, 0, 0
+        local cut = 1 - ns.Deals.cfg.cut
         for _, e in ipairs(entries) do
             local paid, _, net = Se:Numbers(e)
-            if paid then inv, back = inv + paid * e.count, back + net * e.count end
+            if e.action == "LISTED" then
+                local value = floor((e.listed.price or 0) * cut) * e.count
+                if e.live == 0 then ended = ended + value else listed = listed + value end
+            elseif e.action == "HOLD" then
+                held, heldCost = held + 1, heldCost + (paid or 0) * e.count
+            else
+                bought = bought + (net or 0) * e.count
+            end
         end
-        local pl = back - inv
-        local rz = AuctionMeshDB.realized or 0
-        if self.docked then
-            frame.gold:SetText(("%sBALANCE|r %s   %sIN POSITIONS|r %s   %sOPEN P/L|r %s%s%s|r   %sBANKED|r %s%s%s|r"):format(
-                GREY, short(GetMoney()), GREY, short(inv), GREY, pl >= 0 and GREEN or RED, pl >= 0 and "+" or "", short(pl),
-                GREY, rz >= 0 and GREEN or RED, rz >= 0 and "+" or "", short(rz)))
-        else -- the floating window is narrower: balance and banked profit only
-            frame.gold:SetText(("%sBALANCE|r %s   %sBANKED|r %s%s%s|r"):format(
-                GREY, short(GetMoney()), GREY, rz >= 0 and GREEN or RED, rz >= 0 and "+" or "", short(rz)))
-        end
+        local gold = GetMoney()
+        local function plus(v, colour) return v > 0 and (colour .. "+ " .. short(v) .. "|r") or (GREY .. "-|r") end
+        local lg = frame.ledger
+        lg.rows[1].label:SetText("Gold on this character now")
+        lg.rows[1].value:SetText(short(gold))
+        lg.rows[2].label:SetText("Auction ended (sold or expired): collect at a mailbox")
+        lg.rows[2].value:SetText(plus(ended, TEAL))
+        lg.rows[3].label:SetText("Listed: if it sells at the listed prices")
+        lg.rows[3].value:SetText(plus(listed, ORANGE))
+        lg.rows[4].label:SetText("Bought, not sold yet: at the live price")
+        lg.rows[4].value:SetText(plus(bought, ORANGE))
+        lg.total.label:SetText("Total when it has all sold")
+        lg.total.value:SetText(short(gold + ended + listed + bought))
+        lg.note:SetText(held > 0 and ("Not counted: %d item(s) held until the price recovers, cost %s."):format(held, short(heldCost))
+            or "Amounts are after the 5% auction house cut.")
     end
     for i = 1, 6 do frame.head[i]:SetText(HEAD[self.tab][i]) end
-    frame.tabBuy:SetText(("BUY (%d)"):format(#deals))
-    frame.tabSell:SetText(("PORTFOLIO (%d)"):format(#entries))
+    frame.tabBuy:SetText(("Deals (%d)"):format(#deals))
+    frame.tabSell:SetText(("Money (%d)"):format(#entries))
     UI.selectTab(frame.tabBuy, self.tab == "BUY")
     UI.selectTab(frame.tabSell, self.tab == "SELL")
     UI.selectTab(frame.tabHist, self.tab == "HISTORY")
 
     local list = self.tab == "BUY" and deals or self.tab == "SELL" and entries or (AuctionMeshDB.history or {})
     if self.tab == "HISTORY" then
-        frame.headline:SetText(CYAN .. "HISTORY|r  " .. GREY .. "everything bought, collected, posted and sold|r")
+        frame.headline:SetText("History  " .. GREY .. "everything bought, collected, posted and sold|r")
     elseif self.tab == "BUY" then
         local total = 0
         for _, d in ipairs(deals) do total = total + d.profit end
         frame.headline:SetText(#deals > 0
-            and ("%sMAKE NOW: +%s|r  %s(%d deal%s)|r"):format(GREEN, short(total), GREY, #deals, #deals == 1 and "" or "s")
-            or (GREY .. "MAKE NOW: nothing yet|r"))
+            and ("Make now  %s+ %s|r  %s(%d deal%s)|r"):format(GREEN, short(total), GREY, #deals, #deals == 1 and "" or "s")
+            or ("Make now  " .. GREY .. "nothing yet|r"))
     else
         local inv, back = 0, 0
         for _, e in ipairs(entries) do
@@ -334,11 +350,12 @@ function UI:Render()
             and ("%sCOMING IN: +%s|r  %swhen these are sold|r"):format(back >= inv and GREEN or RED, short(back - inv), GREY)
             or (GREY .. "Nothing to sell|r"))
     end
-    frame.next:SetText("|cffffd100NEXT:|r " .. nextStep(deals, entries, short))
+    frame.next:SetText(TEAL .. "NEXT|r  " .. nextStep(deals, entries, short))
     local status = self.tab == "BUY" and buyStatus(#deals) or Se:Instructions(entries)
     if self.tab == "HISTORY" then
         status = GREY .. ns.Learn:Summary() .. "|r"
     end
+    if self.tab == "SELL" then status = "" end -- the MONEY section and the NEXT line say it all
     local n = self.notice
     if n and GetTime() < n.till then
         status = n.text
@@ -348,7 +365,7 @@ function UI:Render()
     frame.status:SetText(status)
     -- as many rows as the panel's height holds
     local h = frame:GetHeight()
-    local vis = type(h) == "number" and h > 0 and math.max(3, math.min(MAXROWS, floor((h - TOP - 36) / ROW_H))) or ROWS
+    local vis = type(h) == "number" and h > 0 and math.max(3, math.min(MAXROWS, floor((h - (self.listTop or TOP) - 36) / ROW_H))) or ROWS
     self.vis = vis
     for i = 1, MAXROWS do
         local r, item = rows[i], list[i]
@@ -478,39 +495,74 @@ end
 
 ---------------------------------------------------------------- window
 
+-- FLAT STYLE (after a layout the user picked): dark panel, one-pixel outlines,
+-- a teal outline on what is selected or primary, grey small-caps section
+-- headings, label on the left and amount on the right, a ruled total line.
+
+-- one-pixel outline around a frame; call again to recolour it
+local function outline(f, c, a)
+    local e = rawget(f, "edges")
+    if not e then
+        e = {}
+        rawset(f, "edges", e)
+        for i = 1, 4 do e[i] = f:CreateTexture(nil, "BORDER") end
+        e[1]:SetPoint("TOPLEFT"); e[1]:SetPoint("TOPRIGHT"); e[1]:SetHeight(1)
+        e[2]:SetPoint("BOTTOMLEFT"); e[2]:SetPoint("BOTTOMRIGHT"); e[2]:SetHeight(1)
+        e[3]:SetPoint("TOPLEFT"); e[3]:SetPoint("BOTTOMLEFT"); e[3]:SetWidth(1)
+        e[4]:SetPoint("TOPRIGHT"); e[4]:SetPoint("BOTTOMRIGHT"); e[4]:SetWidth(1)
+    end
+    for i = 1, 4 do e[i]:SetColorTexture(c[1], c[2], c[3], a or 1) end
+end
+
+-- flat button: dark fill, thin outline, soft teal glow on hover
 local function button(parent, w, text, onClick, name)
-    local b = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
+    local b = CreateFrame("Button", name, parent)
     b:SetSize(w, 22)
+    b.fill = b:CreateTexture(nil, "BACKGROUND")
+    b.fill:SetAllPoints()
+    b.fill:SetColorTexture(0.09, 0.10, 0.12, 1)
+    outline(b, LINE)
+    local hl = b:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.14)
+    b:SetNormalFontObject("GameFontHighlightSmall")
+    b:SetHighlightFontObject("GameFontHighlightSmall")
+    b:SetDisabledFontObject("GameFontDisableSmall")
     b:SetText(text)
     b:SetScript("OnClick", onClick)
     return b
 end
 
--- A tab in the game's own style (falls back to a plain button).
 local function makeTab(parent, text, onClick)
-    local t = tryFrame("Button", nil, parent, "PanelTopTabButtonTemplate")
-    if t then
-        t.native = true
-        t:SetText(text)
-        if PanelTemplates_TabResize then pcall(PanelTemplates_TabResize, t, 0) end
-        t:SetScript("OnClick", onClick)
-        return t
-    end
-    return button(parent, 110, text, onClick)
+    return button(parent, 104, text, onClick)
 end
+-- the selected tab gets the teal outline (the game's own tab under the auction house keeps the game's style)
 local function selectTab(t, on)
-    if t.native and PanelTemplates_SelectTab and PanelTemplates_DeselectTab then
+    if rawget(t, "native") and PanelTemplates_SelectTab and PanelTemplates_DeselectTab then
         if on then pcall(PanelTemplates_SelectTab, t) else pcall(PanelTemplates_DeselectTab, t) end
         if PanelTemplates_TabResize then pcall(PanelTemplates_TabResize, t, 0) end
+    elseif rawget(t, "fill") then
+        outline(t, on and ACCENT or LINE)
     else
         t:SetEnabled(not on)
     end
 end
 UI.selectTab = selectTab
 
+-- a "label ........ amount" line
+local function ledgerRow(parent, y, font)
+    local l = parent:CreateFontString(nil, "OVERLAY", font or "GameFontHighlightSmall")
+    l:SetPoint("TOPLEFT", 0, y)
+    l:SetJustifyH("LEFT")
+    local v = parent:CreateFontString(nil, "OVERLAY", font or "GameFontHighlightSmall")
+    v:SetPoint("TOPRIGHT", 0, y)
+    v:SetJustifyH("RIGHT")
+    return { label = l, value = v }
+end
+
 function UI:Create()
     if frame then return end
-    frame = CreateFrame("Frame", "AuctionMeshFrame", UIParent, "BackdropTemplate")
+    frame = CreateFrame("Frame", "AuctionMeshFrame", UIParent)
     frame:SetSize(WIDTH, TOP + 44 + ROWS * ROW_H)
     frame:SetFrameStrata("HIGH")
     frame:SetMovable(true); frame:EnableMouse(true); frame:RegisterForDrag("LeftButton")
@@ -527,8 +579,9 @@ function UI:Create()
 
     -- background: the auction house's own art
     frame.art = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
-    frame.art:SetPoint("TOPLEFT", 3, -3); frame.art:SetPoint("BOTTOMRIGHT", -3, 3)
-    if not atlas(frame.art, "auctionhouse-background-index") then frame.art:SetColorTexture(0.05, 0.05, 0.06, 1) end
+    frame.art:SetAllPoints()
+    frame.art:SetColorTexture(0.045, 0.05, 0.06, 0.97)
+    outline(frame, LINE)
 
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     frame.title:SetPoint("TOPLEFT", 14, -12)
@@ -538,11 +591,11 @@ function UI:Create()
     frame.closeBtn:SetScript("OnClick", function() UI:Close() end)
 
     -- tabs (positioned in Place(): next to the title when floating, at the left edge when docked)
-    frame.tabBuy = makeTab(frame, "BUY", function() UI.tab = "BUY"; UI:Render() end)
-    frame.tabSell = makeTab(frame, "PORTFOLIO", function() UI.tab = "SELL"; UI:Render() end)
-    frame.tabHist = makeTab(frame, "HISTORY", function() UI.tab = "HISTORY"; UI:Render() end)
-    frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", 2, 0)
-    frame.tabHist:SetPoint("LEFT", frame.tabSell, "RIGHT", 2, 0)
+    frame.tabBuy = makeTab(frame, "Deals", function() UI.tab = "BUY"; UI:Render() end)
+    frame.tabSell = makeTab(frame, "Money", function() UI.tab = "SELL"; UI:Render() end)
+    frame.tabHist = makeTab(frame, "History", function() UI.tab = "HISTORY"; UI:Render() end)
+    frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", 6, 0)
+    frame.tabHist:SetPoint("LEFT", frame.tabSell, "RIGHT", 6, 0)
 
     -- account strip, top right
     frame.gold = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -550,7 +603,7 @@ function UI:Create()
     frame.gold:SetJustifyH("RIGHT")
 
     -- headline (the one number that matters) and, on its right, the min-profit control
-    frame.headline = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    frame.headline = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
     frame.headline:SetPoint("TOPLEFT", 14, -44)
     frame.headline:SetJustifyH("LEFT")
     local log = button(frame, 44, "Log", function() ns.Diag:Show() end)
@@ -577,6 +630,7 @@ function UI:Create()
     local lbl = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     lbl:SetPoint("RIGHT", frame.minS, "LEFT", -10, 0)
     lbl:SetText("Min profit per deal")
+    frame.minWidgets = { lbl, frame.minS, sLabel, frame.minC, cLabel } -- a Deals control: hidden on the Money tab
 
     -- NEXT STEP: one plain instruction, always the most profitable thing to do now
     frame.next = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -589,41 +643,41 @@ function UI:Create()
     frame.status:SetHeight(38)
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
 
-    -- the list sits in one of the game's inset frames
-    local inset = tryFrame("Frame", nil, frame, "InsetFrameTemplate")
-    if inset then
-        inset:SetPoint("TOPLEFT", 6, -(TOP - 22)); inset:SetPoint("BOTTOMRIGHT", -6, 34)
-        inset:SetFrameLevel(frame:GetFrameLevel() or 1)
-    end
-    -- column headings: gold small caps on a dark strip, like the game's own lists
-    local strip = frame:CreateTexture(nil, "BORDER")
-    strip:SetPoint("TOPLEFT", 10, -(TOP - 20)); strip:SetPoint("TOPRIGHT", -10, -(TOP - 20)); strip:SetHeight(18)
-    strip:SetColorTexture(0, 0, 0, 0.45)
+    -- MONEY: the answer to "how much do I really have?", on the Money tab
+    local lg = CreateFrame("Frame", nil, frame)
+    lg:SetPoint("TOPLEFT", 14, -40); lg:SetPoint("TOPRIGHT", -14, -40)
+    lg:SetHeight(132)
+    lg.title = lg:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    lg.title:SetPoint("TOPLEFT", 0, 0)
+    lg.title:SetText("MONEY")
+    lg.rows = {}
+    for i = 1, 4 do lg.rows[i] = ledgerRow(lg, -24 - (i - 1) * 16) end
+    lg.rule = lg:CreateTexture(nil, "ARTWORK")
+    lg.rule:SetPoint("TOPLEFT", 0, -90); lg.rule:SetPoint("TOPRIGHT", 0, -90); lg.rule:SetHeight(1)
+    lg.rule:SetColorTexture(LINE[1], LINE[2], LINE[3], 1)
+    lg.total = ledgerRow(lg, -96, "GameFontHighlight")
+    lg.note = lg:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    lg.note:SetPoint("TOPLEFT", 0, -116); lg.note:SetPoint("TOPRIGHT", 0, -116)
+    lg.note:SetJustifyH("LEFT"); lg.note:SetWordWrap(false)
+    lg:Hide()
+    frame.ledger = lg
+
+    -- list heading: grey small caps over a thin rule
+    frame.strip = frame:CreateTexture(nil, "ARTWORK")
+    frame.strip:SetHeight(1)
+    frame.strip:SetColorTexture(LINE[1], LINE[2], LINE[3], 1)
     frame.head = {}
-    for n = 1, 5 do
-        local f = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        f:SetPoint("TOPLEFT", 10 + COLS[n][1] - (n == 1 and 14 or 0), -(TOP - 17))
-        frame.head[n] = f
-    end
-    frame.head[6] = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    frame.head[6]:SetPoint("TOPRIGHT", -84, -(TOP - 17))
+    for n = 1, 6 do frame.head[n] = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall") end
 
     for i = 1, MAXROWS do
         local r = CreateFrame("Frame", nil, frame)
         r:SetHeight(ROW_H - 2)
-        r:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -TOP - (i - 1) * ROW_H)
-        r:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -TOP - (i - 1) * ROW_H)
         r.bg = r:CreateTexture(nil, "BACKGROUND")
         r.bg:SetAllPoints()
-        if i % 2 == 1 then
-            if not atlas(r.bg, "auctionhouse-rowstripe-1") then r.bg:SetColorTexture(1, 1, 1, 0.04) end
-        else
-            if not atlas(r.bg, "auctionhouse-rowstripe-2") then r.bg:SetColorTexture(0, 0, 0, 0.12) end
-        end
+        r.bg:SetColorTexture(1, 1, 1, (i % 2 == 1) and 0.035 or 0)
         r.hl = r:CreateTexture(nil, "HIGHLIGHT")
         r.hl:SetAllPoints()
-        if not atlas(r.hl, "auctionhouse-ui-row-highlight") then r.hl:SetColorTexture(1, 0.82, 0, 0.12) end
-        r.hl:SetBlendMode("ADD")
+        r.hl:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.10)
         r.icon = r:CreateTexture(nil, "ARTWORK")
         r.icon:SetSize(20, 20); r.icon:SetPoint("LEFT", 4, 0)
         r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
@@ -651,6 +705,7 @@ function UI:Create()
         r.profit:SetWidth(110); r.profit:SetJustifyH("RIGHT"); r.profit:SetWordWrap(false)
         r.btn = button(r, 64, "Buy", rowButton)
         r.btn:SetHeight(20)
+        outline(r.btn, ACCENT) -- the action on a row is the primary action
         -- Mouse on a Buy/Post button = you are about to click: background work
         -- stops so the auction house is free when you do.
         r.btn:SetScript("OnEnter", function(self) UI.hoverBtn = self end)
@@ -689,6 +744,40 @@ function UI:Create()
         if UI.dirty then UI:Render() end
     end)
     frame:Hide()
+end
+
+-- Where things sit depends on the tab: the Money tab has the MONEY section on
+-- top and its list below; the other tabs have the headline and status lines.
+function UI:Layout()
+    local sell = self.tab == "SELL"
+    local key = sell and "S" or "B"
+    if self.layoutKey == key then return end
+    self.layoutKey = key
+    local nextY, statusY, statusH, top = -66, -86, 38, TOP
+    if sell then nextY, statusY, statusH, top = -180, -198, 14, 240 end
+    self.listTop = top
+    frame.headline:SetShown(not sell)
+    frame.ledger:SetShown(sell)
+    for _, w in ipairs(frame.minWidgets) do w:SetShown(not sell) end
+    frame.next:ClearAllPoints()
+    frame.next:SetPoint("TOPLEFT", 14, nextY); frame.next:SetPoint("TOPRIGHT", -14, nextY)
+    frame.status:ClearAllPoints()
+    frame.status:SetPoint("TOPLEFT", 14, statusY); frame.status:SetPoint("TOPRIGHT", -14, statusY)
+    frame.status:SetHeight(statusH)
+    frame.strip:ClearAllPoints()
+    frame.strip:SetPoint("TOPLEFT", 10, -(top - 4)); frame.strip:SetPoint("TOPRIGHT", -10, -(top - 4))
+    for n = 1, 5 do
+        frame.head[n]:ClearAllPoints()
+        frame.head[n]:SetPoint("TOPLEFT", 10 + COLS[n][1] - (n == 1 and 26 or 0), -(top - 18))
+    end
+    frame.head[6]:ClearAllPoints()
+    frame.head[6]:SetPoint("TOPRIGHT", -84, -(top - 18))
+    for i = 1, MAXROWS do
+        local r = rows[i]
+        r:ClearAllPoints()
+        r:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -top - (i - 1) * ROW_H)
+        r:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -top - (i - 1) * ROW_H)
+    end
 end
 
 -- Reads the two "Min profit" boxes and applies them right away.
@@ -746,7 +835,6 @@ function UI:Place()
         frame:SetPoint("TOPLEFT", ah, "TOPLEFT", 3, -22)
         frame:SetPoint("BOTTOMRIGHT", ah, "BOTTOMRIGHT", -3, 3)
         frame:SetFrameStrata("DIALOG")
-        frame:SetBackdrop(nil)
         frame:SetMovable(false)
         frame.title:Hide(); frame.closeBtn:Hide()
         frame.tabBuy:SetPoint("TOPLEFT", 12, -6)
@@ -756,8 +844,6 @@ function UI:Place()
         frame:SetScale(0.9)
         frame:SetSize(WIDTH, TOP + 44 + ROWS * ROW_H)
         frame:SetFrameStrata("HIGH")
-        frame:SetBackdrop({ edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
-            insets = { left = 3, right = 3, top = 3, bottom = 3 } })
         frame:SetMovable(true)
         frame.title:Show(); frame.closeBtn:Show()
         frame.tabBuy:SetPoint("TOPLEFT", 130, -6)

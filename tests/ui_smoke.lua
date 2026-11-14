@@ -183,7 +183,7 @@ check(#r == 2, "exactly the 2 real deals are listed (the 500-unit trap is not)")
 check(r[1] and r[1]:find("Copper Ore") and r[1]:find("SAFE  Buy 12 for 36c, vendor pays 60c | +24c", 1, true), "vendor deal first, exact quantity, total and profit")
 check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c, relist at 77c", 1, true) and r[2]:find("| +3s18c |", 1, true), "flip shows exact buy and resale price")
 check(S.verified[2447] == nil, "Peacebloom (500 cheap units) correctly rejected")
-check(strip(AuctionMeshFrame.headline._text):find("MAKE NOW: +3s42c  (2 deals)", 1, true), "big headline: MAKE NOW: +3s42c (2 deals)")
+check(strip(AuctionMeshFrame.headline._text):find("Make now  + 3s42c  (2 deals)", 1, true), "big headline: Make now + 3s42c (2 deals)")
 check(morePages >= 3, "partial results: the rest of each listing was requested before judging")
 
 print("buying")
@@ -231,6 +231,21 @@ UI.tab = "SELL"; UI.notice = nil; UI:Render()
 r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
 check(r[1] and r[1]:find("Linen Cloth x6") and r[1]:find("LISTED") and r[1]:find("+3s18c", 1, true), "the posted auction stays in the portfolio as LISTED with its expected profit")
 check(AuctionMeshDB.realized == 24, "banked profit so far: +24c from the vendor sale")
+do  -- the MONEY section on the Money tab: label on the left, amount on the right, ruled total
+    local lg = AuctionMeshFrame.ledger
+    local function val(row) return strip(row.value._text) end
+    print("     " .. lg.rows[1].label._text .. " | " .. val(lg.rows[1]))
+    print("     " .. lg.rows[3].label._text .. " | " .. val(lg.rows[3]))
+    print("     " .. lg.total.label._text .. " | " .. val(lg.total))
+    check(lg:IsShown() and not AuctionMeshFrame.headline:IsShown(), "Money tab shows the MONEY section instead of the headline")
+    check(val(lg.rows[1]) == strip(ns.Seller.short(GetMoney())), "MONEY: gold on this character now")
+    check(val(lg.rows[3]) == "+ 4s38c", "MONEY: 6 listed at 77c = + 4s38c after the 5% cut")
+    check(val(lg.rows[2]) == "-" and val(lg.rows[4]) == "-", "MONEY: nothing ended, nothing waiting to be sold")
+    check(val(lg.total) == strip(ns.Seller.short(GetMoney() + 438)), "MONEY: total when it has all sold = gold + listings")
+    UI.tab = "BUY"; UI:Render()
+    check(not lg:IsShown() and AuctionMeshFrame.headline:IsShown(), "Deals tab shows the headline, not the MONEY section")
+    UI.tab = "SELL"; UI:Render()
+end
 
 print("listings you can't buy (the Zesty Clam case from the real log)")
 ITEMS[500] = { "Zesty Clam Meat", 500 }
@@ -395,7 +410,7 @@ check(c == 1 and S.verified[4234] and S.verified[4234].units == 4, "the friend's
 UI.tab = "BUY"; UI.notice = nil; UI:Render()
 local nx = strip(AuctionMeshFrame.next._text)
 print("     " .. nx)
-check(nx:find("NEXT: Press Buy on Heavy Leather: pay 2s40c, make +", 1, true), "NEXT line says exactly what to press and what it makes")
+check(nx:find("NEXT  Press Buy on Heavy Leather: pay 2s40c, make +", 1, true), "NEXT line says exactly what to press and what it makes")
 S.verified[4234] = nil
 
 print("request budget (limits measured from real logs)")

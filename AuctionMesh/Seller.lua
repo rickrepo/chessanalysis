@@ -157,7 +157,7 @@ function Seller:Instructions(entries)
         lines[#lines + 1] = ("|cffaaaaaa%d auction(s) listed. The gold arrives by mail when they sell.|r"):format(n.LISTED)
     end
     if #lines == 0 then
-        lines[1] = "|cffaaaaaaNothing to sell. Items you buy on the BUY tab appear here.|r"
+        lines[1] = "|cffaaaaaaNothing to sell. Items you buy on the Deals tab appear here.|r"
     end
     if self.posting then table.insert(lines, 1, "|cffffffffPosting " .. nameOf(self.posting.key) .. "...|r") end
     return table.concat(lines, "\n")
@@ -190,7 +190,7 @@ function Seller:SellVendor(onlyKey)
     self.selling = true
     local i = 0
     local function finish()
-        -- Count what actually left the bags; only that is removed from your SELL list.
+        -- Count what actually left the bags; only that is removed from the Money tab.
         Seller:ScanBags()
         local earned = 0
         for key, was in pairs(before) do
@@ -335,7 +335,7 @@ function Seller:Reconcile()
                                  sell = L.price, at = now, proof = "auction expired, returned by mail" }
                 AuctionMeshDB.listed[key] = nil
                 if ns.Learn then ns.Learn:Outcome(key, false) end
-                say(("|cffff8040Expired unsold:|r %d x %s came back by mail. It is in your PORTFOLIO again."):format(n, nameOf(key)))
+                say(("|cffff8040Expired unsold:|r %d x %s came back by mail. It is on the Money tab again."):format(n, nameOf(key)))
                 returned = true
             end
         end
@@ -349,7 +349,7 @@ function Seller:Reconcile()
             local missing = f.units - have
             ns.Log("RECONCILE %s: expected %d, bags %d, mail %d -> removing %d", tostring(key), f.units,
                 bagCount[key] or 0, inMail, missing)
-            say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from your SELL list.|r")
+            say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from the Money tab.|r")
                 :format(nameOf(key), missing))
             if have <= 0 then flips()[key] = nil; self.prices[key] = nil else f.units = have end
         end
@@ -479,7 +479,7 @@ function Seller:Post(key)
     if not ok then
         ns.Log("POST refused by client for %s", tostring(key))
         self.posting = nil
-        say("The game refused that post. " .. nameOf(key) .. " stays in your SELL list.")
+        say("The game refused that post. " .. nameOf(key) .. " stays on the Money tab.")
         return
     end
     self:Refresh()
@@ -488,7 +488,7 @@ function Seller:Post(key)
         local q = Seller.posting
         if q and q.key == key and q.at == Seller.posting.at then
             Seller.posting = nil
-            say(nameOf(key) .. " wasn't posted (no change in your bags); it's still in your SELL list.")
+            say(nameOf(key) .. " wasn't posted (no change in your bags); it's still on the Money tab.")
             Seller:Refresh()
         end
     end)
@@ -528,7 +528,7 @@ function Seller:OnError(msg)
     ns.Log("POST error for %s: %s", tostring(self.posting.key), tostring(msg))
     self.posting = nil
     self.quietUntil = GetTime() + 2
-    say("Post failed: " .. tostring(msg) .. ". Item kept in your SELL list; press again in a moment.")
+    say("Post failed: " .. tostring(msg) .. ". Item kept on the Money tab; press again in a moment.")
     self:Refresh()
 end
 

@@ -5,7 +5,7 @@
 --   EXPIRED  the auction came back unsold in the mail
 -- Each outcome is recorded here AND broadcast to the channel, so the rules are
 -- tuned on the whole group's trades, not just yours. Three things are learned,
--- all bounded and all visible (/amesh learn, HISTORY tab):
+-- all bounded and all visible (/amesh learn, History tab):
 --
 --   1. Price factor.  Average of (real sale price / planned price) over sold
 --      flips. If sales come in at 93% of plan, every future plan is multiplied
