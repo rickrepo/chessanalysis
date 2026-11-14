@@ -841,7 +841,7 @@ function Seller:Init()
     -- Remind on login if there is unfinished business.
     C_Timer.After(8, function()
         local n = #Seller:Entries()
-        if n > 0 then say(n .. " item(s) to sell. Type /amesh to see what to do.") end
+        if n > 0 then say(n .. " item(s) to sell. Open the AuctionMesh panel (auction house tab, or the addon list by the minimap) to see what to do.") end
     end)
 end
 

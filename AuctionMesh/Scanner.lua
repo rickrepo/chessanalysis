@@ -111,7 +111,7 @@ function Scanner:FullScan(force)
     if scan then say("A full scan is already running."); return end
     local ago, by = Sync:FreshestScan()
     if not force and ago and ago < Sync.cfg.fullScanCooldown then
-        say(("%s did a full scan %d min ago and the mesh already has it. Use '/amesh scan force' to scan anyway.")
+        say(("%s did a full scan %d min ago and the mesh already has it. A new full scan is not needed.")
             :format(by or "Someone", floor(ago / 60)))
         return
     end

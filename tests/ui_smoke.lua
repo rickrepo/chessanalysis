@@ -288,8 +288,8 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
         check(has("^YOUR TRADES IN THIS ITEM %\(1%\)") and has("^Bought at 20c each | %- 1s20c") and has("^On the auction house: 6 at 77c each | %+ 4s38c") and has("^Profit if this sells | %+ 3s18c"),
             "one item: the trade with what was paid, where it is now and the profit if it sells")
         check(has("^WAIT  No cheaper listing"), "one item: the recommendation, marked WAIT")
-        AuctionMeshDrawer.all._scripts.OnClick(AuctionMeshDrawer.all)
-        check(UI.sel == nil, "'All trades' goes back to the full list")
+        AuctionMeshDrawer.views.trades._scripts.OnClick(AuctionMeshDrawer.views.trades)
+        check(UI.sel == nil, "'Trades' goes back to the full list")
         UI:ToggleDrawer(false)
     end
     -- a sale the game is still holding back, read from the mailbox invoice
@@ -445,7 +445,7 @@ local before = select(2, ns.Diag:Text():gsub("\n", "")) + 1
 ns.Diag:Save(); ns.Diag:Init()
 local after = ns.Diag:Text()
 check(before > 50 and select(2, after:gsub("\n", "")) <= 1 and after:find("session start"), ("log had %d lines; after a reload it holds only the new session header"):format(before))
-check(#ns.Diag:Text(true) > 1000, "the previous session is still available with /amesh log old")
+check(#ns.Diag:Text(true) > 1000, "the previous session is still available (Setup tab, Last session's log)")
 
 print("history")
 UI.tab = "HISTORY"; UI.notice = nil; UI:Render()
@@ -453,9 +453,53 @@ local hist, seen = AuctionMeshDB.history or {}, {}
 for _, h in ipairs(hist) do local m = strip(h.m); for _, w in ipairs({ "Bought:", "Collected from mailbox:", "Posted", "Sold vendor flips", "Nothing bought, nothing spent" }) do if m:find(w, 1, true) then seen[w] = true end end end
 check(seen["Bought:"] and seen["Collected from mailbox:"] and seen["Posted"] and seen["Sold vendor flips"] and seen["Nothing bought, nothing spent"],
     "HISTORY lists purchases, mailbox pick-ups, posts, vendor sales and cancelled buys")
-local hr = rowsTextHist and rowsTextHist() or nil
 for i = 1, math.min(4, #hist) do print("     " .. strip(hist[i].m)) end
 UI.tab = "BUY"
+UI:ToggleDrawer(true)
+AuctionMeshDrawer.views.activity._scripts.OnClick(AuctionMeshDrawer.views.activity)
+check(UI.drawerLines[1].head == ("RECENT ACTIVITY (%d)"):format(#hist) and strip(UI.drawerLines[2].l):find(strip(hist[1].m):sub(1, 20), 1, true),
+    "the drawer's Activity view lists it, newest first")
+AuctionMeshDrawer.views.market._scripts.OnClick(AuctionMeshDrawer.views.market)
+check(UI.drawerLines[1].head == "BIGGEST PRICE MOVES, 24 HOURS", "the drawer's Market view shows price moves and what sells fastest")
+for _, l in ipairs(UI.drawerLines) do print("     " .. strip((l.head or l.l or "")) .. (l.r and ("  |  " .. strip(l.r)) or "")) end
+UI.dview = "trades"; UI:ToggleDrawer(false)
+
+print("setup: a control for everything, no commands")
+do
+    UI.tab = "HISTORY"; UI.notice = nil; UI:Render()
+    local sp, cfg = AuctionMeshFrame.setup, AuctionMeshDB.cfg
+    local function press(b) b._scripts.OnClick(b) end
+    print("     " .. sp.flips._text .. " | " .. sp.scope._text .. " | " .. sp.dock._text .. " | " .. sp.auto._text .. " | " .. sp.tune._text)
+    print("     " .. strip(sp.share._text))
+    check(sp.scope._text == "Crafting materials", "the radar button shows what is being read")
+    press(sp.scope); UI:Render()
+    check(cfg.scope == "money" and ns.Swarm.scope == "money" and sp.scope._text == "All money-makers", "one click moves to the next choice and applies it")
+    press(sp.scope); press(sp.scope); UI:Render()
+    check(cfg.scope == "mats" and sp.scope._text == "Crafting materials", "and round again to crafting materials")
+    sp.margin:SetText("35"); sp.margin._scripts.OnEditFocusLost(sp.margin)
+    check(cfg.margin == 35 and math.abs(ns.Deals.cfg.margin - 0.35) < 1e-9, "the flip profit box sets the margin (35%)")
+    sp.margin:SetText("20"); sp.margin._scripts.OnEditFocusLost(sp.margin)
+    press(sp.auto); UI:Render()
+    check(cfg.autoOpen == false and sp.auto._text == "Opens by itself: off", "opens-by-itself switch")
+    press(sp.auto)
+    press(sp.tune); UI:Render()
+    check(ns.Tuner.cfg.enabled == false and ns.Learn.cfg.autoTune == false and sp.tune._text == "Self-tuning: off", "one switch for all self-tuning")
+    press(sp.tune)
+    local n0 = ns.Tuner.d.n
+    press(sp.forget); UI:Render()
+    check(ns.Tuner.d.n == n0 and sp.forget._text == "Click again to forget", "forgetting what was learned asks for a second click")
+    press(sp.forget); UI:Render()
+    check(ns.Tuner.d.n == 0 and sp.forget._text == "Forget what was learned", "the second click clears it")
+    sp.chan:SetText("mesh"); sp.pass:SetText("secret"); press(sp.join)
+    check(cfg.channel == "mesh" and cfg.password == "secret" and cfg.route == "channel", "channel name and password are typed into two boxes, then Join")
+    check(type(AuctionMesh_OnAddonCompartmentClick) == "function", "the game's addon list can open the panel")
+    for _, f in ipairs({ "AuctionMesh/UI.lua", "AuctionMesh/Seller.lua", "AuctionMesh/Sniper.lua", "AuctionMesh/Swarm.lua", "AuctionMesh/Scanner.lua", "AuctionMesh/Sync.lua" }) do
+        local bad
+        for line in io.lines(f) do if line:find("/amesh", 1, true) and not line:match("^%s*%-%-") then bad = line end end
+        check(not bad, f:match("[^/]+$") .. ": no message tells the player to type a command")
+    end
+    UI.tab = "BUY"; UI:Render()
+end
 
 print("sharing: a friend's sweep triggers a check here; next-step line")
 ns.Deals.cfg.requireTurnover = false

@@ -222,6 +222,121 @@ end)
 
 ---------------------------------------------------------------- slash
 
+-- ACTIONS. Everything a player can change is a control on the Setup tab; the
+-- controls and the (optional) slash command call the same functions here.
+local Do = {}
+ns.Do = Do
+
+local SCOPES = { "mats", "money", "all" }
+Do.SCOPE_NAMES = { mats = "Crafting materials", money = "All money-makers", all = "Whole auction house" }
+-- v = "mats" | "money" | "all"; nil moves to the next one
+function Do.Scope(v)
+    local cfg = AuctionMeshDB.cfg
+    if not v then
+        local at = 1
+        for i, s in ipairs(SCOPES) do if s == cfg.scope then at = i end end
+        v = SCOPES[at % #SCOPES + 1]
+    end
+    if not Do.SCOPE_NAMES[v] then return end
+    cfg.scope, Swarm.scope = v, v
+    Swarm.units = {}
+    if Swarm.active then Swarm:BuildUnits() end
+    Sniper.lastBg = 0
+    UI:Notice(v == "all" and "The radar now reads the whole auction house (slower to come round)."
+        or v == "money" and "The radar now reads trade goods, reagents, consumables, gems and enhancements."
+        or "The radar now reads crafting materials only (fastest).", true)
+end
+
+function Do.Dock(on)
+    local cfg = AuctionMeshDB.cfg
+    cfg.dock = on and true or false
+    local tab = UI.tab
+    UI:Close()
+    UI:Open(tab)
+    UI:Notice(cfg.dock and "The panel opens inside the auction house window." or "The panel opens as a separate window.", true)
+end
+
+function Do.Auto(on)
+    local cfg = AuctionMeshDB.cfg
+    cfg.autoOpen = on and true or false
+    cfg.snipeAuto, cfg.autoScan = cfg.autoOpen, cfg.autoOpen
+    UI:Notice(cfg.autoOpen and "Opens and starts reading prices by itself at the auction house."
+        or "Stays closed until you click the AuctionMesh tab under the auction house window.", true)
+end
+
+function Do.Margin(pct)
+    local cfg = AuctionMeshDB.cfg
+    pct = tonumber(pct)
+    if pct then
+        pct = math.max(5, math.min(90, floor(pct + 0.5)))
+        cfg.margin, Deals.cfg.margin = pct, pct / 100
+        Sniper.checkedAt = {}
+    end
+    UI:Notice(("A flip must leave %d%% profit after the auction house cut. Vendor deals need %d%%."):format(cfg.margin, Deals.cfg.vendorMargin * 100), true)
+end
+
+function Do.Channel(name, pw)
+    local cfg = AuctionMeshDB.cfg
+    name = name and name:match("^%s*(%S+)") or nil
+    if not name then UI:Notice("Type a channel name first. Everyone in your group uses the same name and password.", true); return end
+    cfg.channel, cfg.password, cfg.route = name, (pw and pw:match("^%s*(%S*)")) or "", "channel"
+    applyRoute()
+    UI:Notice("Sharing on channel '" .. name .. "'. Everyone in your group must type the same name and password.", true)
+    C_Timer.After(3, function() Sync:Hello() end)
+end
+
+function Do.Guild()
+    AuctionMeshDB.cfg.route = "guild"
+    applyRoute()
+    UI:Notice("Sharing with guild members who run the addon.", true)
+    C_Timer.After(1, function() Sync:Hello() end)
+end
+
+-- One sentence on who prices are being shared with right now.
+function Do.SharingText()
+    local cfg = AuctionMeshDB.cfg
+    local chatType = Comm:Route()
+    local peers = Sync:PeerCount()
+    local where = cfg.route == "guild" and "your guild" or ("channel '" .. tostring(cfg.channel or "") .. "'")
+    if not chatType then return "Not connected: " .. (cfg.route == "guild" and "you are not in a guild." or "the channel has not been joined yet.") end
+    if peers > 0 then return ("Sharing live with %d other player%s on %s."):format(peers, peers == 1 and "" or "s", where) end
+    return "Connected to " .. where .. ", nobody else is online with the addon yet."
+end
+
+-- Self-tuning covers both learners: the request engine and the profit bar.
+function Do.Tuning(on)
+    local cfg = AuctionMeshDB.cfg
+    on = on and true or false
+    ns.Tuner.cfg.enabled, cfg.tune = on, on
+    ns.Learn.cfg.autoTune, cfg.autoTune = on, on
+    UI:Notice(on and "Self-tuning on: the pace, the split of requests and the profit bar adjust themselves from results."
+        or "Self-tuning off: everything stays as it is now (still measured).", true)
+end
+
+function Do.Forget()
+    local r = AuctionMeshDB.realms[realmKey()]
+    r.tune = {}
+    ns.Tuner:Attach(r.tune)
+    for k in pairs(ns.Learn.d) do ns.Learn.d[k] = nil end
+    ns.Learn:Attach(ns.Learn.d)
+    UI:Notice("Forgot everything learned (request limit, pace, split, trade results). Measuring again from scratch.", true)
+end
+
+-- Biggest 24h price moves among items with price history: { key, tr, price }.
+function Do.Trends(n)
+    local now, list = GetServerTime(), {}
+    for key in pairs(Store.hist) do
+        local tr = Store:Trend(key, now, 24) or Store:Trend(key, now, 6)
+        if tr then list[#list + 1] = { key = key, tr = tr, price = Store.fp[key] or Store.p[key] or 0 } end
+    end
+    table.sort(list, function(a, b) return math.abs(a.tr) > math.abs(b.tr) end)
+    for i = #list, (n or 10) + 1, -1 do list[i] = nil end
+    return list
+end
+
+-- The game's addon list next to the minimap opens the panel (no command needed).
+function AuctionMesh_OnAddonCompartmentClick() UI:Toggle() end
+
 SLASH_AUCTIONMESH1 = "/amesh"
 SlashCmdList.AUCTIONMESH = function(input)
     local cmd, rest = (input or ""):match("^(%S*)%s*(.-)$")
@@ -239,39 +354,25 @@ SlashCmdList.AUCTIONMESH = function(input)
         -- /amesh track [item link] [cost per unit in copper]
         local id = tonumber(rest:match("item:(%d+)")) or tonumber(rest:match("^(%d+)"))
         local cost = tonumber(rest:match("%]|h|r%s*(%d+)%s*$") or rest:match("^%d+%s+(%d+)%s*$"))
-        if id then Seller:Track(id, cost) else say("Usage: /amesh track [item link] [cost in copper], or drag the item onto the AuctionMesh window.") end
+        if id then Seller:Track(id, cost) else say("Drag the item from your bags onto the AuctionMesh panel to track it.") end
     elseif cmd == "vendor" then
         UI:SetVendorOnly(rest ~= "off" and (rest == "on" or Deals.cfg.flips))
     elseif cmd == "flips" then
         UI:SetVendorOnly(rest == "off")
     elseif cmd == "auto" then
-        cfg.autoOpen = (rest ~= "off"); cfg.snipeAuto = cfg.autoOpen; cfg.autoScan = cfg.autoOpen
-        say(cfg.autoOpen and "Opens and scans automatically at the Auction House." or "Automatic open/scan off. Use /amesh.")
+        Do.Auto(rest ~= "off")
     elseif cmd == "margin" then
-        local m = tonumber(rest)
-        if m then cfg.margin = m; Deals.cfg.margin = m / 100 end
-        say(("Flip margin: %d%% profit after the AH cut and deposit (vendor deals use %d%%)."):format(cfg.margin, Deals.cfg.vendorMargin * 100))
+        Do.Margin(rest)
     elseif cmd == "minprofit" then
         -- /amesh minprofit 1s50c  |  2s  |  75c  |  150 (copper)
         local g, s2, cp = rest:match("(%d+)g"), rest:match("(%d+)s"), rest:match("(%d+)c")
         local v = (tonumber(g) or 0) * 10000 + (tonumber(s2) or 0) * 100 + (tonumber(cp) or 0)
         if v == 0 then v = tonumber(rest) or 0 end
-        if v > 0 then UI:SetMinProfit(v) else say("Minimum profit per deal: " .. money(cfg.minProfit) .. ". Example: /amesh minprofit 1s50c") end
+        if v > 0 then UI:SetMinProfit(v) else say("Minimum profit per deal: " .. money(cfg.minProfit) .. ". Change it on the Setup tab.") end
     elseif cmd == "dock" then
-        cfg.dock = (rest ~= "off")
-        UI:Close()
-        say(cfg.dock and "The panel opens inside the auction house window." or "The panel opens as a separate window.")
-        if AuctionHouseFrame and AuctionHouseFrame:IsShown() then UI:Open() end
+        Do.Dock(rest ~= "off")
     elseif cmd == "scope" then
-        if rest == "all" or rest == "money" or rest == "mats" then
-            cfg.scope, Swarm.scope = rest, rest
-            Swarm.units = {}
-            if Swarm.active then Swarm:BuildUnits() end
-        end
-        say(cfg.scope == "all" and "Scope: the whole auction house."
-            or cfg.scope == "money" and "Scope: trade goods, reagents, consumables, gems, enhancements."
-            or "Scope: crafting materials only. (/amesh scope money or all for more)")
-        Sniper.lastBg = 0
+        Do.Scope((rest == "all" or rest == "money" or rest == "mats") and rest or nil)
     elseif cmd == "swarm" then
         if Swarm.active then cfg.autoScan = false; Swarm:Stop("Scanning off.") else cfg.autoScan = true; Swarm:Start() end
     elseif cmd == "step" then
@@ -285,14 +386,9 @@ SlashCmdList.AUCTIONMESH = function(input)
         Scanner:FullScan(rest == "force")
     elseif cmd == "channel" then
         local name, pw = rest:match("^(%S+)%s*(%S*)$")
-        if not name then say("Usage: /amesh channel <name> [password]"); return end
-        cfg.channel, cfg.password, cfg.route = name, pw or "", "channel"
-        applyRoute()
-        say("Mesh channel set to '" .. name .. "'. Everyone in your group must use the same name/password.")
-        C_Timer.After(3, function() Sync:Hello() end)
+        Do.Channel(name, pw)
     elseif cmd == "guild" then
-        cfg.route = "guild"; applyRoute(); say("Mesh routed over guild addon channel.")
-        C_Timer.After(1, function() Sync:Hello() end)
+        Do.Guild()
     elseif cmd == "sync" then
         Sync:Hello(); say("Asked the mesh for anything we're missing.")
     elseif cmd == "price" then
@@ -301,29 +397,15 @@ SlashCmdList.AUCTIONMESH = function(input)
         if p then say(("%s: %s, %d listed, %s ago"):format(rest, money(p), q, ago(GetServerTime() - t)))
         else say("No mesh data for " .. rest) end
     elseif cmd == "trends" then
-        -- biggest 24h moves among items with price history
-        local now, list = GetServerTime(), {}
-        for key in pairs(Store.hist) do
-            local tr = Store:Trend(key, now, 24) or Store:Trend(key, now, 6)
-            if tr then list[#list + 1] = { key = key, tr = tr } end
-        end
-        table.sort(list, function(a, b) return math.abs(a.tr) > math.abs(b.tr) end)
+        local list = Do.Trends(10)
         if #list == 0 then say("No trends yet: the price history needs a few hours of readings.") end
-        for i = 1, math.min(10, #list) do
-            local e = list[i]
-            say(("%s%+d%%|r  %s  now %s"):format(e.tr >= 0 and "|cff33ff66" or "|cffff4040", floor(e.tr * 100 + 0.5),
-                Sniper.nameOf(e.key), money(Store.fp[e.key] or 0)))
+        for _, e in ipairs(list) do
+            say(("%s%+d%%|r  %s  now %s"):format(e.tr >= 0 and "|cff33ff66" or "|cffff4040", floor(e.tr * 100 + 0.5), Sniper.nameOf(e.key), money(e.price)))
         end
     elseif cmd == "learn" then
-        if rest == "off" or rest == "on" then
-            ns.Learn.cfg.autoTune = (rest == "on"); cfg.autoTune = ns.Learn.cfg.autoTune
-            say(ns.Learn.cfg.autoTune and "The profit bar adjusts itself from results." or "The profit bar stays where you set it.")
-        elseif rest == "reset" then
-            for k in pairs(ns.Learn.d) do ns.Learn.d[k] = nil end
-            ns.Learn:Attach(ns.Learn.d); say("Learning data cleared.")
-        else
-            say(ns.Learn:Summary())
-        end
+        if rest == "off" or rest == "on" then Do.Tuning(rest == "on")
+        elseif rest == "reset" then Do.Forget()
+        else say(ns.Learn:Summary()) end
     elseif cmd == "details" then
         if not ns.UI:IsShown() then ns.UI:Open() end
         ns.UI:ToggleDrawer()
@@ -335,16 +417,8 @@ SlashCmdList.AUCTIONMESH = function(input)
         say(M and ("Sweep: %d materials in %d request(s); largest page returned %d results; radar every %ds."):format(M.items, M.requests, M.pageMax, Swarm.cfg.fresh)
             or "Sweep: not measured yet.")
         for _, l in ipairs(ns.Tuner:Lines()) do say(l[1] .. ": " .. l[2]) end
-        if rest == "reset" then
-            local r = AuctionMeshDB.realms[realmKey()]
-            r.tune = {}
-            ns.Tuner:Attach(r.tune)
-            say("Everything learned about the request limit was cleared; measuring again.")
-        elseif rest == "off" or rest == "on" then
-            ns.Tuner.cfg.enabled = rest == "on"
-            cfg.tune = rest == "on"
-            say(rest == "on" and "The addon adjusts its own pace and split again." or "Pace and split are frozen at their current values (still measured).")
-        end
+        if rest == "reset" then Do.Forget()
+        elseif rest == "off" or rest == "on" then Do.Tuning(rest == "on") end
     elseif cmd == "status" then
         local cs, ss = Comm.stats, Sync.stats
         local chatType, target = Comm:Route()
@@ -361,7 +435,6 @@ SlashCmdList.AUCTIONMESH = function(input)
                 Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
         end
     else
-        say("/amesh = open the window | details | learn | limits [on|off|reset] | trends | dock on/off | vendor (vendor-only mode on/off) | auto on/off | margin <pct> | log | restore | track <item> [cost] | status")
-        say("Sharing: /amesh channel <name> [password] | guild | sync.   Scanning: /amesh scope money/all | swarm | focus <types>")
+        say("Everything is on the panel's Setup tab; no commands are needed. /amesh opens and closes the panel.")
     end
 end

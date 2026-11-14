@@ -30,12 +30,12 @@ Open the auction house. The panel opens inside the auction house window and pric
 
 * **Trades** is the money and the market: what you have, deals you can buy right now, and your own auctions.
 * **Bags** is what you hold and the one thing to do with each item: post it, sell it to a vendor, collect it from the mailbox, or wait.
-* **Setup** has the settings, what the request engine has learned, and recent activity.
+* **Setup** has a control for every setting, and what the request engine has learned. No chat commands are needed.
 * The mouse wheel scrolls a list that is longer than the panel.
 
 ### Where the panel lives
 
-With the auction house open, the panel is **inside the auction house window**: it covers the content area, is exactly that window's size, and opens, moves and closes with it. An **AuctionMesh** tab under the window switches between the game's own screens and the panel; clicking any of the game's tabs also switches back. At a vendor or mailbox it appears as a compact separate window. `/amesh dock off` makes it a separate window everywhere.
+With the auction house open, the panel is **inside the auction house window**: it covers the content area, is exactly that window's size, and opens, moves and closes with it. An **AuctionMesh** tab under the window switches between the game's own screens and the panel; clicking any of the game's tabs also switches back. At a vendor or mailbox it appears as a compact separate window. The **The panel** button on the Setup tab makes it a separate window everywhere.
 
 ### NEXT: one instruction
 
@@ -85,7 +85,7 @@ The bar at the top right is on every tab.
 
 ### Details: the drawer on the right
 
-A slim **DETAILS** handle sits on the panel's right edge. Clicking it slides a second panel out to the right (click again, or `/amesh details`, to hide it). The mouse wheel scrolls it.
+A slim **DETAILS** handle sits on the panel's right edge. Clicking it slides a second panel out to the right (click again to hide it). The mouse wheel scrolls it.
 
 ```
  ALL TRADES
@@ -124,9 +124,29 @@ A slim **DETAILS** handle sits on the panel's right edge. Clicking it slides a s
 | Listed, undercut by more, repost not worth it | Wait: says what going under would leave |
 | No longer listed | Sold (invoice seen, gold on its way), or "sold or expired, a mailbox visit tells which" |
 
-* **Click any item row** in the main panel and the drawer shows that item alone: cheapest listing and its age, market price from the full listing, 24h change, units sold per hour, what buyers really paid, vendor price, why the last check was or wasn't a deal, then your trades in it. **All trades** goes back.
+* The drawer has three views, **Trades | Activity | Market**. Activity is the log of everything that happened to your gold and items; Market lists the biggest 24-hour price moves and what sells fastest.
+* **Click any item row** in the main panel and the drawer shows that item alone: cheapest listing and its age, market price from the full listing, 24h change, units sold per hour, what buyers really paid, vendor price, why the last check was or wasn't a deal, then your trades in it. **Trades** goes back.
 
 The addon never cancels an auction itself; a "cancel and post again" recommendation is something you do in the game's own Auctions tab.
+
+### Setup: every control in one place
+
+Nothing has to be typed in chat. The Setup tab has a control for everything that can be changed, each showing its current value:
+
+| Control | What it does |
+|---|---|
+| Smallest profit worth showing a deal for | Two boxes, silver and copper. Smaller deals are hidden |
+| Profit a flip must leave after the auction house cut | A percentage box. Self-tuning nudges it from how trades turn out |
+| What to look for | Vendor deals + flips, or vendor deals only (every deal guaranteed) |
+| What the radar reads | Click to change: crafting materials (fastest), all money-makers, whole auction house |
+| The panel | Inside the auction house window or a window of its own; opens by itself on or off |
+| Share prices with friends | Channel name, password, **Join**; or **Use my guild**. The line underneath says who you are connected to |
+| Self-tuning | One switch for the pace, the split of requests and the profit bar. **Forget what was learned** needs a second click |
+| If something looks wrong | **Log**, **Last session's log**, **Rebuild from purchases** |
+
+Hovering a button explains it. Below the controls is everything the request engine has learned.
+
+To track an item you bought some other way, drag it from your bags onto the panel.
 
 ### The columns
 
@@ -147,7 +167,7 @@ The addon never cancels an auction itself; a "cancel and post again" recommendat
 * An auction you post is shown on the Trades tab under **LISTED** with its quantity, cost, your price and expected profit. It moves under **STUCK LISTINGS** when the latest radar read saw someone cheaper, and under **ENDED, CHECK A MAILBOX** when it is no longer among your auctions.
 * **Banked so far** (bottom of the Trades tab) is profit actually made: vendor sales, plus auction sales once you collect the gold (sale price minus the auction house cut minus what you paid).
 
-### Recent activity (Setup tab)
+### Recent activity (drawer, Activity view)
 
 Everything that happened to your gold and items, newest first: "Bought: 7 x … for 1s 40c", "Collected from mailbox: 7 x … is now in your bags", "Posted 1x Wool Cloth at 1s 60c", "Sold: …", and purchases that did not complete.
 
@@ -162,14 +182,14 @@ Only deals that were just checked against the live listings appear here, with th
   3. You buy **every** cheap unit, so none are left to undercut you. One exception for a small purse: if the whole cheap pile is at most 10% of the real market, you may buy the part you can afford (the row says how many cheap ones are left).
   4. The cheap units are at most half the size of the real market.
   5. It uses at most half your gold (all of it while you have under 1 gold).
-  6. Profit is at least 20% after the 5% AH cut (`/amesh margin 30` changes it). The posting fee is kept aside, not subtracted, because it comes back on sale.
+  6. Profit is at least 20% after the 5% AH cut (the Setup tab's flip profit box changes it). The posting fee is kept aside, not subtracted, because it comes back on sale.
   10. **Volume.** The item must have been seen selling. The watch list re-reads each listing about once a minute; units that disappear from the cheap end between two readings were bought by someone. A flip is offered only when, at that measured rate, what you buy would sell within 60 minutes. Until an item has been watched for about two minutes it shows "measuring how fast it sells"; if nothing sold, "not a popular item".
   9. Never goods that NPC vendors sell in unlimited supply (food, drink, thread, dyes, vials…), because their price can't hold above the vendor's.
   7. If there's market-price history (readings at least 30 minutes apart), the resale price can't exceed its average.
   8. If real sales are on record, the resale price can't exceed what buyers actually paid.
 * **Buy** asks the server for the real total; then you press **Confirm**. If the total is even 1c above what was checked, the purchase is cancelled and the deal is re-checked.
 * A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
-* The **What to look for** button on the Setup tab switches between **Vendor only** (every deal is guaranteed) and **Vendor + Flips**. `/amesh vendor` does the same. In vendor-only mode no flip checks are made, so more of the search budget goes to vendor deals.
+* The **What to look for** button on the Setup tab switches between **Vendor only** (every deal is guaranteed) and **Vendor + Flips**. In vendor-only mode no flip checks are made, so more of the search budget goes to vendor deals.
 
 ### The request limit, and how the addon spends it
 
@@ -192,7 +212,7 @@ What the addon does with that:
 
 ### The request engine learns
 
-The server's limit can't be beaten, so the addon learns how to spend it. Everything below is measured on your realm, remembered between sessions, shown on the **Setup** tab and printed by `/amesh limits`.
+The server's limit can't be beaten, so the addon learns how to spend it. Everything below is measured on your realm, remembered between sessions, and shown on the **Setup** tab.
 
 | What is learned | How | What it changes |
 |---|---|---|
@@ -205,7 +225,7 @@ The server's limit can't be beaten, so the addon learns how to spend it. Everyth
 
 With friends connected, the measured figures are sent on the channel every 10 minutes at most. A friend who has just installed the addon starts from them and then measures for themselves.
 
-These are fixed, bounded rules fed by measurements, not a neural network. `/amesh limits off` freezes the pace and the split (measuring continues), `/amesh limits on` resumes, and `/amesh limits reset` forgets everything learned. The **Self-tuning** button on the Setup tab does the same as on/off.
+These are fixed, bounded rules fed by measurements, not a neural network. The **Self-tuning** button on the Setup tab freezes the pace, the split and the profit bar where they are (measuring continues); **Forget what was learned** clears it all and needs a second click.
 
 What one radar read really costs (items returned, requests used, largest page) is also measured and shown in the radar line: "Radar: 212 items in 5 requests, re-read every 11s. limit 1.6/s."
 
@@ -226,11 +246,11 @@ AuctionMesh uses the cheap, wide one as its radar and spends the narrow one only
 
 Compared with re-reading 50 items one by one, this covers every crafting material and uses fewer requests. It should also spot a new cheap listing within one sweep instead of one round. With friends on the same channel the sweep is shared: each category is read by one of you.
 
-The game's full-download scan (`/amesh scan`, one request for the entire auction house, allowed once per 15 minutes) is still available.
+The game's full-download scan (one request for the entire auction house, allowed once per 15 minutes) is not used.
 
 ### Sharing with other players, live
 
-Everyone running AuctionMesh on the same hidden channel (or in the same guild) is one network. Nothing extra to set up beyond `/amesh channel <name> <password>` once per person. What travels between you, within a second or two:
+Everyone running AuctionMesh on the same hidden channel (or in the same guild) is one network. Nothing extra to set up beyond typing the same channel name and password into the Setup tab once per person. What travels between you, within a second or two:
 
 | Shared | What it does for you |
 |---|---|
@@ -261,7 +281,7 @@ The addon predicts a resale price for every flip. It now checks every prediction
 | **Item record** | An item that expired is not flipped again for 12 hours; 24 after two failures in a row | Up to 48 hours; a sale clears it |
 | **Profit bar** | Under 70% of the last 20 flips sold: bar goes up 5 points. Over 90% sold: down 2 points | Between 12% and 50%; reconsidered once per 10 results |
 
-`/amesh learn` prints the current state, for example: "Learning from 23 finished flips (9 yours, 14 from friends): 87% of the last 20 sold, sales came in at 96% of the planned price. Profit bar: 22%." The bottom of the Setup tab shows the same line. `/amesh learn off` stops the profit bar adjusting itself; `/amesh learn reset` clears what was learned.
+The bottom of the Setup tab shows the current state, for example: "Learning from 23 finished flips (9 yours, 14 from friends): 87% of the last 20 sold, sales came in at 96% of the planned price. Profit bar: 22%."
 
 This is scorekeeping and calibration, not a neural network. It needs finished flips to learn from, so it changes nothing at first, and it learns faster the more people on the channel are trading.
 
@@ -274,7 +294,7 @@ AuctionMesh keeps a database of price history inside its own saved data (an addo
   * a deal on an item whose market price fell 10% or more in about 6 hours is refused ("price is falling fast");
   * a slower decline lowers the planned resale price by the same amount;
   * a rising price changes nothing (no optimism is added).
-* **Where you see it:** the MARKET column on the Trades tab shows the 24-hour change next to the price; hovering a deal shows the 6h and 24h change and the 24h range; item tooltips show the 7-day range; `/amesh trends` lists the ten biggest movers.
+* **Where you see it:** the MARKET column on the Trades tab shows the 24-hour change next to the price; hovering a deal shows the 6h and 24h change and the 24h range; item tooltips show the 7-day range; the drawer's **Market** view lists the biggest movers.
 * **Size:** about three numbers per item-hour, only for items that have had a full reading. It is trimmed to 7 days at login.
 
 It needs a few hours of readings before trends appear. The optional central server still stores only the latest price per item; adding history there is a possible next step if you run it.
@@ -323,8 +343,8 @@ The top line of the window shows the result of your last click for 10 seconds, s
 
 ### If something goes wrong
 
-* Press **Log** (or type `/amesh log`), then Ctrl+A, Ctrl+C, and paste it to Claude. It records every auction house call, every error, and every decision (which listings a deal was based on, quotes, purchases, posts).
-* `/amesh restore` rebuilds the Bags list from your purchase log.
+* Press **Log** on the Setup tab, then Ctrl+A, Ctrl+C, and paste it to Claude. It records every auction house call, every error, and every decision (which listings a deal was based on, quotes, purchases, posts).
+* **Rebuild from purchases** on the Setup tab rebuilds the Bags list from your purchase log. To track anything else, drag it from your bags onto the panel.
 * All requests go through one queue, so your clicks go first and background scanning slows down automatically after an "Internal auction error".
 
 ## What WoW lets addons do
@@ -346,17 +366,15 @@ Since bandwidth is the scarce resource, the protocol is built to save bytes:
 
 ## Swarm scanning (the speed feature)
 
-Scanning starts automatically when the AH opens (`/amesh swarm` turns it off or on):
+Scanning starts automatically when the AH opens:
 
 1. The AH is split into about 100 work units, one per item class or subclass (Herbs, Ore, Cloth, Potions, Plate…).
 2. Each friend claims the **stalest unclaimed** unit and browses it. One `SendBrowseQuery` returns the lowest price and listed quantity of every item in that category. When it's finished, the friend marks it done and the prices go out over the mesh.
 3. Every player has their **own** query throttle, so the swarm scales with the number of people. Faster players automatically claim more units.
 4. Units that anyone scanned in the last 5 minutes are skipped. When everything is fresh, the swarm waits, so you get a continuous rolling scan instead of one big scan every 15 minutes.
-5. `/amesh focus herbs ore` gives you your own categories, which you'll always claim first. Shortcuts: `herbs ore cloth leather cooking elemental enchanting inscription jewelcrafting parts consumables armor weapons gems recipes pets`, or raw `classID[:subClassID]`.
 
 Simulated speedup (100 categories, 1 query per second per player, 1 to 3 pages each): **1 player 212 s → 4 players 53 s → 8 players 29 s**, with no duplicated queries.
 
-The optional `/amesh scan` (the 15-minute `ReplicateItems` full scan) is still available. When anyone runs one, it's announced to the group, so nobody else has to.
 
 Passive capture is always on: every browse page, commodity search and item search you do by hand is shared too.
 
@@ -388,10 +406,10 @@ The server and every client use the same conflict rule: the newer timestamp wins
 ## Install & use
 
 1. Copy the `AuctionMesh` folder into `World of Warcraft/_forever_/Interface/AddOns/`. The folder name may differ on your install; it's the one Auctioneer lives in.
-2. Everyone in the group runs the same command once: `/amesh channel <SecretName> <password>`. Or use `/amesh guild` to go over guild chat instead.
+2. Everyone in the group opens the **Setup** tab once, types the same channel name and password into the two boxes and presses **Join**. Or press **Use my guild** to share with guild members instead.
 3. Open the AH. The window opens and scanning starts by itself. Price lines also show up in item tooltips.
 
-Commands: `/amesh` (open/close the window) `| flips on/off | auto on/off | margin <pct> | log | restore | track <item> [cost] | status | channel <name> [pw] | guild | swarm | focus <types> | scan`
+There are no commands to remember. The panel opens with the auction house; elsewhere, click AuctionMesh in the game's addon list next to the minimap. Everything that can be changed is a control on the **Setup** tab.
 
 ## Tests
 
@@ -409,9 +427,9 @@ python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 ## Known limits / to verify in game
 
 * **Not yet run in the real client.** The protocol logic is tested offline against stubbed WoW APIs. The AH calls follow the retail `C_AuctionHouse` API, which Auctioneer's Forever build also uses.
-* **The request engine's learning is tested with a fake clock only.** The rules (pause steps, trial lengths, split limits) are sensible starting values, not values proven on a live realm. `/amesh limits` and the Setup tab show what it actually measured; the log has a `TUNER` line for every change it makes.
+* **The request engine's learning is tested with a fake clock only.** The rules (pause steps, trial lengths, split limits) are sensible starting values, not values proven on a live realm. The Setup tab shows what it actually measured; the log has a `TUNER` line for every change it makes.
 * **The two "Sold" lines** rely on the game's sale invoices (`seller_temp_invoice` with its arrival time). If this realm delivers sale gold with no delay, "still on its way" simply stays empty.
-* If the client blocks automatic `SendBrowseQuery` (an `ADDON_ACTION_BLOCKED` message appears), the swarm switches to manual mode. Bind a key to `/amesh step`; each press scans one step.
+* If the client blocks automatic `SendBrowseQuery` (an `ADDON_ACTION_BLOCKED` message appears), automatic price reading will not work on this client; tell me and I'll add a button for it.
 * While the swarm runs, it uses the AH browse list, so don't browse by hand at the same time.
 * The sniper never buys by itself. Every purchase is your click, which the game requires anyway. Check the numbers on expensive buys.
 * **Deposits** are counted as a cost, since you lose them if an item doesn't sell. The amount comes from the game's own deposit calculation where that's available. Otherwise it's estimated at 15% of the vendor price, then replaced with the real figure after your first post of that item. Until an item's details have loaded, it's never treated as an AH flip.
