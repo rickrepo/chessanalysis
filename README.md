@@ -221,6 +221,8 @@ Real reports show deals on this realm lasting 1 to 3 seconds, a few lasting 10 t
 | grey `SNIPE BOX: keep the mouse here and keep rolling the wheel` | No deal. Nothing happens yet |
 | green `ARMED  the next deal is bought the moment it appears` / `Wheel detected` | The addon sees your wheel. Keep rolling |
 | the deal, then `BUYING...`, then `GOT IT` or `MISSED` | The first notch after a deal appeared asked the price; the purchase followed by itself (or with the next notch) |
+| grey `Watching. No deal right now.` | Idle. The box shows nothing but sniping; chores such as "visit a mailbox" are on the Bags tab, whose label counts them |
+| orange `4 deals hidden by your 90s 00c minimum profit (best: + 11s 22c)` | Deals exist but your own minimum is hiding them. Lower it on the Setup tab |
 
 Because you are already rolling when the deal appears, there is no reaction time: the purchase starts within a few hundredths of a second of the deal being found. Nothing is bought while there is no deal, the box never buys the same deal twice, and the price check still applies (a deal that got dearer is not bought). Rolling inside the box never scrolls the list.
 
@@ -229,6 +231,16 @@ The mouse resting in the box pauses nothing. It used to: the radar stood still w
 **No key binding is needed** for the wheel; the addon handles it. If you would rather use a key, the game's own Key Bindings screen (Options, Keybindings, AddOns) lists **AuctionMesh: Buy the best deal**; any key bound there presses the box.
 
 **Buy with the mouse wheel.** While a deal is on the button, rolling the mouse wheel anywhere on the panel presses Buy; one flick of the wheel is several presses, which covers both steps. With **Mouse wheel buys: on** (Setup tab, the default) the wheel does this anywhere on screen while a deal is up, and goes back to normal the moment there is none. If the game does not accept the wheel as an input, that switches itself off too.
+
+What the fifth real log showed (version 3.21):
+
+| The log showed | Change |
+|---|---|
+| **One click buys.** The game accepted the purchase the addon sent by itself after the price came back (16 Silk Cloth, bought with one click) | Confirmed in the real game; nothing to change |
+| Silk Cloth clicked 6 and 10 seconds after it appeared; twice the listing had also changed in other ways, so no exact count of leftover units fitted the quote and the deal was dropped as MISSED with about 10 and about 6 cheap units still there | The quote still says roughly how many are left. The deal is offered again for about that many; the server's quote for that smaller request decides, and each further miss halves it. A wrong estimate costs one request and never buys a dear unit |
+| Three misses in a row muted Silk Cloth for 10 minutes: the item that paid best | Five misses in a row, 3 minutes |
+| The total read 92s when 77s was right | See "Why the total can differ from your gold": sale gold collected at the mailbox could stay counted as "waiting" |
+| For several minutes every deal was refused as "under your 90s minimum" | The box now says when your own minimum is hiding deals |
 
 What the fourth real log changed (version 3.19):
 
@@ -312,6 +324,8 @@ So the addon treats your gold as the scarce thing:
 * For a flip in your bags that a vendor would also pay more than cost for, the recommendation gives both: post it (more, an hour later) or sell it to a vendor now (less, at once).
 
 ### Why the total can differ from your gold
+
+**A double count that is fixed (3.21).** Sale gold that had paid out was counted as "Sold: waiting in the mailbox now" until the mailbox was read again at the end of collecting. Walking away from the mailbox before that reading finished left the gold counted twice: as gold in hand and as still waiting (a real total read 92s when 77s was right). Now any gold that arrives while the mailbox is open comes off "waiting" at once, and the mailbox is read before anything is taken.
 
 Gold spent on a flip is not gone, it is somewhere else until the sale pays out. The MONEY section's total counts all of it:
 

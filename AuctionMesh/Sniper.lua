@@ -231,9 +231,17 @@ function Sniper:Evaluate(key, rows, commodity)
     end
     self:Turnover(key, rows)
     local deal, wall, reason = Deals.evaluate(rows, self:DealOptions(key, commodity))
+    do  -- deals that exist but are hidden by your own minimum: counted, so the panel can say so
+        local p = not deal and reason and tonumber(tostring(reason):match("profit %$(%d+) is under your"))
+        if p and p >= 50 then
+            local m = self.underMin
+            if not m or GetTime() - m.at > 600 then m = { n = 0, best = 0 }; self.underMin = m end
+            m.n, m.best, m.at = m.n + 1, math.max(m.best, p), GetTime()
+        end
+    end
     if wall then Sync:ObserveFair(key, wall) end
     if deal and self:Muted(key) then
-        deal, reason = nil, "its deals were taken within a second three times in a row: not shown for 10 minutes"
+        deal, reason = nil, "its deals were missed five times in a row: not shown for 3 minutes"
     end
     if self.buying and self.buying.key == key then
         -- never replace a deal while its purchase is in flight
@@ -246,6 +254,7 @@ function Sniper:Evaluate(key, rows, commodity)
         end
         deal.rowsText = self.RowsText(rows)
         deal.rows = rows
+        deal.hi = wall -- where the ordinary supply sits: the price of a unit that is not part of the deal
         if not self.verified[key] then
             self.stats.deals = self.stats.deals + 1
             if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
@@ -1083,9 +1092,54 @@ function Sniper.Remaining(deal, units, total)
     return nil
 end
 
+-- ABOUT HOW MANY ARE LEFT. When the quote fits no exact number of missing
+-- units (the listing changed in other ways too: new auctions appeared), the
+-- quote still says roughly how many cheap units remain: every cheap unit in
+-- it saves (dear price - cheap price). The deal is offered again for that
+-- many, priced at the dearest cheap unit; the server's quote for THAT request
+-- is what decides, so a wrong estimate costs one request and nothing else.
+-- A second miss on an estimated deal halves it.
+-- (A real log: 31 Silk Cloth at 1s00c-1s07c, clicked 6 seconds late; the quote
+-- came back at 1s64c each, i.e. about 10 were still there. It was reported
+-- MISSED, the next two tries missed the same way and the item was muted.)
+-- Returns units to try, the most they may cost, and a two-step ladder.
+function Sniper.Estimate(deal, units, total)
+    if units <= 1 then return nil end
+    if deal.guess then
+        local n = floor(units / 2)
+        if n < 1 then return nil end
+        local p = deal.rows and deal.rows[1] and deal.rows[1].price or floor(deal.cost / units)
+        return n, n * p, { { price = p, qty = n }, deal.rows and deal.rows[2] or nil }
+    end
+    local rows = deal.rows
+    if not rows and deal.instant and deal.next then
+        rows = { { price = floor(deal.cost / units), qty = units }, { price = deal.next, qty = 1e6 } }
+    end
+    if not rows then return nil end
+    local pmax, seen, hi = rows[1].price, 0, nil
+    for i = 1, #rows do
+        if seen >= units then hi = rows[i].price; break end
+        seen = seen + rows[i].qty
+        pmax = rows[i].price
+    end
+    if not hi or hi <= pmax then hi = deal.hi end -- the ladder ends at the cheap units: use the market's wall
+    if not hi or hi <= pmax then
+        -- nothing says what a dear unit costs: try half, the server decides
+        local n = floor(units / 2)
+        if n < 1 then return nil end
+        return n, n * pmax, { { price = pmax, qty = n } }
+    end
+    local avg = deal.cost / units
+    local n = floor((units * hi - total) / (hi - avg))
+    n = min(n, units - 1)
+    if n < 1 then return nil end
+    return n, n * pmax, { { price = pmax, qty = n }, { price = hi, qty = 1e6 } }
+end
+
 -- Deals of an item that keep being taken before a click can land are not
 -- worth the attention (or the seconds the radar stays quiet for them).
--- Three misses in a row mutes the item for 10 minutes.
+-- Five misses in a row mutes the item for 3 minutes. (It was three misses and
+-- ten minutes, which shut out the item that paid best in a real session.)
 function Sniper:Muted(key)
     local m = self.muted and self.muted[key]
     return m ~= nil and GetTime() < m
@@ -1115,10 +1169,16 @@ function Sniper:OnPriceQuote(unitPrice, total)
         ns.Log("QUOTE MISMATCH %s: wanted %d units; deal was built at %s", tostring(b.key), b.units, tostring(b.deal.rowsText))
         -- Are some of the cheap units still there? Then that is the deal now.
         local left, leftCost, ladder = Sniper.Remaining(b.deal, b.units, total)
+        local guess = false
+        if not (left and left > 0 and left < b.units) then
+            left, leftCost, ladder = Sniper.Estimate(b.deal, b.units, total)
+            guess = left ~= nil
+        end
         if left and left > 0 and left < b.units then
             local d = {}
             for k2, v2 in pairs(b.deal) do d[k2] = v2 end
-            d.units, d.cost, d.rows, d.at, d.leftOf = left, leftCost, ladder, GetTime(), b.units
+            d.units, d.cost, d.rows, d.at, d.leftOf = left, leftCost, ladder, GetTime(), b.deal.leftOf or b.units
+            d.guess = guess or nil
             d.rowsText = ladder and self.RowsText(ladder) or d.rowsText
             if d.kind == "VENDOR" then
                 d.profit = left * d.sell - leftCost
@@ -1128,13 +1188,14 @@ function Sniper:OnPriceQuote(unitPrice, total)
             if d.instant then d.at = GetTime() - VERIFIED_TTL + 8 end
             local need = d.kind == "VENDOR" and 10 or Deals.cfg.minProfit
             if d.profit >= need and leftCost <= GetMoney() then
-                ns.Log("QUOTE says %d of the %d cheap units are still there (cost %d, profit %d): offered again at once", left, b.units, leftCost, d.profit)
+                ns.Log("QUOTE says %s%d of the %d cheap units are still there (cost %s%d, profit %d): offered again at once",
+                    guess and "about " or "", left, b.units, guess and "at most " or "", leftCost, d.profit)
                 ns.Gate.ignoreErrorUntil = GetTime() + 2
                 C_Timer.After(0.4, function() if not Sniper.buying then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end end)
                 self.verified[b.key] = d
                 self.buying = nil
                 if Sniper.hold > 0 then ns.Gate.holdUntil = GetTime() + Sniper.hold end
-                if ns.UI then ns.UI:Notice(("Someone took %d of them. %s%d are still there: click Buy again.|r"):format(b.units - left, "|cff33ff66", left), true) end
+                if ns.UI then ns.UI:Notice(("Someone took some of them. %s%s%d are still there: keep rolling, or click Buy again.|r"):format("|cff33ff66", guess and "About " or "", left), true) end
                 if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
                 return
             end
@@ -1166,12 +1227,12 @@ function Sniper:OnPriceQuote(unitPrice, total)
         self.streak = self.streak or {}
         self.streak[b.key] = (self.streak[b.key] or 0) + 1
         local muted = ""
-        if self.streak[b.key] >= 3 then
+        if self.streak[b.key] >= 5 then
             self.muted = self.muted or {}
-            self.muted[b.key] = GetTime() + 600
+            self.muted[b.key] = GetTime() + 180
             self.streak[b.key] = 0
-            muted = " Third miss in a row on this item: its deals are taken faster than a click can land, so it is not shown for 10 minutes."
-            ns.Log("MUTED %s for 10 minutes: three misses in a row", tostring(b.key))
+            muted = " Fifth miss in a row on this item: it is not shown for 3 minutes."
+            ns.Log("MUTED %s for 3 minutes: five misses in a row", tostring(b.key))
         end
         self:Result("lost", b.key, ("MISSED  %s: someone was faster. It now costs %s for %d. Nothing spent.%s%s"):format(nameOf(b.key), plain(total), b.units,
             b.deal.from == "friend" and " (A friend's radar saw this one first.)" or "", muted))

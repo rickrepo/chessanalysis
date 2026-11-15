@@ -1245,7 +1245,36 @@ do
     S.verified = {}
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
     print("     " .. strip(AuctionMeshSnipeButton.label._text))
-    check(strip(AuctionMeshSnipeButton.label._text):find("^NEXT  Collect 36s54c at a mailbox: sale gold has arrived."), "when a pay-out is due the next step is to collect it")
+    S.underMin = nil; UI:Render()
+    check(strip(AuctionMeshSnipeButton.label._text) == "Watching. No deal right now.", "the snipe box shows nothing but sniping: no 'visit a mailbox' in it")
+    check(strip(AuctionMeshFrame.ledger.rows[2].value._text) == "+ 36s54c", "the gold waiting in the mailbox is in the MONEY rows")
+    do  -- collecting it at the mailbox takes it off "waiting" at once, even if you walk away before the mailbox is read again
+        local Se = ns.Seller
+        AuctionMeshDB.sales = { waiting = 0, pending = { { amount = 980, at = GetServerTime() - 60 }, { amount = 530, at = GetServerTime() - 30 }, { amount = 510, at = GetServerTime() + 900 } } }
+        S.ownSoldPay = {}
+        local w, o = Se:SalesMoney()
+        check(w == 1510 and o == 510, "two sales have paid out (15s10c in the mailbox), one is still on its way (5s10c)")
+        local total0 = gold + w + o
+        Se.goldSeen = gold
+        MailFrame:Show()
+        gold = gold + 980; fire("PLAYER_MONEY")
+        gold = gold + 530; fire("PLAYER_MONEY")
+        MailFrame:Hide() -- closed before any new reading of the mailbox
+        w, o = Se:SalesMoney()
+        check(w == 0 and o == 510 and gold + w + o == total0, "after collecting, the total is unchanged: the gold is counted once (it used to stay in 'waiting' as well)")
+        gold = gold - 1510; Se.goldSeen = gold
+        AuctionMeshDB.sales = nil
+    end
+    do  -- a minimum that hides every deal is pointed out in the box
+        local was = ns.Deals.cfg.minProfit
+        ns.Deals.cfg.minProfit = 9000
+        S.underMin = { n = 4, best = 1122, at = GetTime() }
+        UI:Render()
+        print("     " .. strip(AuctionMeshSnipeButton.label._text))
+        check(strip(AuctionMeshSnipeButton.label._text) == "4 deals hidden by your 90s00c minimum profit (best: + 11s22c). Lower it on the Setup tab.",
+            "a minimum of 90s that hides every deal is said so in the box")
+        ns.Deals.cfg.minProfit = was; S.underMin = nil
+    end
     S.ownSoldPay, S.ownSoldQty = {}, {}
     ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1
 end
@@ -1387,16 +1416,53 @@ do
     check(gold == 5000 - 600 and AuctionMeshDB.flips[2592] and AuctionMeshDB.flips[2592].units == 6, "two more inputs and the 6 are bought")
     AuctionMeshDB.flips[2592] = nil; ns.Journal:Dropped(2592, nil, "test"); LIST[2592] = nil
 
-    -- three misses in a row: the item is left alone for 10 minutes
+    -- the listing changed in other ways too, so no exact count fits: the quote still says about how many are left
+    do
+        local silk = { units = 31, cost = 3268, sell = 150, kind = "VENDOR", rows = rows({ { 100, 7 }, { 107, 35 }, { 195, 50 }, { 196, 80 }, { 197, 1967 } }) }
+        check(S.Remaining(silk, 31, 5095) == nil, "the real Silk Cloth case: a quote of 50s95c for 31 fits no exact number of missing units")
+        local n, most = S.Estimate(silk, 31, 5095)
+        print(("     estimate: about %s left, at most %s"):format(tostring(n), tostring(most)))
+        check(n == 10 and most == 1070, "but it means about 10 of the cheap ones are left (at most 10s70c): that is offered instead of MISSED")
+        local n2 = S.Estimate({ units = 20, cost = 2040, sell = 150, kind = "VENDOR", instant = true, next = 186 }, 20, 3200)
+        check(n2 == 6, "the radar deal from the same log (20 at 1s02c, quote 32s00c): about 6 left")
+        check(S.Estimate({ units = 10, cost = 1070, guess = true, rows = rows({ { 107, 10 }, { 195, 1e6 } }) }, 10, 1500) == 5, "an estimate that misses is halved")
+        check(S.Estimate(silk, 31, 31 * 196) == nil and S.Estimate({ units = 1, cost = 100, rows = rows({ { 100, 1 }, { 195, 9 } }) }, 1, 195) == nil,
+            "a quote entirely at the dear price, or a single unit: nothing to retry")
+        -- in the running addon: Silk Cloth, 31 offered, clicked late; the listing has moved on
+        reset(); gold = 9000; cfg.autoConfirm = nil
+        ITEMS[4306] = { "Silk Cloth", 150 }
+        LIST[4306] = { { 100, 7 }, { 107, 35 }, { 195, 50 }, { 196, 80 }, { 197, 1967 } }
+        S.priority = 4306; advance(1)
+        local d0 = S.verified[4306]
+        check(d0 and d0.kind == "VENDOR" and d0.units == 42, ("42 Silk Cloth under vendor price on offer (%s)"):format(tostring(d0 and d0.units)))
+        LIST[4306] = { { 107, 9 }, { 186, 11 }, { 195, 50 }, { 196, 80 }, { 197, 1967 } } -- 33 were taken, and someone listed 11 at 1s86c
+        S:Press(4306); advance(0.4); UI:Render()
+        local d1 = S.verified[4306]
+        check(d1 and d1.guess and d1.units < 42 and d1.units >= 1 and not (S.result and S.result.kind == "lost"),
+            ("not MISSED: offered again for about %s units"):format(tostring(d1 and d1.units)))
+        for _ = 1, 12 do -- keep pressing: each miss halves the try, until the server sells
+            S:Press(4306); advance(0.5)
+            if S.result and S.result.kind == "won" then break end
+        end
+        local got = AuctionMeshDB.flips[4306] and AuctionMeshDB.flips[4306].units or 0
+        print(("     bought %d Silk Cloth; gold spent %d"):format(got, 9000 - gold))
+        check(got >= 1 and got <= 9 and 9000 - gold == got * 107, "the retries end in a purchase of cheap units only, at 1s07c each, never a dear one")
+        AuctionMeshDB.flips[4306] = nil; ns.Journal:Dropped(4306, nil, "test"); LIST[4306] = nil
+        cfg.autoConfirm = false
+    end
+
+    -- five misses in a row: the item is left alone for 3 minutes
     reset(); gold = 900
     ITEMS[4306] = { "Silk Cloth", 150 }
-    for i = 1, 3 do
+    for i = 1, 5 do
         S.cool = {}
         S.buying = { key = 4306, units = 3, max = 300, phase = "quote", at = GetTime(), deal = { units = 3, cost = 300, sell = 150, kind = "VENDOR", instant = true, next = 188 } }
         S:OnPriceQuote(188, 564)
+        if i == 3 then check(not S:Muted(4306), "three misses in a row no longer mute an item") end
     end
     print("     " .. strip(S.result.text))
-    check(S:Muted(4306) and S.result.text:find("Third miss in a row", 1, true), "Silk Cloth missed three times running: muted for 10 minutes, and the panel says why")
+    check(S:Muted(4306) and S.result.text:find("Fifth miss in a row", 1, true) and S.muted[4306] - GetTime() <= 180,
+        "Silk Cloth missed five times running: muted for 3 minutes, and the panel says why")
     S.ownSweep = { [4306] = { q = 100, p = 190, at = GetTime() - 0.7 } }
     S:OnSweep(4306, 100, 103)
     check(S.verified[4306] == nil, "while muted, its deals are not shown")

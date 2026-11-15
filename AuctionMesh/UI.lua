@@ -513,7 +513,15 @@ function UI:RenderSnipe(short)
         text = c .. res.text .. "|r"
         colour = res.kind == "won" and { 0.2, 1, 0.4 } or res.kind == "lost" and { 1, 0.25, 0.25 } or { 1, 0.5, 0.25 }
     else
-        text = TEAL .. "NEXT|r  " .. nextStep(self.lastDeals or {}, self.lastEntries or {}, short)
+        -- Nothing but sniping in this box. (Chores such as "visit a mailbox"
+        -- used to be shown here; they are on the Bags tab, whose label counts them.)
+        local m = S.underMin
+        if m and GetTime() - m.at < 600 and m.best >= 50 and m.best < ns.Deals.cfg.minProfit then
+            text = ORANGE .. ("%d deal%s hidden by your %s minimum profit (best: + %s). Lower it on the Setup tab.|r"):format(
+                m.n, m.n == 1 and "" or "s", short(ns.Deals.cfg.minProfit), short(m.best))
+        else
+            text = GREY .. (ahOpen() and "Watching. No deal right now.|r" or "Open the auction house to look for deals.|r")
+        end
     end
     self:WheelBind(d ~= nil or b ~= nil) -- also for the whole of a purchase in progress
     local wheel = AuctionMeshDB.cfg.wheel ~= false

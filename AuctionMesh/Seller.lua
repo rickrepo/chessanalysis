@@ -260,9 +260,47 @@ function Seller:CheckSoldByHand(before)
     end
 end
 
+-- Gold arrived while the mailbox is open: it is sale gold that was counted as
+-- "waiting in the mailbox", so it comes off that figure at once. (The figure
+-- used to be corrected only by a full reading of the mailbox at the end of
+-- collecting. Walking away before that reading left the collected gold
+-- counted twice: once as gold in hand, once as still waiting. A real total
+-- read 92s when 77s was right.)
+function Seller:MailGold(delta)
+    local s = AuctionMeshDB.sales
+    if s then
+        local take = min(delta, s.waiting or 0)
+        s.waiting, delta = (s.waiting or 0) - take, delta - take
+        local now, keep = GetServerTime(), {}
+        for _, p in ipairs(s.pending or {}) do
+            if p.at <= now and delta > 0 then
+                local t = min(delta, p.amount)
+                p.amount, delta = p.amount - t, delta - t
+            end
+            if p.amount > 0 then keep[#keep + 1] = p end
+        end
+        s.pending = keep
+    end
+    local S = ns.Sniper
+    if S and S.ownSoldPay and delta > 0 then
+        local t, keep = GetTime(), {}
+        for _, r in ipairs(S.ownSoldPay) do
+            if r.due <= t and delta > 0 then
+                local x = min(delta, r.amount)
+                r.amount, delta = r.amount - x, delta - x
+            end
+            if r.amount > 0 then keep[#keep + 1] = r end
+        end
+        S.ownSoldPay = keep
+    end
+end
+
 function Seller:CollectMail()
     if self.mailBusy then return end
     self.mailBusy = true
+    -- read what is there BEFORE anything is taken, so the figures are current
+    -- even if the mailbox is closed before collecting has finished
+    if (GetInboxNumItems() or 0) > 0 then self:ScanMail() end
     local function step()
         if not mailOpen() then Seller.mailBusy = false; return end
         for i = GetInboxNumItems(), 1, -1 do
@@ -944,11 +982,17 @@ function Seller:Init()
     end
     local f = CreateFrame("Frame")
     for _, e in ipairs({ "MERCHANT_SHOW", "MERCHANT_CLOSED", "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED",
-        "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "BAG_UPDATE_DELAYED", "UI_ERROR_MESSAGE" }) do
+        "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "BAG_UPDATE_DELAYED", "UI_ERROR_MESSAGE", "PLAYER_MONEY" }) do
         f:RegisterEvent(e)
     end
+    Seller.goldSeen = GetMoney()
     f:SetScript("OnEvent", function(_, event, a1, a2)
-        if event == "MERCHANT_SHOW" then
+        if event == "PLAYER_MONEY" then
+            local now = GetMoney()
+            local delta = now - (Seller.goldSeen or now)
+            Seller.goldSeen = now
+            if delta > 0 and mailOpen() then Seller:MailGold(delta); Seller:Refresh() end
+        elseif event == "MERCHANT_SHOW" then
             -- Nothing is sold by itself: the panel opens and waits for your click.
             Seller:Refresh("open")
         elseif event == "MAIL_SHOW" then
