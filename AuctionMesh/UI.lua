@@ -94,8 +94,7 @@ end
 local function fillBuy(r, d, short)
     local S = ns.Sniper
     local units, total = S.NextBuy(d)
-    -- who spotted it: your own radar, or a friend's (who can then also click first)
-    r.name:SetText(S.nameOf(d.key) .. (d.from == "friend" and (ORANGE .. "  friend|r") or (TEAL .. "  you|r")))
+    r.name:SetText(S.nameOf(d.key))
     r.state:SetText("")
     local each = d.units > 0 and d.profit / d.units or 0
     local unit = units > 0 and floor(total / units + 0.5) or 0
@@ -134,7 +133,11 @@ local STATE = {
     -- The Post button is on the row whenever the auction house is open. With
     -- no live price yet, a click on it asks for the price first.
     AH = function(e, ready, busy)
-        if not ahOpen() then return GOLD .. "Open the AH to post|r", nil end
+        if not ahOpen() then
+            -- bought under vendor price but worth more on the auction house: at a vendor it can still be sold, for less
+            if e.vendorAlt and merchantOpen() then return GOLD .. "Worth more on the auction house|r", "Sell" end
+            return GOLD .. (e.vendorAlt and "Post it: worth more than at a vendor|r" or "Open the AH to post|r"), nil
+        end
         if ready then return GOLD .. "Ready to post|r", "Post" end
         if busy then return GREY .. "Checking the price...|r", "Post" end
         return GREY .. "Price check is next|r", "Post"
@@ -241,14 +244,11 @@ local function buyStatus(n)
     if Sw and Sw.active and #Sw.units > 0 then
         local fresh, total = Sw:Coverage()
         local left = Sw:NextRescan() or 0
-        local peers = ns.Sync:PeerCount()
         local M, G = ns.measure and ns.measure.last, ns.Gate
         local measured = M and (" %d items in %d request%s,"):format(M.items, M.requests, M.requests == 1 and "" or "s") or ""
         local limit = G.cycle and (" limit %.1f/s."):format(1 / G.cycle) or ""
-        lines[#lines + 1] = ("%sRadar:%s re-read every %ds (next in %s).%s  %s|r"):format(
-            GREY, measured, Sw.cfg.fresh, clock(left), limit,
-            peers > 0 and (GREEN .. ("Sharing live with %d other player%s."):format(peers, peers == 1 and "" or "s"))
-            or "Not sharing: nobody else is connected (Setup tab, Share with friends).")
+        lines[#lines + 1] = ("%sRadar:%s re-read every %ds (next in %s).%s|r"):format(
+            GREY, measured, Sw.cfg.fresh, clock(left), limit)
     end
     return table.concat(lines, "\n")
 end
@@ -427,56 +427,122 @@ function UI.backIn(d)
     return mins >= 120 and ("%.1f hours"):format(mins / 60) or ("1h %02dm"):format(math.max(0, floor(mins - 60 + 0.5)))
 end
 
--- A notch of the mouse wheel while a deal is on the big button. Returns true
--- if the wheel was used for buying (so it does not also scroll the list).
--- inBox: the wheel was rolled inside the SNIPE BOX. There it never scrolls
--- anything: with no deal up it only marks the box as armed, and the first
--- notch after a deal appears buys it.
-function UI.WheelPress(inBox)
-    if AuctionMeshDB.cfg.wheel == false or UI.tab ~= "BUY" then return false end
+-- HOW YOU BUY (Setup tab, "Buy with"). Buying needs real inputs, and any of
+-- these supplies them:
+--   wheel   roll the mouse wheel in the snipe box (and anywhere while a deal is up)
+--   key     tap a key of your choice; it works anywhere while the Trades tab is open
+--   hold    click the snipe box, then hold any letter key down: each repeat is an input
+--   click   clicks on the snipe box only
+-- Clicking the box works in every mode.
+UI.BUY_MODES = { "wheel", "key", "hold", "click" }
+UI.BUY_NAMES = { wheel = "Mouse wheel", key = "A key: tap it", hold = "A key: hold it down", click = "Clicks only" }
+function UI.BuyMode()
+    local cfg = AuctionMeshDB.cfg
+    local m = cfg.buyMode
+    if not (m and UI.BUY_NAMES[m]) then m = (cfg.wheel == false) and "click" or "wheel" end
+    return m
+end
+
+function UI:SetBuyMode(mode)
+    local cfg = AuctionMeshDB.cfg
+    if not mode then
+        local at = 1
+        for i, m in ipairs(UI.BUY_MODES) do if m == UI.BuyMode() then at = i end end
+        mode = UI.BUY_MODES[at % #UI.BUY_MODES + 1]
+    end
+    if not UI.BUY_NAMES[mode] then return end
+    cfg.buyMode, cfg.wheel = mode, nil
+    if cfg.buyBlocked then cfg.buyBlocked[mode] = nil end -- chosen again by hand: try it again
+    if frame and frame.snipe and frame.snipe.holdBox and mode ~= "hold" then frame.snipe.holdBox:ClearFocus() end
+    self:Notice(mode == "wheel" and "Buy with the mouse wheel: put the mouse in the snipe box and roll."
+        or mode == "key" and (cfg.buyKey and ("Buy with a key: tap %s while the Trades tab is open."):format(cfg.buyKey) or "Buy with a key: now click 'Key' and press the key you want.")
+        or mode == "hold" and "Buy by holding a key: click the snipe box, then hold any letter key down. Esc lets go."
+        or "Buy with clicks on the snipe box only.", true)
+    self:Dirty()
+    return mode
+end
+
+-- The game refused a purchase that came from this kind of input: stop using it.
+function UI:InputBlocked(via)
+    local cfg = AuctionMeshDB.cfg
+    if via == "click" or not UI.BUY_NAMES[via or ""] then return end
+    cfg.buyBlocked = cfg.buyBlocked or {}
+    cfg.buyBlocked[via] = true
+    local to = "click"
+    for _, m in ipairs({ "wheel", "key" }) do
+        if not cfg.buyBlocked[m] and m ~= via and (m ~= "key" or cfg.buyKey) then to = m; break end
+    end
+    cfg.buyMode, cfg.wheel = to, nil
+    ns.Log("INPUT '%s' is blocked by the game for buying: switched to '%s'", tostring(via), to)
+    self:Notice(("This game does not accept '%s' as an input for buying. Switched to '%s' (Setup tab, Buy with)."):format(UI.BUY_NAMES[via], UI.BUY_NAMES[to]), true)
+    self:Dirty()
+end
+
+-- ONE BUY INPUT: a wheel notch, a tap or a repeat of your key, or a click.
+-- inBox: it is meant for the snipe box (a wheel notch elsewhere on the panel
+-- only counts while a deal is up; otherwise it scrolls the list).
+-- Returns true if the input was used for buying.
+function UI.InputPress(inBox, via)
+    via = via or "wheel"
+    if UI.tab ~= "BUY" then return false end
+    if via == "wheel" and UI.BuyMode() ~= "wheel" then return false end
     local S = ns.Sniper
+    local now = GetTime()
+    S.inputVia = via
+    if via ~= "click" then S.inputAt = now end -- so a blocked input can be traced to what sent it
     local key = S:Target()
     if not (key and (S.verified[key] or S.buying)) then
         if inBox then
-            local now = GetTime()
             local was = UI.wheelSeen
             UI.wheelSeen = now
             if not was or now - was > 0.7 then
                 S.tally.armed = (S.tally.armed or 0) + 1
-                ns.Log("ARMED: the wheel is rolling in the snipe box (%s)", S:StakeKey() and "stake-out: every notch asks the staked item's price" or "snipe mode: radar and alerts only")
-                UI:Dirty() -- show ARMED; no redraw per notch
+                ns.Log("ARMED by %s in the snipe box (%s)", via, S:StakeKey() and "stake-out: every input asks the staked item's price" or "snipe mode: radar and alerts only")
+                UI:Dirty() -- show ARMED; no redraw per input
             end
-            S.wheelAt = now
-            S:StakeNotch() -- with an item staked out, this notch asks its price
+            S:StakeNotch() -- with an item staked out, this input asks its price
             return true
         end
         return false
     end
-    if inBox then UI.wheelSeen = GetTime() end
-    S.wheelAt = GetTime()
+    if inBox then UI.wheelSeen = now end
     S:Press()
     return true
 end
+function UI.WheelPress(inBox) return UI.InputPress(inBox, "wheel") end
 
--- True while the wheel is being rolled in the snipe box: a notch in the last
--- 0.7 seconds. (It was 1.5 seconds, and with the redraw on top the box went
--- on saying the wheel was seen for two seconds after it had stopped.)
+-- True while buy inputs are arriving in the snipe box: one in the last 0.7
+-- seconds. (It was 1.5 seconds, and with the redraw on top the box went on
+-- saying it was armed for two seconds after the inputs had stopped.)
 function UI.Armed()
     return UI.wheelSeen ~= nil and GetTime() - UI.wheelSeen < 0.7
 end
 
--- While a deal is on the big button, the wheel buys wherever the mouse is
--- (over the game world too), not only over the panel.
-function UI:WheelBind(on)
-    on = on and AuctionMeshDB.cfg.wheel ~= false or false
-    if on == (self.wheelBound or false) then return end
+-- Key bindings that exist only while they are wanted:
+--   the wheel, anywhere, while a deal is up or a purchase is in progress (wheel mode);
+--   your key, anywhere, while the Trades tab is open (key mode).
+function UI:BindInputs(dealUp, off)
+    if not frame then return end
+    local cfg = AuctionMeshDB.cfg
+    local mode = UI.BuyMode()
+    local live = not off and self.tab == "BUY" and frame:IsShown()
+    local wantWheel = (live and mode == "wheel" and dealUp) and true or false
+    local wantKey = (live and mode == "key" and cfg.buyKey and cfg.buyKey ~= "" and not self.capturingKey) and cfg.buyKey or false
+    if wantWheel == (self.wheelBound or false) and wantKey == (self.keyBound or false) then return end
     if InCombatLockdown and InCombatLockdown() then return end
-    self.wheelBound = on
-    if on and SetOverrideBindingClick then
-        SetOverrideBindingClick(frame, true, "MOUSEWHEELUP", "AuctionMeshSnipeButton", "WHEEL")
-        SetOverrideBindingClick(frame, true, "MOUSEWHEELDOWN", "AuctionMeshSnipeButton", "WHEEL")
-    elseif ClearOverrideBindings then
-        ClearOverrideBindings(frame)
+    if wantWheel ~= (self.wheelBound or false) then
+        self.wheelBound = wantWheel
+        if wantWheel and SetOverrideBindingClick then
+            SetOverrideBindingClick(frame, true, "MOUSEWHEELUP", "AuctionMeshSnipeButton", "WHEEL")
+            SetOverrideBindingClick(frame, true, "MOUSEWHEELDOWN", "AuctionMeshSnipeButton", "WHEEL")
+        elseif ClearOverrideBindings then
+            ClearOverrideBindings(frame)
+        end
+    end
+    if wantKey ~= (self.keyBound or false) then
+        self.keyBound = wantKey
+        if ClearOverrideBindings then ClearOverrideBindings(frame.snipe) end
+        if wantKey and SetOverrideBindingClick then SetOverrideBindingClick(frame.snipe, true, wantKey, "AuctionMeshSnipeButton", "KEY") end
     end
 end
 
@@ -496,7 +562,11 @@ function UI:RenderSnipe(short)
     local show = self.tab == "BUY"
     sn:SetShown(show)
     frame.next:SetShown(self.tab == "SELL")
-    if not show then self:WheelBind(false); return end
+    if not show then
+        self:BindInputs(false, true)
+        if sn.holdBox then sn.holdBox:ClearFocus() end
+        return
+    end
     local key = S:Target()
     local d = key and S.verified[key]
     local last = S.result -- stays on the panel until the next outcome
@@ -508,9 +578,8 @@ function UI:RenderSnipe(short)
         local units, total = S.NextBuy(d)
         local back = d.kind == "VENDOR" and " (guaranteed; gold back at the next vendor)"
             or (" (gold back in about %s)"):format(UI.backIn(d))
-        local what = ("%s x%d%s    pay %s    make + %s%s    %s"):format(S.nameOf(d.key), units,
-            d.leftOf and (ORANGE .. (" (%d of %d still there)|r"):format(units, d.leftOf)) or "", short(total), short(d.profit), back,
-            d.from == "friend" and (ORANGE .. "spotted by a friend|r") or (TEAL .. "spotted by you|r"))
+        local what = ("%s x%d%s    pay %s    make + %s%s"):format(S.nameOf(d.key), units,
+            d.leftOf and (ORANGE .. (" (%d of %d still there)|r"):format(units, d.leftOf)) or "", short(total), short(d.profit), back)
         if S:OneClick(key) then
             text, colour, fill = GREEN .. "BUY NOW|r    " .. what, { 0.2, 1, 0.4 }, { 0.05, 0.22, 0.10 }
         elseif b and b.key == key and b.phase == "wait" then
@@ -547,21 +616,44 @@ function UI:RenderSnipe(short)
             text = GREY .. (ahOpen() and "Watching. No deal right now.|r" or "Open the auction house to look for deals.|r")
         end
     end
-    self:WheelBind(d ~= nil or b ~= nil) -- also for the whole of a purchase in progress
-    local wheel = AuctionMeshDB.cfg.wheel ~= false
-    local armed = wheel and UI.Armed()
+    self:BindInputs(d ~= nil or b ~= nil) -- the wheel stays bound for the whole of a purchase in progress
+    local mode = UI.BuyMode()
+    local armed = UI.Armed()
     if armed and not d then
         -- rolling with nothing to buy yet: say that it is working
         colour, fill = { 0.2, 1, 0.4 }, { 0.04, 0.14, 0.07 }
         if not res and not S:StakeKey() then text = GREEN .. "ARMED|r    the next deal is bought the moment it appears    " .. GREY .. "radar only: nothing else is being sent|r" end
     end
     sn.label:SetText(text)
-    sn.hint:SetText(not wheel and (GREY .. "Click here to buy the deal shown. (Mouse wheel buying is off: Setup tab.)|r")
-        or (armed and S:StakeKey()) and (GREEN .. "Rolling: every notch asks the server this item's price and buys if it is low. The radar is off meanwhile.|r")
-        or (S:StakeKey() and not d) and (GREY .. "Roll the wheel in this box to run the stake-out. Stop it in the drawer (click the item).|r")
-        or armed and (GREEN .. "Rolling. Keep going: it stops being armed when the wheel stops.|r")
-        or d and (GREY .. "Roll the mouse wheel here (or anywhere), or click: it buys.|r")
-        or (GREY .. "SNIPE BOX, not armed: put the mouse here and keep rolling the wheel. A deal is bought the moment it appears.|r"))
+    do  -- one line under it: how to buy, in the mode you chose
+        local cfg = AuctionMeshDB.cfg
+        local how
+        if mode == "wheel" then
+            how = d and "Roll the mouse wheel here (or anywhere), or click: it buys."
+                or "put the mouse here and keep rolling the wheel"
+        elseif mode == "key" then
+            how = cfg.buyKey and ("tap " .. cfg.buyKey .. " (it works anywhere while this tab is open), or click here")
+                or "no key chosen yet: Setup tab, Key"
+        elseif mode == "hold" then
+            how = self.holdFocus and "hold any letter key down; Esc lets go (keys go to this box meanwhile)"
+                or "click this box, then hold any letter key down"
+        else
+            how = "click here"
+        end
+        local hint
+        if armed and S:StakeKey() then
+            hint = GREEN .. "Stake-out running: every input asks the server this item's price and buys if it is low. The radar is off meanwhile.|r"
+        elseif S:StakeKey() and not d then
+            hint = GREY .. "Stake-out: " .. how .. ". Stop it in the drawer (click the item).|r"
+        elseif armed then
+            hint = GREEN .. "Armed. Keep going: it stops being armed when the inputs stop.|r"
+        elseif d then
+            hint = GREY .. (mode == "wheel" and how or ("To buy: " .. how .. ".")) .. "|r"
+        else
+            hint = GREY .. "SNIPE BOX, not armed: " .. how .. ". A deal is bought the moment it appears.|r"
+        end
+        sn.hint:SetText(hint)
+    end
     sn.fill:SetColorTexture(fill[1], fill[2], fill[3], 1)
     UI.outline(sn, colour)
     -- The line under the button never leaves you guessing: the last outcome
@@ -597,55 +689,59 @@ function UI:RenderBar()
     bar.fill:SetWidth(math.max(1, w))
     if st.mode == "try" then bar.fill:SetColorTexture(1, 0.55, 0.25, 1)
     else bar.fill:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 1) end
-    local friends = #ns.Sync:Peers()
-    frame.barText:SetText((st.mode == "try" and ORANGE or GREY) .. st.text .. "|r"
-        .. (AuctionMeshDB.cfg.share ~= true and (GREY .. "  sharing off|r")
-            or friends > 0 and ("  %s%d friend%s connected|r"):format(GREEN, friends, friends == 1 and "" or "s") or (GREY .. "  no friends connected|r")))
+    frame.barText:SetText((st.mode == "try" and ORANGE or GREY) .. st.text .. "|r")
     self.barState = st
 end
 
 -- Setup tab: every control shows its current value; then what the engine has learned.
+-- Waiting for a key press (Setup, Key) ends when the Setup tab is left.
+function UI:StopKeyCapture()
+    if not self.capturingKey then return end
+    self.capturingKey = false
+    local k = frame and frame.setup and frame.setup.key
+    if k and k.EnableKeyboard then k:EnableKeyboard(false) end
+end
+
 function UI:RenderSetup()
     local sp, cfg = frame.setup, AuctionMeshDB.cfg
     sp.flips:SetText(ns.Deals.cfg.flips and "Vendor deals + flips" or "Vendor deals only")
     sp.scope:SetText(ns.Do.SCOPE_NAMES[cfg.scope] or ns.Do.SCOPE_NAMES.mats)
-    sp.tied:SetText(("Flips may tie up: %d%%"):format(floor(ns.Deals.cfg.maxTied * 100 + 0.5)))
+    sp.tied:SetText(("%d%% of what you own"):format(floor(ns.Deals.cfg.maxTied * 100 + 0.5)))
     sp.dock:SetText(cfg.dock ~= false and "Inside the auction house" or "A window of its own")
     sp.auto:SetText(cfg.autoOpen and "Opens by itself: on" or "Opens by itself: off")
-    sp.tune:SetText(ns.Tuner.cfg.enabled and "Self-tuning: on" or "Self-tuning: off")
-    sp.wheel:SetText(cfg.wheel == false and "Mouse wheel buys: off" or "Mouse wheel buys: on")
+    sp.tune:SetText(ns.Tuner.cfg.enabled and "Auto-adjust: on" or "Auto-adjust: off")
+    do  -- how you buy
+        local mode = UI.BuyMode()
+        sp.buy:SetText(UI.BUY_NAMES[mode])
+        sp.key:SetText(self.capturingKey and "Press a key... (Esc cancels)" or (cfg.buyKey and ("Key: " .. cfg.buyKey) or "Not set: click, then press a key"))
+        UI.outline(sp.key, self.capturingKey and ACCENT or LINE)
+    end
     do
         local _, flist = ns.Sniper:FocusSet()
         local mode = cfg.focusMode or "off"
         sp.focus:SetText(ns.Scout.MODE_NAMES[mode] .. ((mode ~= "off" and #flist > 0) and (" (%d)"):format(#flist) or ""))
     end
     sp.forget:SetText((self.forgetUntil and GetTime() < self.forgetUntil) and "Click again to forget" or "Forget what was learned")
-    do
-        local text, state = ns.Do.SharingText()
-        sp.share:SetText((state == "ok" and GREEN or state == "alone" and ORANGE or state == "quiet" and GREY or RED) .. text .. "|r")
-        sp.shareOn:SetText(cfg.share == true and "Sharing: on" or "Sharing: off")
-        UI.outline(sp.shareOn, cfg.share == true and ACCENT or LINE)
-    end
     if not sp.margin:HasFocus() then sp.margin:SetText(tostring(cfg.margin or floor(ns.Deals.cfg.margin * 100 + 0.5))) end
-    if not sp.chan:HasFocus() and not sp.pass:HasFocus() and not self.chanFilled then
-        -- shown once; after that the boxes are yours to type in
-        sp.chan:SetText(cfg.route == "channel" and (cfg.channel or "") or "")
-        sp.pass:SetText(cfg.route == "channel" and (cfg.password or "") or "")
-        self.chanFilled = true
-    end
-    local lines = ns.Tuner:Lines()
-    do  -- what the auto-adjust last changed, first, so it is never a surprise
-        local a = ns.Auto and ns.Auto:Lines(2) or {}
+    -- three lines: what auto-adjust last did, the server's limit, the radar
+    local lines = {}
+    do
+        local a = ns.Auto and ns.Auto:Lines(1) or {}
         if cfg.tune == false then
-            table.insert(lines, 1, { "Auto-adjust", "off: nothing changes by itself (Self-tuning switch above)" })
+            lines[1] = { "Auto-adjust", "off: nothing changes by itself" }
         elseif #a == 0 then
-            table.insert(lines, 1, { "Auto-adjust", "on: watching. Smallest profit is reviewed every 10 minutes of use" })
+            lines[1] = { "Auto-adjust", "on: watching. Smallest profit is reviewed every 10 minutes of use" }
         else
-            for i = #a, 1, -1 do
-                local age = GetServerTime() - a[i].t
-                table.insert(lines, 1, { i == 1 and "Auto-adjust, last change" or "Auto-adjust, before that",
-                    a[i].m .. "  (" .. (age < 90 and (age .. "s") or (floor(age / 60) .. " min")) .. " ago)" })
-            end
+            local age = GetServerTime() - a[1].t
+            lines[1] = { "Auto-adjust, last change", a[1].m .. "  (" .. (age < 90 and (age .. "s") or (floor(age / 60) .. " min")) .. " ago)" }
+        end
+        local t = ns.Tuner:Lines()
+        if t[1] then lines[2] = t[1] end
+        local M = ns.measure and ns.measure.last
+        if M then
+            lines[3] = { "Radar", ("%d items in %d request%s, re-read about every %ds"):format(M.items, M.requests, M.requests == 1 and "" or "s", ns.Swarm.cfg.fresh) }
+        elseif t[2] then
+            lines[3] = t[2]
         end
     end
     for i = 1, #sp.rows do
@@ -790,7 +886,8 @@ local function rowButton(self)
         ns.Sniper:Press(item.key)
     else
         local Se = ns.Seller
-        if item.action == "AH" then Se:Post(item.key)
+        if item.action == "AH" and item.vendorAlt and merchantOpen() and not ahOpen() then Se:SellVendor(item.key)
+        elseif item.action == "AH" then Se:Post(item.key)
         elseif item.action == "VENDOR" then Se:SellVendor(item.key)
         elseif item.action == "HOLD" then Se.prices[item.key] = nil; Se.priority = item.key
         end
@@ -806,9 +903,7 @@ local function rowEnter(self)
     if not item.action then
         GameTooltip:AddLine(item.kind == "VENDOR" and (GREEN .. "Your gold is back as soon as you sell it to a vendor.|r")
             or (GOLD .. "Your gold is out of reach for about " .. UI.backIn(item) .. ": until it sells, plus the hour the auction house takes to pay.|r"), 1, 1, 1, true)
-        GameTooltip:AddLine(item.from == "friend"
-            and (ORANGE .. "Spotted by a friend's radar and passed on over the channel. They saw it before you, so they can also click before you.|r")
-            or (TEAL .. "Spotted by your own radar" .. (item.instant and ", shown without an item check" or "") .. ".|r"), 1, 1, 1, true)
+        if item.instant then GameTooltip:AddLine(TEAL .. "Shown straight from the radar, without an item check. The server's price decides when you buy.|r", 1, 1, 1, true) end
     end
     local st, dt = self.state:GetText(), self.detail:GetText()
     if st and st ~= "" then GameTooltip:AddLine(st, 1, 1, 1, true) end
@@ -1002,8 +1097,8 @@ function UI:Create()
     frame.closeBtn:SetScript("OnClick", function() UI:Close() end)
 
     -- tabs (positioned in Place(): next to the title when floating, at the left edge when docked)
-    frame.tabBuy = makeTab(frame, "Trades", function() UI.tab = "BUY"; UI:Render() end)
-    frame.tabSell = makeTab(frame, "Bags", function() UI.tab = "SELL"; UI:Render() end)
+    frame.tabBuy = makeTab(frame, "Trades", function() UI:StopKeyCapture(); UI.tab = "BUY"; UI:Render() end)
+    frame.tabSell = makeTab(frame, "Bags", function() UI:StopKeyCapture(); UI.tab = "SELL"; UI:Render() end)
     frame.tabHist = makeTab(frame, "Setup", function() UI.tab = "HISTORY"; UI:Render() end)
     frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", 6, 0)
     frame.tabHist:SetPoint("LEFT", frame.tabSell, "RIGHT", 6, 0)
@@ -1056,9 +1151,14 @@ function UI:Create()
     frame.next:SetJustifyH("LEFT"); frame.next:SetWordWrap(false)
 
     -- THE BIG BUY BUTTON: fixed place, always the best deal, safe to spam
-    local sn = button(frame, 100, "", function(_, btn)
-        if btn == "WHEEL" then ns.Sniper.wheelAt = GetTime() end
-        ns.Sniper:Press()
+    local sn = button(frame, 100, "", function(self, btn)
+        if btn == "WHEEL" then UI.InputPress(true, "wheel")
+        elseif btn == "KEY" then UI.InputPress(true, "key")
+        else
+            -- a click on the box: in "hold a key" mode it also gives the box the keyboard
+            if UI.BuyMode() == "hold" and self.holdBox then self.holdBox:SetFocus() end
+            UI.InputPress(true, "click")
+        end
     end, "AuctionMeshSnipeButton")
     sn:SetHeight(46)
     -- Buying takes two messages to the server (ask the price, then buy) and the
@@ -1069,7 +1169,26 @@ function UI:Create()
     -- first notch after the answer buys.
     if sn.RegisterForClicks then sn:RegisterForClicks("AnyDown", "AnyUp") end
     sn:EnableMouseWheel(true)
-    sn:SetScript("OnMouseWheel", function() UI.WheelPress(true) end)
+    sn:SetScript("OnMouseWheel", function() UI.InputPress(true, "wheel") end)
+    -- HOLD A KEY. The game does not repeat a key binding while the key is held,
+    -- but it does repeat typed characters. So in this mode the box takes the
+    -- keyboard (after a click on it) and every repeat of a held letter is one
+    -- buy input. Whether the game accepts those repeats for buying is not known
+    -- yet: if it blocks one, this mode switches itself off and says so.
+    local hb = CreateFrame("EditBox", nil, sn)
+    hb:SetSize(1, 1)
+    hb:SetPoint("TOPLEFT", 0, 0)
+    hb:SetAutoFocus(false)
+    hb:SetAlpha(0)
+    if hb.SetFontObject then hb:SetFontObject("GameFontHighlightSmall") end
+    hb:SetScript("OnChar", function(self)
+        self:SetText("")
+        if UI.BuyMode() == "hold" then UI.InputPress(true, "hold") else self:ClearFocus() end
+    end)
+    hb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    hb:SetScript("OnEditFocusGained", function() UI.holdFocus = true; UI:Dirty() end)
+    hb:SetScript("OnEditFocusLost", function() UI.holdFocus = false; UI:Dirty() end)
+    sn.holdBox = hb
     sn:SetPoint("TOPLEFT", 12, -178); sn:SetPoint("TOPRIGHT", -12, -178)
     sn.label = sn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     sn.label:SetPoint("TOPLEFT", 10, -8); sn.label:SetPoint("TOPRIGHT", -10, -8)
@@ -1147,92 +1266,141 @@ function UI:Create()
         b:SetScript("OnLeave", function() GameTooltip:Hide() end)
         return b
     end
-    local ROW = 22
-    local function y(n) return -20 - (n - 1) * ROW end
+    -- THE SETUP TAB, in five short groups. Everything that can be changed is
+    -- here; nothing else is. (It used to be eleven unsorted rows, among them
+    -- sharing with friends, two log buttons and eight lines about the request
+    -- engine.)
+    -- Heights: the heading is at 0, the one-line status (what a click just did)
+    -- at -15, then the groups. The last line ends 473 px under the top of the
+    -- panel, above the footer in both the docked and the floating window.
+    local ROW, HEAD = 22, 15
+    local yy = -28
+    local function group(text)
+        yy = yy - 4
+        heading(sp, yy, text)
+        yy = yy - HEAD
+    end
+    local function row(text)
+        local l = setting(yy, text)
+        local at = yy
+        yy = yy - ROW
+        return l, at
+    end
 
-    local L1 = setting(y(1), "Smallest profit worth showing a deal for")
+    group("DEALS")
+    local L, at = row("Smallest profit worth showing")
     frame.minC = box(30, true, 3, "c", function() UI:ApplyMinProfit() end)
-    frame.minC:SetPoint("TOPRIGHT", -12, y(1) + 5)
+    frame.minC:SetPoint("TOPRIGHT", -12, at + 5)
     frame.minS = box(30, true, 3, "s", function() UI:ApplyMinProfit() end)
     frame.minS:SetPoint("RIGHT", frame.minC, "LEFT", -18, 0)
-    upTo(L1, frame.minS)
+    upTo(L, frame.minS)
 
-    local L2 = setting(y(2), "Profit a flip must leave after the auction house cut")
+    L, at = row("Profit a flip must leave after the auction house cut")
     sp.margin = box(30, true, 2, "%", function() ns.Do.Margin(tonumber(sp.margin:GetText())) end)
-    sp.margin:SetPoint("TOPRIGHT", -12, y(2) + 5)
-    sp.wheel = tip(button(sp, 150, "", function()
-        local cfg = AuctionMeshDB.cfg
-        cfg.wheel = cfg.wheel == false
-        UI:Notice(cfg.wheel and "Mouse wheel buys: while a deal is on the big button, a flick of the wheel asks the price and buys."
-            or "Mouse wheel buys: off. The wheel scrolls and zooms as usual; click the Buy button.", true)
-    end), "Buying needs two inputs (ask the price, then buy). With this on, each notch of the mouse wheel is an input while a deal is on the big button, so one flick does both. The wheel goes back to scrolling and zooming as soon as there is no deal.")
-    sp.wheel:SetPoint("RIGHT", sp.margin, "LEFT", -18, 0)
-    upTo(L2, sp.wheel)
+    sp.margin:SetPoint("TOPRIGHT", -12, at + 5)
+    upTo(L, sp.margin)
 
-    local L3 = setting(y(3), "What to look for")
-    sp.flips = tip(button(sp, 170, "", function() UI:SetVendorOnly(ns.Deals.cfg.flips) end),
-        "Vendor deals are guaranteed profit: buy, sell to any vendor. Flips are resold on the auction house and are not guaranteed.")
-    sp.flips:SetPoint("TOPRIGHT", 0, y(3) + 5)
+    L, at = row("Show")
+    sp.flips = tip(button(sp, 190, "", function() UI:SetVendorOnly(ns.Deals.cfg.flips) end),
+        "Vendor deals are guaranteed profit: the item is listed for less than a vendor pays. Flips are resold on the auction house and are not guaranteed.")
+    sp.flips:SetPoint("TOPRIGHT", 0, at + 5)
+    upTo(L, sp.flips)
+
+    L, at = row("Money in unsold auctions, at most")
     sp.tied = tip(button(sp, 190, "", function() ns.Do.MaxTied() end),
         "The most of your money that may sit in auctions that have NOT SOLD yet. Gold from auctions that have sold is on its way and does not count. One flip never takes more than 35% of the gold in hand, and a small flip (15% of it) is always allowed. Click to change: 30%, 50%, 70%, 100%.")
-    sp.tied:SetPoint("RIGHT", sp.flips, "LEFT", -6, 0)
-    upTo(L3, sp.tied)
+    sp.tied:SetPoint("TOPRIGHT", 0, at + 5)
+    upTo(L, sp.tied)
 
-    local L4 = setting(y(4), "What the radar reads")
-    sp.scope = tip(button(sp, 170, "", function() ns.Do.Scope() end),
-        "Click to change. Crafting materials is the fastest. Reading more of the auction house makes each round slower.")
-    sp.scope:SetPoint("TOPRIGHT", 0, y(4) + 5)
-    upTo(L4, sp.scope)
+    group("BUYING")
+    L, at = row("Buy with")
+    sp.buy = tip(button(sp, 190, "", function() UI:SetBuyMode() end),
+        "Click to change.\nMouse wheel: put the mouse in the snipe box and roll.\nA key, tap it: pick a key below; tapping it buys, anywhere, while the Trades tab is open.\nA key, hold it down: click the snipe box, then hold any letter key; every repeat buys. Esc lets go.\nClicks only: click the snipe box.\nClicking the box works in every mode.")
+    sp.buy:SetPoint("TOPRIGHT", 0, at + 5)
+    upTo(L, sp.buy)
 
-    local L5 = setting(y(5), "Laser focus: look for flips only on")
+    L, at = row("Key (for 'A key: tap it')")
+    sp.key = tip(button(sp, 190, "", function(self)
+        -- click, then press the key you want (Esc cancels; a mouse side button works too)
+        UI.capturingKey = not UI.capturingKey
+        if self.EnableKeyboard then self:EnableKeyboard(UI.capturingKey and true or false) end
+        UI:Dirty()
+    end), "Click, then press the key you want to buy with. A modifier can be held with it (Shift, Ctrl, Alt). Mouse side buttons work too. While the Trades tab is open that key buys instead of doing what it normally does; everywhere else it is untouched.")
+    sp.key:SetPoint("TOPRIGHT", 0, at + 5)
+    upTo(L, sp.key)
+    local function gotKey(name)
+        local cfg = AuctionMeshDB.cfg
+        UI.capturingKey = false
+        if sp.key.EnableKeyboard then sp.key:EnableKeyboard(false) end
+        if name then
+            cfg.buyKey = name
+            if cfg.buyBlocked then cfg.buyBlocked.key = nil end
+            UI:Notice(("Buy key set to %s. It buys while the Trades tab is open (Buy with: A key, tap it)."):format(name), true)
+        end
+        UI:Dirty()
+    end
+    sp.key:SetScript("OnKeyDown", function(_, key)
+        if not UI.capturingKey then return end
+        if key == "ESCAPE" then return gotKey(nil) end
+        if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" or key == "UNKNOWN" then return end
+        local name = (IsAltKeyDown and IsAltKeyDown() and "ALT-" or "") .. (IsControlKeyDown and IsControlKeyDown() and "CTRL-" or "")
+            .. (IsShiftKeyDown and IsShiftKeyDown() and "SHIFT-" or "") .. key
+        gotKey(name)
+    end)
+    sp.key:SetScript("OnMouseDown", function(_, btn)
+        if not UI.capturingKey then return end
+        local map = { MiddleButton = "BUTTON3", Button4 = "BUTTON4", Button5 = "BUTTON5" }
+        if map[btn] then gotKey(map[btn]) end
+    end)
+    UI.GotKey = gotKey
+
+    group("WATCHING")
+    L, at = row("Radar reads")
+    sp.scope = tip(button(sp, 250, "", function() ns.Do.Scope() end),
+        "Click to change. Crafting materials are read about every second whatever is chosen; a wider setting adds the other categories, each every 30 seconds.")
+    sp.scope:SetPoint("TOPRIGHT", 0, at + 5)
+    upTo(L, sp.scope)
+
+    L, at = row("Look for flips only on")
     sp.focus = tip(button(sp, 250, "", function() ns.Do.FocusMode() end),
-        "Click to change.\nOff: every material is watched.\nPrime items: the addon picks the items measured to sell fastest with the most gold moving, and re-reads each one about once a minute.\nMy own list: items you added in the drawer, or a focus code.\nVendor-price deals are always shown, whatever the focus.")
-    sp.focus:SetPoint("TOPRIGHT", 0, y(5) + 5)
-    upTo(L5, sp.focus)
+        "Click to change.\nOff: every material is watched.\nPrime items: the addon picks the items measured to sell fastest with the most gold moving, and re-reads each one about once a minute. Your own watch list is included.\nMy own list: only items you added in the drawer or with a settings code.\nVendor-price deals are always shown, whatever is chosen.")
+    sp.focus:SetPoint("TOPRIGHT", 0, at + 5)
+    upTo(L, sp.focus)
 
-    local L6 = setting(y(6), "Import: paste what Claude sent, then Apply")
+    group("CLAUDE")
+    L, at = row("Import: paste what Claude sent")
     sp.apply = tip(button(sp, 50, "Apply", function()
         if ns.Do.Import(sp.code:GetText()) then sp.code:SetText("") end
-    end), "Paste a settings code (it starts with AMS1:) or a focus code (AMF1:), or the whole message it came in: the code is found in the text. Apply sets everything in it and says exactly what changed: smallest profit, flip margin, what the radar reads, laser focus, items added to or removed from your watch list, a smallest profit for single items, items to ignore. Sharing is never changed by a code. Your current code is in the Snapshot.")
-    sp.apply:SetPoint("TOPRIGHT", 0, y(6) + 5)
+    end), "Paste a settings code (it starts with AMS1:), or the whole message it came in: the code is found in the text. Apply sets everything in it and says exactly what changed. Your current code is in the Snapshot.")
+    sp.apply:SetPoint("TOPRIGHT", 0, at + 5)
     sp.code = box(196, false, 4000)
     sp.code:SetPoint("RIGHT", sp.apply, "LEFT", -8, 0)
-    upTo(L6, sp.code)
+    upTo(L, sp.code)
 
-    local L7 = setting(y(7), "The panel")
-    sp.dock = tip(button(sp, 170, "", function() ns.Do.Dock(AuctionMeshDB.cfg.dock == false) end),
+    L, at = row("Send to Claude")
+    local log = tip(button(sp, 60, "Log", function() ns.Diag:Show() end), "Everything the addon did this session, step by step. Send it when something looks wrong.")
+    log:SetPoint("TOPRIGHT", 0, at + 5)
+    sp.report = tip(button(sp, 100, "Daily report", function() ns.Do.Report() end),
+        "The long version, once a day: what sold, what was found and missed, which items move the most gold.")
+    sp.report:SetPoint("RIGHT", log, "LEFT", -6, 0)
+    sp.snap = tip(button(sp, 90, "Snapshot", function() ns.Do.Snapshot() end),
+        "The short version, any time: gold, mailbox, auctions, settings and the last snipes. The same as the Snapshot button at the top.")
+    sp.snap:SetPoint("RIGHT", sp.report, "LEFT", -6, 0)
+    outline(sp.snap, ACCENT)
+    upTo(L, sp.snap)
+
+    group("ADDON")
+    L, at = row("The panel")
+    sp.dock = tip(button(sp, 190, "", function() ns.Do.Dock(AuctionMeshDB.cfg.dock == false) end),
         "Inside the auction house window, or as a window of its own that you can drag anywhere.")
-    sp.dock:SetPoint("TOPRIGHT", 0, y(7) + 5)
+    sp.dock:SetPoint("TOPRIGHT", 0, at + 5)
     sp.auto = tip(button(sp, 150, "", function() ns.Do.Auto(not AuctionMeshDB.cfg.autoOpen) end),
         "On: the panel opens and starts reading prices when you open the auction house. Off: click the AuctionMesh tab under the auction house window.")
     sp.auto:SetPoint("RIGHT", sp.dock, "LEFT", -6, 0)
-    upTo(L7, sp.auto)
+    upTo(L, sp.auto)
 
-    local L8 = setting(y(8), "Share with friends: channel, password")
-    sp.join = tip(button(sp, 50, "Join", function() ns.Do.Channel(sp.chan:GetText(), sp.pass:GetText()) end),
-        "Everyone in your group types the same channel name and password. The channel is hidden and only carries addon data.")
-    sp.join:SetPoint("TOPRIGHT", 0, y(8) + 5)
-    sp.pass = box(90, false, 20)
-    sp.pass:SetPoint("RIGHT", sp.join, "LEFT", -8, 0)
-    sp.chan = box(90, false, 20)
-    sp.chan:SetPoint("RIGHT", sp.pass, "LEFT", -10, 0)
-    upTo(L8, sp.chan)
-
-    sp.share = setting(y(9), "")
-    sp.guild = tip(button(sp, 110, "Use my guild", function() ns.Do.Guild() end),
-        "Share with guild members who run the addon instead of a private channel.")
-    sp.guild:SetPoint("TOPRIGHT", 0, y(9) + 5)
-    sp.who = tip(button(sp, 100, "Who is there?", function() ns.Do.WhoIsThere() end),
-        "Asks everyone on the channel to answer. The line on the left then lists who is connected, their version, and when they were last heard.")
-    sp.who:SetPoint("RIGHT", sp.guild, "LEFT", -6, 0)
-    sp.shareOn = tip(button(sp, 96, "", function() ns.Do.Share() end),
-        "Off (the default): the addon sends nothing to any chat channel or to your guild, uses nothing it receives, and sits in no channel of its own.\nOn: prices, deals and purchases are exchanged with friends on the channel you joined (or your guild), as hidden addon messages, at most about one a second.")
-    sp.shareOn:SetPoint("RIGHT", sp.who, "LEFT", -6, 0)
-    sp.share:SetPoint("RIGHT", sp.shareOn, "LEFT", -8, 0)
-    sp.share:SetWordWrap(false)
-
-    local L10 = setting(y(10), "Auto-adjust (pace, smallest profit, quiet time)")
-    sp.forget = tip(button(sp, 170, "Forget what was learned", function()
+    L, at = row("Auto-adjust (pace, smallest profit, quiet time)")
+    sp.forget = tip(button(sp, 190, "Forget what was learned", function()
         -- two clicks, so it can't happen by accident
         if UI.forgetUntil and GetTime() < UI.forgetUntil then
             UI.forgetUntil = nil
@@ -1241,29 +1409,18 @@ function UI:Create()
             UI.forgetUntil = GetTime() + 5
             UI:Dirty()
         end
-    end), "Clears the measured request limit, the pace, the split and the record of how trades turned out. Needs a second click.")
-    sp.forget:SetPoint("TOPRIGHT", 0, y(10) + 5)
-    sp.tune = button(sp, 110, "", function() ns.Do.Tuning(not ns.Tuner.cfg.enabled) end)
+    end), "Clears the measured request limit, the pace and the record of how trades turned out. Needs a second click.")
+    sp.forget:SetPoint("TOPRIGHT", 0, at + 5)
+    sp.tune = tip(button(sp, 150, "", function() ns.Do.Tuning(not ns.Tuner.cfg.enabled) end),
+        "On: the pace of requests, the flip profit bar, the smallest profit and the radar's quiet time adjust themselves from results, and each change is listed below. Off: nothing changes by itself.")
     sp.tune:SetPoint("RIGHT", sp.forget, "LEFT", -6, 0)
-    upTo(L10, sp.tune)
+    upTo(L, sp.tune)
 
-    local L11 = setting(y(11), "Share with Claude")
-    sp.restore = tip(button(sp, 150, "Rebuild from purchases", function() ns.Seller:Restore() end),
-        "Rebuilds the Bags list from the last 3 days of recorded purchases, for items that are still in your bags. To track anything else, drag it from your bags onto this panel.")
-    sp.restore:SetPoint("TOPRIGHT", 0, y(11) + 5)
-    local oldLog = tip(button(sp, 120, "Last session's log", function() ns.Diag:Show(true) end), "The log from before the last reload or login.")
-    oldLog:SetPoint("RIGHT", sp.restore, "LEFT", -6, 0)
-    local log = tip(button(sp, 50, "Log", function() ns.Diag:Show() end), "Everything the addon did this session, step by step. Share it when something looks wrong.")
-    log:SetPoint("RIGHT", oldLog, "LEFT", -6, 0)
-    sp.report = tip(button(sp, 100, "Daily report", function() ns.Do.Report() end),
-        "One block of text to copy and paste to Claude once a day: what sold, what was found, what was missed, which items move the most gold, and how the engine is doing. It is what Claude needs to tell you where to focus.")
-    sp.report:SetPoint("RIGHT", log, "LEFT", -6, 0)
-    upTo(L11, sp.report)
-    outline(sp.report, ACCENT)
-
-    heading(sp, y(12) - 18, "REQUEST ENGINE: WHAT IT HAS LEARNED")
+    -- three lines of what the addon is doing by itself
+    yy = yy - 6
     sp.rows = {}
-    for i = 1, 8 do sp.rows[i] = ledgerRow(sp, y(12) - 34 - (i - 1) * 15, nil, 170) end
+    for i = 1, 3 do sp.rows[i] = ledgerRow(sp, yy - (i - 1) * 14, nil, 170) end
+    sp.bottom = yy - 2 * 14 - 12 -- where the last line ends, for the layout test
     sp:Hide()
     frame.setup = sp
 
@@ -1366,11 +1523,11 @@ end
 -- Where things sit depends on the tab.
 --   Trades: MONEY on top, then the NEXT line, the timers, the list
 --   Bags:   the NEXT line, what to do, the list
---   Setup:  settings and the request engine, then recent activity
+--   Setup:  one status line under the heading, then the settings
 local LAYOUT = {
     BUY = { next = -182, status = -244, statusH = 38, top = 288 },
     SELL = { next = -40, status = -58, statusH = 38, top = 104 },
-    HISTORY = { status = -304, statusH = 14, top = 480 },
+    HISTORY = { status = -55, statusH = 14, top = 480 },
 }
 function UI:Layout()
     local tab = self.tab
@@ -1943,7 +2100,12 @@ function UI:Open(tab)
 end
 
 function UI:Close()
-    if frame then self:WheelBind(false); frame:Hide() end
+    if frame then
+        self:BindInputs(false, true)
+        self:StopKeyCapture()
+        if frame.snipe and frame.snipe.holdBox then frame.snipe.holdBox:ClearFocus() end
+        frame:Hide()
+    end
     if self.ahTab then selectTab(self.ahTab, false) end
 end
 

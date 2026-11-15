@@ -1,11 +1,10 @@
--- AuctionMesh Learn: the addon keeps score on itself, with everyone on the channel.
+-- AuctionMesh Learn: the addon keeps score on itself.
 --
 -- Every flip has a prediction (we will resell at X) and an outcome:
 --   SOLD     the sale invoice says what the buyer really paid
 --   EXPIRED  the auction came back unsold in the mail
--- Each outcome is recorded here AND broadcast to the channel, so the rules are
--- tuned on the whole group's trades, not just yours. Three things are learned,
--- all bounded and all visible (/amesh learn, Setup tab):
+-- Each outcome is recorded here (and nowhere else: nothing is shared). Three
+-- things are learned, all bounded and all visible (/amesh learn, Snapshot):
 --
 --   1. Price factor.  Average of (real sale price / planned price) over sold
 --      flips. If sales come in at 93% of plan, every future plan is multiplied
@@ -23,7 +22,7 @@
 local _, ns = ...
 ns = ns or {}
 
-local Codec, Comm, Sync, Deals = ns.Codec, ns.Comm, ns.Sync, ns.Deals
+local Deals = ns.Deals
 local Learn = {}
 ns.Learn = Learn
 
@@ -77,7 +76,7 @@ function Learn:SoldRate()
     return s / #r, #r
 end
 
--- Applies one outcome (ours or a friend's).
+-- Applies one outcome of a finished flip.
 function Learn:Apply(key, sold, ratio, mine)
     local d = self.d
     if not d then return end
@@ -102,7 +101,7 @@ function Learn:Apply(key, sold, ratio, mine)
     self:Tune()
     if ns.Log then
         ns.Log("LEARN %s %s%s: %d outcomes, %d sold, %d expired, price factor %.2f, margin %d%%", tostring(key),
-            sold and "SOLD" or "EXPIRED", mine and "" or " (from a friend)", d.n, d.ok, d.fail, self:Factor(),
+            sold and "SOLD" or "EXPIRED", "", d.n, d.ok, d.fail, self:Factor(),
             floor(Deals.cfg.margin * 100 + 0.5))
     end
     if ns.UI then ns.UI:Dirty() end
@@ -126,33 +125,21 @@ function Learn:Tune()
     end
 end
 
--- One of OUR flips finished. Records it and tells the channel.
+-- One of your flips finished: it sold (ratio = what it brought against plan) or it did not.
 function Learn:Outcome(key, sold, ratio)
     self:Apply(key, sold, ratio, true)
-    local pct = floor(((sold and ratio) or 0) * 100 + 0.5)
-    if pct < 0 then pct = 0 end
-    Comm:Enqueue(Comm.LIVE, "Z" .. Codec.uint(Codec.zig(key)) .. Codec.uint(sold and 1 or 0) .. Codec.uint(pct))
 end
 
-function Learn:OnOutcome(msg, sender)
-    local z, pos = Codec.readUInt(msg, 2)
-    local sold, pct
-    sold, pos = Codec.readUInt(msg, pos)
-    pct = Codec.readUInt(msg, pos)
-    if not z or not sold or not pct then return end
-    self:Apply(Codec.unzig(z), sold == 1, pct / 100, false)
-end
-Sync.OPS[90] = function(_, msg, sender) Learn:OnOutcome(msg, sender) end -- 'Z'
 
 -- One plain sentence for the window and /amesh learn.
 function Learn:Summary()
     local d = self.d
     if not d or d.n == 0 then
-        return "Learning: no finished flips yet. Every sale or expired auction (yours or a friend's) is scored against its prediction."
+        return "Learning: no finished flips yet. Every sale or expired auction is scored against its prediction."
     end
     local rate, n = self:SoldRate()
-    local s = ("Learning from %d finished flip%s (%d yours, %d from friends): %d%% of the last %d sold"):format(
-        d.n, d.n == 1 and "" or "s", d.mine, d.n - d.mine, floor((rate or 0) * 100 + 0.5), n or 0)
+    local s = ("Learning from %d finished flip%s: %d%% of the last %d sold"):format(
+        d.n, d.n == 1 and "" or "s", floor((rate or 0) * 100 + 0.5), n or 0)
     if d.ok >= self.cfg.minOutcomes then
         s = s .. (", sales came in at %d%% of the planned price"):format(floor(d.ratio * 100 + 0.5))
     else

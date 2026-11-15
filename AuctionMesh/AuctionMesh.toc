@@ -1,19 +1,17 @@
 ## Interface: 16001, 120000, 120001, 120005
 ## Title: AuctionMesh
 ## AllowLoadGameType: forever, standard
-## Notes: Shared AH prices between friends + a simple sniper for vendor and resale flips.
+## Notes: Auction house sniper and flipper: a fast price radar, a snipe box, and a ledger of what you bought and sold.
 ## Author: AuctionMesh
-## Version: 3.28.0
+## Version: 3.29.0
 ## SavedVariables: AuctionMeshDB
 ## IconTexture: Interface\Icons\INV_Misc_Coin_02
 ## AddonCompartmentFunc: AuctionMesh_OnAddonCompartmentClick
 
 Seed.lua
 Diag.lua
-Codec.lua
 Store.lua
-Comm.lua
-Sync.lua
+Book.lua
 Scanner.lua
 Swarm.lua
 Deals.lua

@@ -1,6 +1,6 @@
 -- AuctionMesh Core: wiring, saved data, seed import/export, tooltip, slash commands.
 local ADDON, ns = ...
-local Codec, Store, Comm, Sync, Scanner, Swarm, Sniper, Deals, Seller = ns.Codec, ns.Store, ns.Comm, ns.Sync, ns.Scanner, ns.Swarm, ns.Sniper, ns.Deals, ns.Seller
+local Store, Book, Scanner, Swarm, Sniper, Deals, Seller = ns.Store, ns.Book, ns.Scanner, ns.Swarm, ns.Sniper, ns.Deals, ns.Seller
 local UI = ns.UI
 
 local floor = math.floor
@@ -11,8 +11,8 @@ end
 local say = ns.Print
 
 -- New realm: profession goods are where the early money is, so the swarm scans them first.
-local DEFAULTS = { channel = "", password = "", route = "channel", focus = "tradegoods", scope = "mats",
-    snipeAuto = true, margin = 20, minProfit = 50, flips = true, autoOpen = true, autoScan = true, share = false }
+local DEFAULTS = { focus = "tradegoods", scope = "mats",
+    snipeAuto = true, margin = 20, minProfit = 50, flips = true, autoOpen = true, autoScan = true }
 
 local function money(c)
     if C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then return C_CurrencyInfo.GetCoinTextureString(c) end
@@ -31,7 +31,7 @@ local function importSeed(realm)
     local seed = AuctionMesh_Seed
     local data = seed and seed.realms and seed.realms[realm]
     if not data then return 0 end
-    local n, now, maxAge = 0, GetServerTime(), Sync.cfg.maxAge
+    local n, now, maxAge = 0, GetServerTime(), Book.cfg.maxAge
     for k, p, q, t in data:gmatch("(%-?%d+):(%d+):(%d+):(%d+)") do
         k, p, q, t = tonumber(k), tonumber(p), tonumber(q), tonumber(t)
         if t >= now - maxAge and Store:Put(k, p, q, t) then n = n + 1 end
@@ -103,18 +103,6 @@ local function realmKey()
     return GetNormalizedRealmName and GetNormalizedRealmName() or GetRealmName()
 end
 
-local function applyRoute()
-    local cfg = AuctionMeshDB.cfg
-    Comm.enabled = cfg.share == true
-    if not Comm.enabled then Comm:Leave(); return end
-    Comm.guild = cfg.route == "guild" or nil
-    if cfg.route == "channel" and cfg.channel ~= "" then
-        Comm:JoinChannel(cfg.channel, cfg.password ~= "" and cfg.password or nil)
-    else
-        Comm.channelName = nil
-    end
-end
-
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
@@ -137,7 +125,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         db.journal = db.journal or {}
         ns.Journal:Attach(db.journal)
         ns.Journal:Sync(db.flips, db.listed, function(key) return C_Item.GetItemInfo(key) or ("item:" .. key) end)
-        do  -- addon version as a number (3.15.0 -> 31500), sent with presence so friends see who runs what
+        do  -- addon version as a number (3.15.0 -> 31500)
             local v = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or ""
             local a, b, c = tostring(v):match("^(%d+)%.(%d+)%.?(%d*)")
             ns.versionNum = a and (tonumber(a) * 10000 + tonumber(b) * 100 + (tonumber(c) or 0)) or 0
@@ -155,19 +143,12 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         ns.Auto:Attach(db.auto)
         if db.cfg.tune == false then ns.Tuner.cfg.enabled = false end
         if db.cfg.autoTune == false then ns.Learn.cfg.autoTune = false end
-        local pruned = Store:Prune(GetServerTime() - Sync.cfg.maxAge)
+        local pruned = Store:Prune(GetServerTime() - Book.cfg.maxAge)
         local hItems, hRecords = Store:TrimHistory(GetServerTime())
         ns.historyNote = ("price history: %d items, %d hourly records"):format(hItems, hRecords)
         local seeded = importSeed(realm)
-        Sync.lastSeen = r.lastSeen or 0
 
         ns.Diag:Init()
-        Comm.realm = realm
-        Comm.me = UnitName("player") .. "-" .. realm
-        Comm.paused = function() return InCombatLockdown() end
-        Comm.handlers[Comm.PREFIX_LIVE] = Sync.Dispatch
-        Comm.handlers[Comm.PREFIX_BULK] = Sync.Dispatch
-        Comm:Init()
         Scanner:Init()
         Swarm:Init()
         if (db.cfg.v or 0) < 4 then db.cfg.v, db.cfg.focus, db.cfg.scope = 4, "tradegoods", "mats" end
@@ -179,18 +160,29 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             for k in pairs(Store.vu) do Store.vu[k] = nil end
             for k in pairs(Store.vs) do Store.vs[k] = nil end
         end
-        if (db.cfg.v or 0) < 9 then
-            -- Sharing is off unless switched on (Setup tab). The channel name and
-            -- password stay saved, so switching it back on is one click.
-            db.cfg.share = false
-        end
         if (db.cfg.v or 0) < 10 then
             -- The pause between requests had been raised by errors that belonged
             -- to failed purchases, not to the pace. Start again from no pause.
             local g = r.tune and r.tune.gap
             if g then g.i, g.clean, g.sinceFail, g.stats, g.trial = 1, 0, 1000, {}, nil; ns.Tuner:Apply() end
         end
-        db.cfg.v = 10
+        if (db.cfg.v or 0) < 11 then
+            -- All sharing between players has been removed from the addon. If an
+            -- earlier version joined a chat channel for it, leave that channel
+            -- once (the game remembers channels between sessions), and forget
+            -- the channel settings.
+            local old = db.cfg.channel
+            if old and old ~= "" then
+                C_Timer.After(10, function()
+                    if LeaveChannelByName and GetChannelName and (GetChannelName(old) or 0) > 0 then
+                        pcall(LeaveChannelByName, old)
+                        ns.Print(("Left the chat channel '%s': AuctionMesh no longer shares anything with other players."):format(old))
+                    end
+                end)
+            end
+            db.cfg.channel, db.cfg.password, db.cfg.route, db.cfg.share = nil, nil, nil, nil
+        end
+        db.cfg.v = 11
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)
@@ -213,19 +205,6 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         end
         hookTooltips()
 
-        -- Channels can't be joined reliably in the first seconds after login.
-        C_Timer.After(6, function()
-            applyRoute()
-            C_Timer.After(2 + math.random() * 3, function() Sync:Hello(); if Comm:Route() then Sync:RollCall() end end)
-        end)
-        C_Timer.NewTicker(30, function() Sync:Tidy() end)
-        C_Timer.NewTicker(150, function()
-            if Comm:Route() then
-                Sync:Beacon()
-                -- with friends connected, pass on what has been measured (at most every 10 minutes)
-                if ns.peerAt and GetTime() - ns.peerAt < 600 then ns.Tuner:Share() end
-            end
-        end)
         ns.sessionStart, ns.realizedAtLogin = GetTime(), AuctionMeshDB.realized or 0
         ns.measure = {} -- live measurements of the request limit and sweep cost
         -- EVENT-DRIVEN PUMP. The instant the auction house unlocks, send the next
@@ -249,7 +228,6 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         local r = db.realms and db.realms[realm]
         ns.Diag:Save()
         if r and Store.t then
-            r.lastSeen = GetServerTime()
             exportForCompanion(db, realm)
         end
     end
@@ -310,112 +288,6 @@ function Do.Margin(pct)
     UI:Notice(("A flip must leave %d%% profit after the auction house cut. Vendor deals need %d%%."):format(cfg.margin, Deals.cfg.vendorMargin * 100), true)
 end
 
-function Do.Channel(name, pw)
-    local cfg = AuctionMeshDB.cfg
-    name = name and name:match("^%s*(%S+)") or nil
-    if not name then UI:Notice("Type a channel name first. Everyone in your group uses the same name and password.", true); return end
-    cfg.channel, cfg.password, cfg.route = name, (pw and pw:match("^%s*(%S*)")) or "", "channel"
-    cfg.share = true -- pressing Join is switching sharing on
-    applyRoute()
-    UI:Notice("Joining channel '" .. name .. "'...", true)
-    -- the game needs a moment to answer; then say plainly whether it worked, and ask who is there
-    C_Timer.After(2, function()
-        local state = Comm:ChannelState()
-        if state == "joined" then
-            Comm:Resume()
-            Sync:Hello()
-            Sync:RollCall()
-            UI:Notice("|cff33ff66Joined channel '" .. name .. "'.|r Asking who is there...", true)
-        elseif state == "wrong password" then
-            UI:Notice("|cffff4040Wrong password for channel '" .. name .. "'.|r Someone else already uses that name with another password.", true)
-        else
-            UI:Notice("|cffff4040Could not join channel '" .. name .. "'.|r Try another name (letters and digits only). You can be in at most 10 chat channels.", true)
-        end
-    end)
-end
-
--- The on/off switch. Off: nothing is sent or used, and the channel is left.
--- On: the saved channel (or the guild, if that was chosen) is used again.
-function Do.Share(on)
-    local cfg = AuctionMeshDB.cfg
-    if on == nil then on = cfg.share ~= true end
-    cfg.share = on and true or false
-    applyRoute()
-    if not on then
-        for k in pairs(Sync.peers) do Sync.peers[k] = nil end
-        ns.peerAt = nil
-        UI:Notice("Sharing is off. Nothing is sent to any channel or to your guild, and the addon's channel has been left.", true)
-        return
-    end
-    if cfg.route == "guild" then
-        UI:Notice("Sharing is on, with guild members who run the addon.", true)
-    elseif cfg.channel and cfg.channel ~= "" then
-        UI:Notice("Sharing is on. Joining channel '" .. cfg.channel .. "'...", true)
-    else
-        UI:Notice("Sharing is on, but no channel is chosen yet: type a name and a password, then Join.", true)
-        return
-    end
-    C_Timer.After(2, function()
-        if Comm:Route() then Comm:Resume(); Sync:Hello(); Sync:RollCall() end
-        if UI.Dirty then UI:Dirty() end
-    end)
-end
-
-function Do.Guild()
-    AuctionMeshDB.cfg.route = "guild"
-    AuctionMeshDB.cfg.share = true -- choosing the guild is switching sharing on
-    applyRoute()
-    UI:Notice("Sharing with guild members who run the addon.", true)
-    C_Timer.After(1, function() Comm:Resume(); Sync:Hello(); if Comm:Route() then Sync:RollCall() end end)
-end
-
--- Asks everyone on the channel to answer, so the list of connected players is current.
-function Do.WhoIsThere()
-    if not Comm:Route() then UI:Notice("|cffff8040" .. Do.SharingText() .. "|r", true); return end
-    Comm:Resume()
-    Sync:RollCall()
-    UI:Notice("Asking who is there... answers arrive within about 2 seconds.", true)
-end
-
-local function versionText(v)
-    if not v or v <= 0 then return "older version" end
-    return ("v%d.%d.%d"):format(floor(v / 10000), floor(v / 100) % 100, v % 100)
-end
-
--- Who prices are being shared with right now, from what the game and the
--- other addons actually report. Returns the sentence and "ok" | "alone" | "off".
-function Do.SharingText()
-    local cfg = AuctionMeshDB.cfg
-    if cfg.share ~= true then
-        return "Sharing is off. Nothing is sent to any channel or to your guild.", "quiet"
-    end
-    local where
-    if cfg.route == "guild" or not Comm.channelName then
-        if not (IsInGuild and IsInGuild()) then
-            return cfg.route == "guild" and "Not connected: you are not in a guild." or "Not connected: no channel chosen yet. Type a name and a password, then Join.", "off"
-        end
-        where = "your guild"
-    else
-        local state = Comm:ChannelState()
-        if state == "wrong password" then return "NOT connected: wrong password for channel '" .. tostring(cfg.channel) .. "'.", "off" end
-        if state ~= "joined" then return "NOT connected: channel '" .. tostring(cfg.channel) .. "' is not joined. Press Join.", "off" end
-        where = "channel '" .. tostring(cfg.channel) .. "'"
-    end
-    local peers = Sync:Peers()
-    if #peers == 0 then
-        local asked = Sync.askedAt and (Sync.clock() - Sync.askedAt) or nil
-        return ("Joined %s. Nobody else has answered%s. A friend must be online on this realm and faction with the same name and password.")
-            :format(where, asked and asked < 120 and (" (asked %ds ago)"):format(floor(asked)) or ""), "alone"
-    end
-    local names = {}
-    for i = 1, math.min(3, #peers) do
-        local p = peers[i]
-        names[#names + 1] = ("%s (%s, heard %ds ago)"):format(p.name:match("^[^-]+") or p.name, versionText(p.ver), floor(p.ago))
-    end
-    return ("Connected on %s with %d player%s: %s%s."):format(where, #peers, #peers == 1 and "" or "s", table.concat(names, ", "),
-        #peers > 3 and (" and %d more"):format(#peers - 3) or ""), "ok"
-end
-
 -- How much of your money flips may tie up at once (the rest stays free for vendor deals).
 local TIED = { 30, 50, 70, 100 }
 function Do.MaxTied(pct)
@@ -431,14 +303,14 @@ function Do.MaxTied(pct)
     UI:Notice(("Flips may tie up at most %d%% of your money at once. The rest stays free for vendor deals, which pay back in minutes."):format(pct), true)
 end
 
--- Self-tuning covers both learners: the request engine and the profit bar.
+-- Auto-adjust covers both learners: the request engine and the profit bar.
 function Do.Tuning(on)
     local cfg = AuctionMeshDB.cfg
     on = on and true or false
     ns.Tuner.cfg.enabled, cfg.tune = on, on
     ns.Learn.cfg.autoTune, cfg.autoTune = on, on
-    UI:Notice(on and "Self-tuning on: the pace, the split of requests, the profit bar, the smallest profit and the radar's quiet time adjust themselves from results."
-        or "Self-tuning off: everything stays as it is now (still measured).", true)
+    UI:Notice(on and "Auto-adjust on: the pace, the split of requests, the profit bar, the smallest profit and the radar's quiet time adjust themselves from results."
+        or "Auto-adjust off: everything stays as it is now (still measured).", true)
 end
 
 function Do.Forget()
@@ -467,7 +339,7 @@ end
 function Do.Snapshot()
     local text = ns.Scout:Snapshot({
         version = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or "?",
-        realm = realmKey(), gold = GetMoney(), sharing = Do.SharingText(), code = Do.SettingsCode(),
+        realm = realmKey(), gold = GetMoney(), code = Do.SettingsCode(),
     })
     ns.Diag:ShowText("AuctionMesh snapshot: click in the box, Ctrl+A then Ctrl+C, and paste it to Claude", text)
     return text
@@ -481,7 +353,7 @@ function Do.Report()
     local text = ns.Scout:Report({
         version = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or "?",
         realm = realmKey(), gold = GetMoney(), vendorOf = Sniper.vendorOf, vendorSold = Sniper.VENDOR_SOLD,
-        classOf = Sniper.classSub, sharing = Do.SharingText(), errors = errors,
+        classOf = Sniper.classSub, errors = errors,
     })
     ns.Diag:ShowText("AuctionMesh daily report: click in the box, Ctrl+A then Ctrl+C, and paste it to Claude", text)
     return text
@@ -496,7 +368,7 @@ end
 ---------------------------------------------------------------- settings code
 -- One line that holds every setting that decides what is shown as a deal.
 -- The Snapshot carries it, Claude sends back a changed one, and pasting that
--- into the box on the Setup tab applies it. Sharing is never part of it.
+-- into the box on the Setup tab applies it. 
 --   AMS1:min=100;margin=25;flips=1;scope=mats;focus=prime;list=2589,2592;
 --        tied=50;spend=35;small=15;wheel=1;tune=1;itemmin=4306:200;ignore=2287
 -- Changes only (an import need not carry everything):
@@ -527,7 +399,8 @@ function Do.SettingsCode()
     put("small", cfg.smallFlip or floor(Deals.cfg.smallFlip * 100 + 0.5))
     put("every", Sniper.FocusEvery())
     if Sniper:StakeKey() then put("stake", Sniper:StakeKey()) end
-    put("wheel", cfg.wheel ~= false and 1 or 0)
+    put("buy", ns.UI and ns.UI.BuyMode and ns.UI.BuyMode() or "wheel")
+    if cfg.buyKey and cfg.buyKey ~= "" then put("key", cfg.buyKey) end
     put("tune", cfg.tune ~= false and 1 or 0)
     do
         local ids = {}
@@ -635,14 +508,32 @@ function Do.Import(text)
             cfg.focusEvery = clamp(n, 20, 300)
             Sniper.lastBg = 0
             note("focus items are re-read every", old .. "s", cfg.focusEvery .. "s")
-        elseif k == "wheel" then
-            local on, old = onoff(v), cfg.wheel ~= false
-            cfg.wheel = on
-            note("mouse wheel buys", old and "on" or "off", on and "on" or "off")
+        elseif k == "buy" or k == "wheel" then
+            -- buy=wheel|key|hold|click; the older wheel=1/0 still works
+            local U = ns.UI
+            local mode = v:lower()
+            if k == "wheel" then mode = onoff(v) and "wheel" or "click" end
+            if U and U.BUY_NAMES and U.BUY_NAMES[mode] then
+                local old = U.BuyMode()
+                if old ~= mode then
+                    cfg.buyMode, cfg.wheel = mode, nil
+                    if cfg.buyBlocked then cfg.buyBlocked[mode] = nil end
+                end
+                note("buy with", U.BUY_NAMES[old], U.BUY_NAMES[mode])
+            else
+                changes[#changes + 1] = "buy=" .. v .. " is not a way to buy (wheel, key, hold or click): left alone"
+            end
+        elseif k == "key" then
+            local name = v:upper():gsub("%s+", "")
+            if name:match("^[%w%-]+$") then
+                local old = cfg.buyKey
+                cfg.buyKey = name
+                note("buy key", old or "not set", name)
+            end
         elseif k == "tune" then
             local on, old = onoff(v), cfg.tune ~= false
             if old ~= on then Do.Tuning(on) end
-            note("self-tuning", old and "on" or "off", on and "on" or "off")
+            note("auto-adjust", old and "on" or "off", on and "on" or "off")
         elseif k == "itemmin" then
             cfg.itemMin = cfg.itemMin or {}
             for id, amt in v:gmatch("(%d+):(%d+)") do
@@ -748,13 +639,6 @@ SlashCmdList.AUCTIONMESH = function(input)
             "Focus cleared. Names: herbs ore cloth leather cooking elemental enchanting inscription jewelcrafting parts consumables armor weapons gems recipes pets, or classID[:subClassID].")
     elseif cmd == "scan" then
         Scanner:FullScan(rest == "force")
-    elseif cmd == "channel" then
-        local name, pw = rest:match("^(%S+)%s*(%S*)$")
-        Do.Channel(name, pw)
-    elseif cmd == "guild" then
-        Do.Guild()
-    elseif cmd == "sync" then
-        Sync:Hello(); say("Asked the mesh for anything we're missing.")
     elseif cmd == "price" then
         local id = tonumber(rest) or (rest ~= "" and C_Item and C_Item.GetItemInfoInstant and C_Item.GetItemInfoInstant(rest))
         local p, q, t = Store:Get(id or 0)
@@ -784,19 +668,14 @@ SlashCmdList.AUCTIONMESH = function(input)
         if rest == "reset" then Do.Forget()
         elseif rest == "off" or rest == "on" then Do.Tuning(rest == "on") end
     elseif cmd == "status" then
-        local cs, ss = Comm.stats, Sync.stats
-        local chatType, target = Comm:Route()
-        local fago, fby = Sync:FreshestScan()
-        say(("route=%s%s  prices=%d  pendingOut=%d  queues c/l/b=%d/%d/%d"):format(
-            chatType or "NONE", target and ("#" .. target) or "", Store.n or 0, Sync.npending,
-            Comm:LaneSize(1), Comm:LaneSize(2), Comm:LaneSize(3)))
-        say(("sent %d msgs (%d B), recv %d, throttled %d | observed %d, net-new %d, applied %d, dup %d, rejected %d"):format(
-            cs.sent, cs.bytes, cs.recv, cs.throttled, ss.observed, ss.netNew, ss.applied, ss.ignored, ss.rejected))
-        if fago then say(("last full scan: %s ago by %s"):format(ago(fago), fby or "?")) end
+        local ss = Book.stats
+        local fago = Book:FreshestScan()
+        say(("prices on record: %d | readings %d, of which %d changed a record"):format(Store.n or 0, ss.observed, ss.netNew))
+        if fago then say(("last full scan: %s ago"):format(ago(fago))) end
         if #Swarm.units > 0 then
             local fresh, total, workers = Swarm:Coverage()
-            say(("swarm %s: %d/%d categories fresh, %d peers scanning, you did %d units / %d queries"):format(
-                Swarm.active and "ON" or "off", fresh, total, workers, Swarm.stats.units, Swarm.stats.queries))
+            say(("radar %s: %d/%d categories fresh, %d reads / %d requests"):format(
+                Swarm.active and "ON" or "off", fresh, total, Swarm.stats.units, Swarm.stats.queries))
         end
     else
         say("Everything is on the panel's Setup tab; no commands are needed. /amesh opens and closes the panel.")

@@ -160,7 +160,7 @@ function Scout:Deal(key, deal)
     local log = self.d.deals
     log[#log + 1] = { t = self.now(), k = key, kind = deal.kind, u = deal.units, c = deal.cost, s = deal.sell,
                       p = deal.profit, r = deal.rate and floor(deal.rate) or nil, o = "seen",
-                      f = deal.from == "friend" and "friend" or (deal.instant and "radar" or "me") }
+                      f = deal.instant and "radar" or "check" }
     while #log > 80 do table.remove(log, 1) end
 end
 
@@ -517,10 +517,9 @@ function Scout:Snapshot(o)
     add("smallest profit ", coin(cfg.minProfit), " | flip margin ", tostring(cfg.margin), "% | flips ", cfg.flips ~= false and "on" or "off (vendor deals only)",
         " | radar reads: ", tostring(cfg.scope or "mats"), " | laser focus: ", tostring(cfg.focusMode or "off"),
         " | focus items re-read every ", tostring(ns.Sniper and ns.Sniper.FocusEvery and ns.Sniper.FocusEvery() or "?"), "s")
-    add("unsold auctions may hold ", tostring(cfg.maxTied or 50), "% | mouse wheel buys ", cfg.wheel ~= false and "on" or "off",
+    add("unsold auctions may hold ", tostring(cfg.maxTied or 50), "% | buy with: ", (ns.UI and ns.UI.BuyMode and ns.UI.BUY_NAMES[ns.UI.BuyMode()] or "?"), (cfg.buyKey and (" (key " .. cfg.buyKey .. ")") or ""),
         " | one-click buy: ", cfg.autoConfirm == false and "BLOCKED by the game (second input needed)" or (cfg.autoTried and "works" or "on, not tried yet"),
-        " | self-tuning ", cfg.tune ~= false and "on" or "off", " | posting fee comes back: ", cfg.feeBack == nil and "not known yet" or tostring(cfg.feeBack))
-    if o.sharing then add("sharing: ", (tostring(o.sharing):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))) end
+        " | auto-adjust ", cfg.tune ~= false and "on" or "off", " | posting fee comes back: ", cfg.feeBack == nil and "not known yet" or tostring(cfg.feeBack))
     do
         local parts = {}
         for _, k in ipairs(cfg.focusItems or {}) do parts[#parts + 1] = plainName(k) .. "(" .. k .. ")" end
@@ -709,8 +708,8 @@ function Scout:Report(o)
 
     add("")
     add("-- DEALS SEEN (newest first, up to 40): what was offered and what became of it")
-    add("spotted by: me = my own radar then an item check; radar = straight from my radar, no item check; friend = a friend's radar saw it first")
-    add("ago | item(id) | kind | units | pay | sell each | profit | sells/h | spotted by | outcome")
+    add("found by: check = the radar then an item check; radar = straight from the radar, no item check")
+    add("ago | item(id) | kind | units | pay | sell each | profit | sells/h | found by | outcome")
     for i = #d.deals, max(1, #d.deals - 39), -1 do
         local e = d.deals[i]
         add(("%.1fh"):format((now - e.t) / 3600), " | ", plainName(e.k), "(", e.k, ") | ", tostring(e.kind), " | ", num(e.u), " | ", num(e.c), " | ", num(e.s),
@@ -780,7 +779,6 @@ function Scout:Report(o)
         local M = ns.measure and ns.measure.last
         if M then add("radar read: ", M.items, " items in ", M.requests, " requests, largest page ", M.pageMax, ", re-read every ", tostring(ns.Swarm and ns.Swarm.cfg.fresh), "s") end
         if ns.Learn then add(ns.Learn:Summary()) end
-        if o.sharing then add("sharing: ", o.sharing) end
         if o.errors then add("errors this session: ", o.errors) end
     end
     add("=== END OF REPORT ===")

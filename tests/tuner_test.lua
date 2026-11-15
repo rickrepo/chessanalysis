@@ -6,10 +6,7 @@ local function check(c, l) if c then pass = pass + 1; print("  ok   " .. l) else
 
 local sent, logs = {}, {}
 local ns = { Log = function(f, ...) logs[#logs + 1] = f:format(...) end }
-ns.Comm = { CONTROL = 1, Enqueue = function(_, lane, msg) sent[#sent + 1] = msg end }
-ns.Sync = { OPS = {} }
 ns.Swarm = { cfg = { sweepShare = 0.30, perRequest = 0.65 } }
-ns.Codec = assert(loadfile("AuctionMesh/Codec.lua"))("AuctionMesh", ns)
 local Tuner = assert(loadfile("AuctionMesh/Tuner.lua"))("AuctionMesh", ns)
 Tuner.now = function() return T end
 Tuner.hour = function() return hour end
@@ -108,21 +105,8 @@ print("what the Setup tab shows")
 for _, l in ipairs(Tuner:Lines()) do print("     " .. l[1] .. ": " .. l[2]) end
 check(#Tuner:Lines() == 7, "seven plain lines")
 
-print("sharing with a friend who has just installed")
-Tuner.sharedAt = nil
-check(Tuner:Share() == true and sent[1] and sent[1]:sub(1, 1) == "L", "measured figures are sent on the channel")
-check(Tuner:Share() == false, "at most once every 10 minutes")
 local mine = d
-local fresh = {}
-Tuner:Attach(fresh)
-ns.Sync.OPS[76](nil, sent[1], "Friend-Realm")
-check(fresh.from == "Friend-Realm" and math.abs(fresh.kinds.search.cycle - mine.kinds.search.cycle) < 0.001 and math.abs(fresh.share - 0.70) < 1e-9,
-    "a new client starts from the friend's measured cost and split")
-check(fresh.n == 0 and Tuner:State().mode == "try", "but still measures for itself")
-Tuner:Attach(mine)
-local before = mine.share
-ns.Sync.OPS[76](nil, sent[1], "Friend-Realm")
-check(mine.from == nil and mine.share == before, "a client with its own measurements keeps them")
+check(Tuner.Share == nil and ns.Comm == nil and ns.Sync == nil, "nothing measured is sent anywhere: there is no sharing code")
 
 print("turned off (/amesh limits off)")
 Tuner.cfg.enabled = false

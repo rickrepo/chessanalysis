@@ -163,9 +163,7 @@ check(#c == 2 and c[1].key == 10 and c[1].kind == "VENDOR" and c[2].key == 11, "
 
 print("learning from outcomes")
 do
-    local sentMsgs = {}
-    local ln = { Deals = D, Codec = nil, Sync = { OPS = {} }, Comm = { LIVE = 2, Enqueue = function(_, lane, m) sentMsgs[#sentMsgs + 1] = m end } }
-    assert(loadfile("AuctionMesh/Codec.lua"))("AuctionMesh", ln)
+    local ln = { Deals = D }
     assert(loadfile("AuctionMesh/Learn.lua"))("AuctionMesh", ln)
     local L = ln.Learn
     local clockNow = 1763000000
@@ -206,18 +204,11 @@ do
     for i = 1, 20 do L:Outcome(300 + i, false) end
     check(math.abs(D.cfg.margin - 0.23) < 1e-9, "with self-adjustment off, the bar stays where it is")
     L.cfg.autoTune = true
-    -- shared with the channel
-    L:Attach({}); sentMsgs = {}
+    -- nothing is shared: an outcome stays on this client
+    L:Attach({})
     L:Outcome(4306, true, 0.93)
-    local L2ns = { Deals = D, Sync = { OPS = {} }, Comm = ln.Comm }
-    assert(loadfile("AuctionMesh/Codec.lua"))("AuctionMesh", L2ns)
-    assert(loadfile("AuctionMesh/Learn.lua"))("AuctionMesh", L2ns)
-    L2ns.Learn.serverTime = L.serverTime
-    L2ns.Learn:Attach({})
-    L2ns.Sync.OPS[90](nil, sentMsgs[1], "Friend")
-    local d2 = L2ns.Learn.d
-    check(#sentMsgs == 1 and d2.n == 1 and d2.ok == 1 and d2.mine == 0 and math.abs(d2.ratio - 0.93) < 0.001, "an outcome is broadcast and a friend's addon records it (as a friend's)")
-    print("     " .. L2ns.Learn:Summary())
+    check(L.d.n == 1 and L.d.ok == 1 and L.d.mine == 1 and math.abs(L.d.ratio - 0.93) < 0.001 and ln.Comm == nil and ln.Sync == nil, "an outcome is recorded here and sent nowhere")
+    print("     " .. L:Summary())
     D.cfg.margin = margin0
 end
 

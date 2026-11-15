@@ -101,6 +101,45 @@ end
 ---------------------------------------------------------------- what to do with each item
 
 -- Returns a list of { key, action, count, f } entries for the bag window.
+-- THE BETTER WAY OUT for something bought under vendor price. A vendor pays
+-- at once, with no cut and no fee. The auction house often pays more (Silk
+-- Cloth: 1s50c at a vendor, about 1s88c after the cut on the auction house),
+-- and then that is what is recommended. The auction house price is the live
+-- one when it has been checked, otherwise the market price from the item's
+-- last full listing (up to 6 hours old). It has to beat the vendor by 10% to
+-- be worth the hour's wait for the gold.
+-- Returns "AH" or "VENDOR", and what one unit brings on the auction house.
+Seller.AH_EDGE = 1.10
+function Seller:BestExit(key, f)
+    local vendor = f.sell or 0
+    local p = self.prices[key]
+    local net
+    -- on a realm where the posting fee does not come back, it comes off what the auction house pays
+    local fee = 0
+    if Deals.cfg.depositIsCost then
+        local qty = max(min(bagCount[key] or 0, f.units or 0), 1)
+        local ok, total = pcall(self.DepositTotal, self, key, not (p and p.commodity == false), qty)
+        if ok and total then fee = math.ceil(total / qty) end
+    end
+    if p and p.at and GetTime() - p.at < HOLD_TTL then
+        if p.hold then return "VENDOR" end -- checked: the auction house does not beat the vendor
+        if p.price then net = floor(p.price * (1 - Deals.cfg.cut)) - fee end
+    end
+    if not net then
+        local St = ns.Store
+        local fair, ft = St and St.fp and St.fp[key], St and St.ft and St.ft[key]
+        if fair and ft and GetServerTime() - ft <= 6 * 3600 then
+            net = floor((fair - Deals.cfg.undercut) * (1 - Deals.cfg.cut)) - fee
+        elseif St and St.Get then
+            -- no full listing on record: the cheapest price in the radar's last read (at most 10 minutes old)
+            local low, _, t = St:Get(key)
+            if low and t and GetServerTime() - t <= 600 then net = floor((low - Deals.cfg.undercut) * (1 - Deals.cfg.cut)) - fee end
+        end
+    end
+    if net and net >= vendor * self.AH_EDGE then return "AH", net end
+    return "VENDOR", net
+end
+
 function Seller:Entries()
     local out, now = {}, GetTime()
     for key, f in pairs(flips()) do
@@ -110,8 +149,14 @@ function Seller:Entries()
         if inBags > 0 then
             local action = f.kind == "VENDOR" and "VENDOR" or "AH"
             local p = self.prices[key]
-            if action == "AH" and p and p.hold and now - p.at < HOLD_TTL then action = "HOLD" end
-            out[#out + 1] = { key = key, action = action, count = inBags, f = f }
+            local vendorAlt
+            if action == "VENDOR" then
+                -- bought under vendor price, but worth more on the auction house: that is the recommendation
+                if self:BestExit(key, f) == "AH" then action, vendorAlt = "AH", f.sell end
+            elseif p and p.hold and now - p.at < HOLD_TTL then
+                action = "HOLD"
+            end
+            out[#out + 1] = { key = key, action = action, count = inBags, f = f, vendorAlt = vendorAlt }
         end
         if inMail > 0 then
             local seen = self.mailCount and (self.mailCount[key] or 0) >= inMail
@@ -186,7 +231,9 @@ function Seller:SellVendor(onlyKey)
         for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             local f = info and flips()[info.itemID]
-            if f and f.kind == "VENDOR" and (not onlyKey or onlyKey == info.itemID)
+            -- "Sell all" leaves what is worth more on the auction house; the row's own Sell button still sells it
+            local keep = f and not onlyKey and self:BestExit(info.itemID, f) == "AH"
+            if f and f.kind == "VENDOR" and not keep and (not onlyKey or onlyKey == info.itemID)
                 and not info.isLocked and not info.hasNoValue then
                 local key, n = info.itemID, info.stackCount or 1
                 remaining[key] = remaining[key] or (f.units or 0)
@@ -357,7 +404,7 @@ function Seller:RecordSale(i)
     local unit = floor(bid / count)
     ns.Log("SOLD %s x%d for %d each (invoice)", tostring(key), count, unit)
     if ns.Journal then ns.Journal:Sold(key, count, unit, bid - (cut or floor(bid * Deals.cfg.cut))) end
-    if ns.Sync then ns.Sync:ObserveSold(key, unit, count) end
+    if ns.Book then ns.Book:ObserveSold(key, unit, count) end
     local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
     local profitText = ""
     -- DOES THE POSTING FEE COME BACK? The sale invoice says so. The first sale
@@ -568,7 +615,10 @@ function Seller:NextToPrice()
         self.priority = k -- too soon: keep it for the next turn instead of dropping it
     end
     for key, f in pairs(flips()) do
-        if f.kind == "FLIP" and (bagCount[key] or 0) > 0 then
+        -- Everything held is priced live: a flip so it can be posted, and what
+        -- was bought under vendor price so the better of the two ways out is
+        -- known (re-checked every 10 minutes while the vendor is the better one).
+        if (f.kind == "FLIP" or f.kind == "VENDOR") and (bagCount[key] or 0) > 0 then
             local p = self.prices[key]
             local ttl = (p and p.hold) and HOLD_TTL or PRICE_REFRESH
             -- at most one price check per item every 20s, whatever else happens
@@ -608,7 +658,7 @@ end
 -- Called by the sniper for every item search result (ours or anyone's).
 function Seller:OnResults(key, rows, commodity)
     local f = flips()[key]
-    if not f or f.kind ~= "FLIP" then return end
+    if not f then return end
     if self.pending and self.pending.key == key then self.pending = nil end
     if self.note and self.note.key == key then self.note = nil end -- the price it was waiting for is here
     -- The posting fee comes back when the item sells, so the lowest acceptable
@@ -621,6 +671,10 @@ function Seller:OnResults(key, rows, commodity)
     local price, why = Deals.postPrice(rows, f.cost or 0, f.sell or 0, nil, feeEach)
     ns.Log("PRICE %s: lowest=%s cost=%s -> %s (%s)", tostring(key), tostring(rows[1] and rows[1].price),
         tostring(f.cost), tostring(price), tostring(why))
+    if price and f.kind == "VENDOR" and floor(price * (1 - Deals.cfg.cut)) - feeEach < (f.sell or 0) * self.AH_EDGE then
+        -- bought under vendor price, and the auction house does not beat the vendor by enough: sell it to a vendor
+        price, why = nil, "a vendor pays as much"
+    end
     if price then
         self.prices[key] = { price = price, commodity = commodity, why = why, at = GetTime() }
     else
@@ -879,12 +933,17 @@ Seller.short = short
 function Seller:Numbers(e)
     local f = e.f
     local paid = (not f.unknownCost) and f.cost or nil
-    if f.kind == "VENDOR" then
+    if f.kind == "VENDOR" and e.action ~= "AH" then
         return paid, f.sell or 0, f.sell or 0, paid and ((f.sell or 0) - paid), true
     end
     local p = self.prices[e.key]
     local live = p and p.price and true or false
     local sell = live and p.price or (f.sell or 0)
+    if f.kind == "VENDOR" and not live then
+        -- worth more on the auction house, live price not checked yet: the market price from its last full listing
+        local _, net = self:BestExit(e.key, f)
+        if net then return paid, floor(net / (1 - Deals.cfg.cut) + 0.5), net, paid and (net - paid), false end
+    end
     local net = floor(sell * (1 - Deals.cfg.cut)) -- the posting fee is returned on sale
     return paid, sell, net, paid and (net - paid), live
 end
@@ -934,6 +993,12 @@ function Seller:Advice(e)
                 text = text .. (" Or sell it to a vendor now for %s: no wait, no fee."):format(signed((v - paid) * e.count))
             end
             return text, "do"
+        end
+        if e.vendorAlt and paid then
+            local _, _, net = self:Numbers(e)
+            return ("Worth more on the auction house: about %s each after the cut, against %s at a vendor. %s Or sell it to a vendor now for %s: no wait, no fee.")
+                :format(short(net or 0), short(e.vendorAlt), ahOpen() and "The live price is being checked; then press Post." or "Open the auction house and press Post.",
+                    signed((e.vendorAlt - paid) * e.count)), "do"
         end
         return ahOpen() and "Its live price is being checked. Post appears on the Bags tab in a moment."
             or "Open the auction house: the live price is checked, then press Post.", "do"

@@ -129,7 +129,8 @@ check(has("today | 0 | 2 | 7 | 102 | 5 | 3 | 195 | 1 | 360 | 1 | 1 | -"), "the d
 check(has("how far the cheapest listing was from a deal: within 5%: 0, 5-15% over: 1, 15-30% over: 1, more than 30% over: 0"), "how close the failed checks were")
 check(has("-- MY AUCTIONS NOW") and has("Slow Gem(4) | 2 | 650 | 500 | 500 | UNDERCUT | 1.0"), "your auctions with the cheapest listing now")
 check(has("Linen Cloth(1) | 6 | 60 | 79 | 0@79 | 6@79 | 0 | 450 | 90 | 0 | 0.5 |"), "a trade: cost, plan, sold price, what came back, profit, hours to sell")
-check(has("Linen Cloth(1) | FLIP | 6 | 360 | 79 | 90 | 400 | me | bought") and has("| gone after 42s") and has("| failed (price changed)"), "deals seen with who spotted them and what became of each")
+check(has("Linen Cloth(1) | FLIP | 6 | 360 | 79 | 90 | 400 | check | bought") and has("| gone after 42s") and has("| failed (price changed)") and not has("friend") and not has("sharing"),
+    "deals seen with how they were found and what became of each; nothing about friends or sharing")
 check(has("2 x cheapest is #, market #: needs # or less"), "why checks were not deals")
 check(has("20: 102/10/3"), "reads, dips and deals by hour")
 check(has("Copper Ore(2) | 9 | 10 | 5 | 2000 | 30 | 20000 | - |") and has("| PRIME"), "market table: prices, vendor price, sells per hour, copper traded per hour, prime or not")

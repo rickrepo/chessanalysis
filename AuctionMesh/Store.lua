@@ -50,7 +50,7 @@ function Store:Attach(realmTable)
     self.hist = realmTable.hist -- the price history database (see Record)
     self.a, self.an, self.at = realmTable.a, realmTable.an, realmTable.at
     self.fp, self.ft = realmTable.fp, realmTable.ft
-    -- Real sales (from sale invoices, ours and friends'): sa = average unit price
+    -- Real sales (from sale invoices): sa = average unit price
     -- actually paid by buyers, sn = units sold, st = time of the last sale.
     self.sa, self.sn, self.st = realmTable.sa, realmTable.sn, realmTable.st
     -- Turnover (trading volume): vu = units seen leaving the cheap end of the
@@ -137,7 +137,7 @@ end
 
 ---------------------------------------------------------------- price history database
 -- One record per item per hour, kept for 7 days: the market price (read from
--- a full live listing, yours or a friend's) and the trading volume at the time.
+-- a full live listing) and the trading volume at the time.
 -- Stored flat for size: hist[key] = { hour, price, unitsPerHour, hour, price, ... }
 -- where hour = serverTime / 3600. About 3 numbers per item-hour.
 local H_KEEP = 7 * 24

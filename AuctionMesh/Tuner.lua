@@ -2,7 +2,7 @@
 --
 -- The server answers about 1.6 requests a second and no addon can go faster
 -- than that. What CAN be optimised is measured and adjusted here, per realm,
--- remembered across sessions and shared with friends on the channel:
+-- remembered across sessions:
 --
 --   1. THE LIMIT, PER SCENARIO. Seconds from "sent" to "server ready again",
 --      separately for each kind of request (category read, next page, item
@@ -13,8 +13,8 @@
 --      after "ready". After 300 clean requests a shorter pause is TRIED for 30
 --      requests; it is kept if nothing fails, and tried less often if it does.
 --   3. WHERE REQUESTS PAY. Every item check is scored by what asked for it
---      (vendor-price alert, under-market alert, price-drop alert, a friend's
---      hint, the watch list): how many were real deals. Alerts of a kind that
+--      (vendor-price alert, under-market alert, price-drop alert,
+--      the watch list): how many were real deals. Alerts of a kind that
 --      keeps being right are checked first.
 --   4. THE SPLIT. Requests are divided between the radar (category reads that
 --      find new prices) and item checks (which confirm a deal). Once a minute:
@@ -30,7 +30,6 @@
 local _, ns = ...
 ns = ns or {}
 
-local Codec, Comm, Sync = ns.Codec, ns.Comm, ns.Sync
 local Tuner = {}
 ns.Tuner = Tuner
 
@@ -49,8 +48,8 @@ Tuner.cfg = {
 }
 Tuner.KINDS = { "browse", "page", "search", "more" }
 Tuner.KIND_NAMES = { browse = "category read", page = "next page", search = "item check", more = "more results" }
-Tuner.SOURCES = { "vendor", "market", "drop", "friend", "list", "routine" }
-Tuner.SOURCE_NAMES = { vendor = "vendor price", market = "under market", drop = "price drop", friend = "friend's hint",
+Tuner.SOURCES = { "vendor", "market", "drop", "list", "routine" }
+Tuner.SOURCE_NAMES = { vendor = "vendor price", market = "under market", drop = "price drop",
     list = "price table", routine = "watch list" }
 
 Tuner.now = function() return GetTime() end
@@ -348,61 +347,5 @@ function Tuner:Lines()
     if d.from then add("Starting values", "taken from " .. tostring(d.from) .. " (same realm), then measured here") end
     return out
 end
-
----------------------------------------------------------------- sharing
-
--- Tells the channel what this client has measured, so a friend who has just
--- installed the addon starts from real figures instead of defaults.
-function Tuner:Share()
-    local d, c = self.d, self.cfg
-    if not d or d.n < c.measure or not Comm then return false end
-    local now = self.now()
-    if self.sharedAt and now - self.sharedAt < 600 then return false end
-    self.sharedAt = now
-    local msg = "L" .. Codec.uint(min(d.n, 100000)) .. Codec.uint(d.gap.i) .. Codec.uint(floor(d.share * 100 + 0.5))
-    for _, k in ipairs(self.KINDS) do
-        local s = d.kinds[k]
-        msg = msg .. Codec.uint((s.n >= 5 and s.cycle) and floor(s.cycle * 1000 + 0.5) or 0)
-    end
-    Comm:Enqueue(Comm.CONTROL, msg)
-    return true
-end
-
-function Tuner:OnShare(msg, sender)
-    local d, c = self.d, self.cfg
-    if not d then return end
-    local n, gi, share, pos
-    n, pos = Codec.readUInt(msg, 2)
-    if not n then return end
-    gi, pos = Codec.readUInt(msg, pos)
-    share, pos = Codec.readUInt(msg, pos)
-    if not gi or not share then return end
-    local cycles = {}
-    for i = 1, #self.KINDS do
-        local ms
-        ms, pos = Codec.readUInt(msg, pos)
-        if not ms then return end
-        cycles[i] = ms
-    end
-    -- Only a client that has not measured for itself yet takes a friend's figures.
-    if d.n >= c.measure or n < c.measure then return end
-    local sum, cnt = 0, 0
-    for i, k in ipairs(self.KINDS) do
-        local ms = cycles[i]
-        if ms >= 200 and ms <= 5000 and d.kinds[k].n < 5 then
-            d.kinds[k].cycle = ms / 1000
-            sum, cnt = sum + ms / 1000, cnt + 1
-        end
-    end
-    if cnt > 0 and not d.cycle then d.cycle = sum / cnt end
-    if gi >= 1 and gi <= #c.gaps and gi > d.gap.i then d.gap.i = gi end
-    if share >= c.shareMin * 100 and share <= c.shareMax * 100 then d.share = share / 100 end
-    d.from = sender
-    log("TUNER starting values from %s: %s per request, pause step %d, radar %d%%", tostring(sender),
-        d.cycle and ("%.2fs"):format(d.cycle) or "?", d.gap.i, floor(d.share * 100 + 0.5))
-    self:Apply()
-    if ns.UI then ns.UI:Dirty() end
-end
-if Sync and Sync.OPS then Sync.OPS[76] = function(_, msg, sender) Tuner:OnShare(msg, sender) end end -- 'L'
 
 return Tuner

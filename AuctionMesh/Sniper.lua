@@ -14,7 +14,7 @@
 local _, ns = ...
 ns = ns or {}
 
-local Store, Sync, Deals = ns.Store, ns.Sync, ns.Deals
+local Store, Book, Deals = ns.Store, ns.Book, ns.Deals
 local Sniper = {}
 ns.Sniper = Sniper
 
@@ -271,7 +271,7 @@ function Sniper:Evaluate(key, rows, commodity)
             m.n, m.best, m.at = m.n + 1, math.max(m.best, p), GetTime()
         end
     end
-    if wall then Sync:ObserveFair(key, wall) end
+    if wall then Book:ObserveFair(key, wall) end
     if deal and self:Muted(key) then
         deal, reason = nil, "its deals were missed five times in a row: not shown for 3 minutes"
     end
@@ -326,10 +326,6 @@ function Sniper:Evaluate(key, rows, commodity)
             end
         end
         ns.Log("NO DEAL %s: %s (rows: %s)", tostring(key), tostring(reason), self.RowsText(rows))
-        -- A real deal that is only too big for our purse: tell friends, one of them may afford it.
-        if reason and (reason:find("more than you can spend", 1, true) or reason:find("more than you have", 1, true)) then
-            Sync:Hint(key)
-        end
     end
     do  -- score the check for whatever asked for it
         local sr = self.searching
@@ -621,7 +617,8 @@ function Sniper:InFocus(key)
     return set == nil or set[key] == true
 end
 
-function Sniper:OnSweep(key, price, qty, shared)
+function Sniper:OnSweep(key, price, qty)
+    local shared = false
     if not self.active or key <= 0 or self.isItem[key] then return end
     local now = GetTime()
     self.sweep = self.sweep or {}
@@ -662,13 +659,10 @@ function Sniper:OnSweep(key, price, qty, shared)
         if not shared and self:InstantFlip(key, price, qty, prevOwn) then return end
     end
     if not why then return end
-    self:AddTrigger(key, why, price, market, shared and "friend" or "me")
+    self:AddTrigger(key, why, price, market)
 end
 
--- Queues one full look at an item (from our sweep, a friend's sweep or a friend's hint).
--- from = "friend" when the price came over the channel (a friend's radar or
--- hint) rather than from your own radar. Shown on the deal, because a deal a
--- friend saw first is one they can also click first.
+-- Queues one full look at an item that the radar saw something in.
 function Sniper:AddTrigger(key, why, price, market, from)
     if not self.active or key <= 0 or self.isItem[key] or self.verified[key] or self:Since(key) < TRIGGER_MIN then return end
     self.triggers = self.triggers or {}
@@ -680,15 +674,12 @@ function Sniper:AddTrigger(key, why, price, market, from)
         if market and price and market > 0 then score = (market - price) / market end
         local src = "drop"
         if why and why:find("vendor", 1, true) then src = "vendor"
-        elseif why and why:find("friend", 1, true) then src = "friend"
         elseif why and why:find("market", 1, true) then src = "market" end
         -- Learned: alerts of a kind that keeps turning out real go first.
         -- (0.5 + hit rate) is 1.0 for a kind with no record yet.
         if ns.Tuner then score = (score + 0.05) * (0.5 + ns.Tuner:HitRate(src)) end
         if src == "vendor" then score = score + 10 end
-        if src == "friend" then score = score + 1 end
         self.trigInfo = self.trigInfo or {}
-        if src == "friend" then from = "friend" end
         self.trigInfo[key] = { src = src, at = GetTime(), from = from or "me" }
         self.triggers[key] = score
         self.triggers[#self.triggers + 1] = key
@@ -1191,20 +1182,6 @@ function Sniper:AutoBlocked()
     end
 end
 
--- A friend's addon reports a purchase: shown, so a deal you missed that went to
--- a friend is not mistaken for one lost to a stranger.
-function Sniper:OnFriendBought(key, units, unit, who)
-    local name = tostring(who or "A friend"):match("^[^-]+") or "A friend"
-    local text = ("%s bought %d x %s at %s each."):format(name, units, nameOf(key), plain(unit))
-    ns.Log("FRIEND %s", text)
-    local r = self.result
-    if r and r.key == key and r.kind ~= "won" and GetTime() - r.at < 15 then
-        r.text = r.text .. (" Your friend %s got it."):format(name)
-        r.friend = name
-    end
-    if ns.UI then ns.UI:Notice("|cff4ddbc2" .. text .. "|r", true) end
-end
-
 -- EVERY click on a deal's Buy button comes here. It is safe to spam: a click
 -- always does the next useful thing, and a click that has nothing to do yet
 -- (the price is on its way, the purchase is being confirmed) is simply ignored.
@@ -1241,13 +1218,14 @@ function Sniper:Buy(key)
     -- it a moment later (which this addon used to do when the auction house
     -- was busy) is blocked by the game, so those clicks were lost. If the
     -- auction house is busy the game queues the message itself.
-    do  -- how long after the deal appeared this input came, and whether it was the wheel
+    do  -- how long after the deal appeared this input came, and what it was (wheel, key, hold, click)
         local seen = self.dealSeen and self.dealSeen[key]
-        local wheel = self.wheelAt and GetTime() - self.wheelAt < 0.05
+        local via = self.inputVia or "click"
+        if via ~= "click" and not (self.inputAt and GetTime() - self.inputAt < 0.05) then via = "click" end
         if not (self.react and self.react.key == key) then -- a retry for the units left keeps the first reaction time
-            self.react = { key = key, secs = seen and (GetTime() - seen) or nil, via = wheel and "wheel" or "click" }
+            self.react = { key = key, secs = seen and (GetTime() - seen) or nil, via = via }
         end
-        if wheel then self.tally.wheel = (self.tally.wheel or 0) + 1 end
+        if via ~= "click" then self.tally.wheel = (self.tally.wheel or 0) + 1 end
     end
     if deal.commodity then
         self.buying = { key = key, units = deal.units, max = deal.cost, phase = "quote", deal = deal, at = GetTime() }
@@ -1526,8 +1504,7 @@ function Sniper:OnPriceQuote(unitPrice, total)
             muted = " Fifth miss in a row on this item: it is not shown for 3 minutes."
             ns.Log("MUTED %s for 3 minutes: five misses in a row", tostring(b.key))
         end
-        self:Result("lost", b.key, ("MISSED  %s: someone was faster. It now costs %s for %d. Nothing spent.%s%s"):format(nameOf(b.key), plain(total), b.units,
-            b.deal.from == "friend" and " (A friend's radar saw this one first.)" or "", muted))
+        self:Result("lost", b.key, ("MISSED  %s: someone was faster. It now costs %s for %d. Nothing spent.%s"):format(nameOf(b.key), plain(total), b.units, muted))
     end
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
 end
@@ -1550,7 +1527,6 @@ function Sniper:OnPurchase(ok, why)
         if ns.Scout then ns.Scout:Bought(b.key, b.units, spent) end
         if self.dealSeen then self.dealSeen[b.key] = nil end
         if self.streak then self.streak[b.key] = 0 end
-        if ns.Sync and ns.Sync.Bought then ns.Sync:Bought(b.key, b.units, b.units > 0 and floor(spent / b.units + 0.5) or 0) end
         if b.stake then
             -- the profit at the price really paid, and the next request asks for twice as many at that price
             b.deal.profit = b.deal.kind == "VENDOR" and (b.units * b.deal.sell - spent) or (b.units * floor(b.deal.sell * (1 - Deals.cfg.cut)) - spent)

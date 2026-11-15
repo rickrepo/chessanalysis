@@ -6,6 +6,20 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.29.0 (2026-11-15)
+
+- **All communication removed.** The addon no longer has any code that sends or receives anything: no addon messages, no chat channel, no guild. The sharing controls are gone from the Setup tab, and "spotted by a friend" from the deals. An install that had joined a channel for it leaves that channel once, ten seconds after the first login, and says so in chat. Prices are kept in a local price book as before.
+- **The most valuable way out is the recommendation.** An item bought under vendor price is no longer sent to a vendor automatically. Its live auction house price (after the 5% cut, and the posting fee where that is not refunded) is compared with the vendor price; when the auction house pays at least 10% more, the row says **Post it: worth more than at a vendor**. Example: Silk Cloth bought at 99c, vendor 1s 50c, market 1s 98c, is posted.
+  - **Sell all to vendor** leaves such items alone; the row's own **Sell** button still sells one to a vendor, and the drawer gives both figures.
+  - Everything held is priced live while the auction house is open; with it closed the last full listing or the radar's last read is used.
+- **Four ways to buy** (Setup, **Buy with**): the mouse wheel, a key you tap, a key you hold down, or clicks only.
+  - **A key: tap it.** Press **Key**, then the key (modifiers and mouse side buttons work). It buys anywhere while the Trades tab is open and is your own key again everywhere else.
+  - **A key: hold it down.** Click the snipe box, then hold any letter: every repeat is an input. Esc gives the keyboard back.
+  - If the game refuses one kind of input for buying, that mode is dropped for one that works, and the panel says so.
+  - Settings code: `buy=wheel|key|hold|click` and `key=F` (the older `wheel=1/0` still works). The Snapshot shows which is in use.
+- **Setup tab in five short groups**: DEALS, BUYING, WATCHING, CLAUDE, ADDON, then three lines (auto-adjust's last change, the server's limit, the radar). Removed: the sharing rows, the eight engine lines, and the **Rebuild from purchases** button (dragging an item onto the panel still tracks it). **Last session's log** moved into the log window. "Self-tuning" is called **Auto-adjust** everywhere.
+- Not yet tried in the real game: the key modes (holding a key in particular depends on the game accepting repeated characters as inputs) and the vendor-or-auction-house recommendation.
+
 ## 3.28.0 (2026-11-15)
 
 From the seventh real log.

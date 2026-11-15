@@ -23,7 +23,7 @@ AuctionMeshDB = { cfg = { autoConfirm = false } } -- these tests walk the two st
 local ns = {
     Print = function(m) printed[#printed + 1] = m end, Log = function() end,
     Gate = { Ready = function() return true end, ReadyForUser = function() return true end, UserBusy = function() return false end, Use = function() end },
-    Store = { a = {}, an = {} }, Sync = { ObserveFair = function() end },
+    Store = { a = {}, an = {} }, Book = { ObserveFair = function() end },
     Seller = { LogBuy = function() end, Refresh = function() end, OnResults = function() end },
 }
 for _, f in ipairs({ "Deals", "Sniper" }) do assert(loadfile("AuctionMesh/" .. f .. ".lua"))("AuctionMesh", ns) end

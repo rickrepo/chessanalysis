@@ -143,6 +143,11 @@ local ns = { plainMoney = true } -- tests read plain "1s20c" text; the game show
 for line in io.lines("AuctionMesh/AuctionMesh.toc") do
     if line:match("%.lua$") then assert(loadfile("AuctionMesh/" .. line))("AuctionMesh", ns) end
 end
+-- An install from before sharing was removed: it had joined a channel.
+AuctionMeshDB = { cfg = { v = 10, channel = "GoldCrew7", password = "secret", route = "channel", share = true } }
+local leftChannel
+GetChannelName = function(name) return (name == "GoldCrew7" and not leftChannel) and 5 or 0 end
+LeaveChannelByName = function(name) leftChannel = name end
 fire("ADDON_LOADED", "AuctionMesh")
 fire("PLAYER_LOGIN")
 local UI, S, Se = ns.UI, ns.Sniper, ns.Seller
@@ -172,6 +177,13 @@ end
 local function click(n) for i = 1, #frames do local f = frames[i]; if rawget(f, "detail") and f._shown and rawget(f, "item") then n = n - 1; if n == 0 then f.btn._scripts.OnClick(f.btn) return end end end end
 local W = AuctionMeshFrame
 check(W == nil, "no window until it is needed")
+do
+    local c = AuctionMeshDB.cfg
+    advance(11)
+    check(leftChannel == "GoldCrew7" and c.channel == nil and c.password == nil and c.route == nil and c.share == nil and c.v == 11,
+        "an install that had joined a sharing channel leaves it once, and the channel settings are forgotten")
+    check(#sentAddon == 0, "and nothing was sent while doing so")
+end
 
 print("at the auction house")
 -- Copper Ore: listed under vendor price (5c). Linen: 6 outliers under a deep market. Peacebloom: 500 cheap units (trap).
@@ -218,13 +230,47 @@ r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
 check(#r == 1 and r[1]:find("Copper Ore x12 | In your mailbox") and r[1]:find("Paid 3c  >  Sell 5c  >  %+2c each"), "SELL tab: paid, sell, profit, and where the item is")
 AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
 MailFrame:Show(); fire("MAIL_SHOW"); advance(2)
-check(bags[1] and bags[1].itemID == 2770 and rowsText()[1]:find("Sell to any vendor"), "mailbox collected automatically; now says Sell to any vendor")
+-- THE MOST VALUABLE WAY OUT. The ore was bought under vendor price (5c), but
+-- the market is at 9c: after the 5% cut that is 7c, so the auction house is
+-- the recommendation, not the vendor.
+r = rowsText(); print("     " .. r[1])
+check(bags[1] and bags[1].itemID == 2770 and r[1]:find("Post it: worth more than at a vendor", 1, true),
+    "mailbox collected automatically; bought under vendor price but worth more on the auction house: the row says Post it, not Sell to a vendor")
+do
+    local e = ns.Seller:Entries()[1]
+    local adv = strip((ns.Seller:Advice(e)))
+    print("     " .. adv)
+    check(e.action == "AH" and e.vendorAlt == 5 and adv:find("^Post 12 at 8c each") and adv:find("+ 48c after the cut", 1, true)
+        and adv:find("Or sell it to a vendor now for + 24c", 1, true), "the advice gives both: post at 8c for +48c, or a vendor now for +24c")
+    -- without a live price yet, the figure comes from the item's last full listing
+    local live = ns.Seller.prices[2770]; ns.Seller.prices[2770] = nil
+    e = ns.Seller:Entries()[1]
+    adv = strip((ns.Seller:Advice(e)))
+    print("     " .. adv)
+    check(e.action == "AH" and adv:find("^Worth more on the auction house: about 7c each after the cut, against 5c at a vendor"),
+        "no live price yet: still the auction house, from the radar's last read (cheapest 9c: about 7c each against 5c)")
+    ns.Seller.prices[2770] = live
+end
 MailFrame:Hide(); fire("MAIL_CLOSED")
 MerchantFrame:Show(); fire("MERCHANT_SHOW"); advance(3)
 check(gold == 3200 - 36 and AuctionMeshDB.flips[2770] ~= nil, "opening a vendor sells NOTHING by itself")
-check(AuctionMeshFrame.vend._shown and strip(AuctionMeshFrame.vend._text) == "Sell all to vendor  +60c", "the panel offers one button: Sell all to vendor +60c")
-AuctionMeshFrame.vend._scripts.OnClick(AuctionMeshFrame.vend); advance(3)
-check(gold == 3200 - 36 + 60 and AuctionMeshDB.flips[2770] == nil, "after your click: sold, +24c real profit, list cleared")
+r = rowsText()
+check(not AuctionMeshFrame.vend._shown and r[1]:find("Worth more on the auction house", 1, true) and r[1]:find("%[Sell%]"),
+    "at a vendor: no 'Sell all to vendor' for it; the row says it is worth more on the auction house and still has its own Sell button")
+ns.Seller:SellVendor(); advance(3)
+check(gold == 3200 - 36 and AuctionMeshDB.flips[2770] ~= nil, "'Sell all to vendor' leaves it alone")
+-- the market falls to vendor price: now the vendor IS the best way out
+do
+    local fp, ft = ns.Store.fp[2770], ns.Store.ft[2770]
+    local live = ns.Seller.prices[2770]
+    ns.Store.fp[2770], ns.Store.ft[2770], ns.Seller.prices[2770] = 6, GetServerTime(), nil; UI:Render()
+    r = rowsText()
+    check(r[1]:find("Sell to any vendor", 1, true) or r[1]:find("%[Sell%]"), "market at 6c (5c after the cut and undercut): the vendor's 5c is as good, so the row says sell to a vendor")
+    check(AuctionMeshFrame.vend._shown and strip(AuctionMeshFrame.vend._text) == "Sell all to vendor  +60c", "and the panel offers one button: Sell all to vendor +60c")
+    AuctionMeshFrame.vend._scripts.OnClick(AuctionMeshFrame.vend); advance(3)
+    check(gold == 3200 - 36 + 60 and AuctionMeshDB.flips[2770] == nil, "after your click: sold, +24c real profit, list cleared")
+    ns.Store.fp[2770], ns.Store.ft[2770], ns.Seller.prices[2770] = fp, ft, live
+end
 MerchantFrame:Hide(); fire("MERCHANT_CLOSED")
 
 print("posting a flip")
@@ -401,8 +447,10 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
     check(not lg:IsShown(), "the Bags tab has no MONEY section")
     UI.tab = "HISTORY"; UI:Render()
     local sp = AuctionMeshFrame.setup
-    check(sp:IsShown() and sp.rows[1].label._text == "Auto-adjust" and sp.rows[2].label._text == "Server limit, measured", "Setup tab: settings, what auto-adjust is doing, and what the request engine has learned")
-    for i = 1, 7 do print("     " .. tostring(sp.rows[i].label._text) .. " | " .. strip(sp.rows[i].value._text)) end
+    check(sp:IsShown() and #sp.rows == 3 and sp.rows[1].label._text == "Auto-adjust" and sp.rows[2].label._text == "Server limit, measured",
+        "Setup tab: the settings, then three lines: what auto-adjust is doing, the server's limit, the radar")
+    check(sp.bottom and -40 + sp.bottom >= -480, ("the Setup tab ends %d px under the top of the panel: above the footer, docked (about 513 high) or floating (520)"):format(40 - (sp.bottom or 0)))
+    for i = 1, 3 do print("     " .. tostring(sp.rows[i].label._text) .. " | " .. strip(sp.rows[i].value._text)) end
     local st = UI.barState
     print("     bar: " .. st.mode .. " " .. ("%.2f"):format(st.fill) .. " " .. st.text)
     check(st and st.text ~= "" and strip(AuctionMeshFrame.barText._text):find(st.text, 1, true) == 1, "the engine bar is on every tab and says what the engine is doing")
@@ -582,7 +630,6 @@ do
     local sp, cfg = AuctionMeshFrame.setup, AuctionMeshDB.cfg
     local function press(b) b._scripts.OnClick(b) end
     print("     " .. sp.flips._text .. " | " .. sp.scope._text .. " | " .. sp.dock._text .. " | " .. sp.auto._text .. " | " .. sp.tune._text)
-    print("     " .. strip(sp.share._text))
     check(sp.scope._text == "Crafting materials", "the radar button shows what is being read")
     press(sp.scope); UI:Render()
     check(cfg.scope == "money" and ns.Swarm.scope == "money" and sp.scope._text == "All money-makers", "one click moves to the next choice and applies it")
@@ -595,17 +642,44 @@ do
     check(cfg.autoOpen == false and sp.auto._text == "Opens by itself: off", "opens-by-itself switch")
     press(sp.auto)
     press(sp.tune); UI:Render()
-    check(ns.Tuner.cfg.enabled == false and ns.Learn.cfg.autoTune == false and sp.tune._text == "Self-tuning: off", "one switch for all self-tuning")
+    check(ns.Tuner.cfg.enabled == false and ns.Learn.cfg.autoTune == false and sp.tune._text == "Auto-adjust: off", "one switch for everything that adjusts itself")
     press(sp.tune)
     local n0 = ns.Tuner.d.n
     press(sp.forget); UI:Render()
     check(ns.Tuner.d.n == n0 and sp.forget._text == "Click again to forget", "forgetting what was learned asks for a second click")
     press(sp.forget); UI:Render()
     check(ns.Tuner.d.n == 0 and sp.forget._text == "Forget what was learned", "the second click clears it")
-    sp.chan:SetText("mesh"); sp.pass:SetText("secret"); press(sp.join)
-    check(cfg.channel == "mesh" and cfg.password == "secret" and cfg.route == "channel", "channel name and password are typed into two boxes, then Join")
+    -- nothing about sharing is left: no controls, no functions, no files
+    check(rawget(sp, "chan") == nil and rawget(sp, "join") == nil and rawget(sp, "share") == nil and rawget(sp, "shareOn") == nil and rawget(sp, "guild") == nil,
+        "the Setup tab has no sharing controls")
+    check(ns.Comm == nil and ns.Sync == nil and ns.Codec == nil and ns.Do.Channel == nil and ns.Do.Share == nil and ns.Do.Guild == nil,
+        "the addon has no communication code: nothing to send with, nothing to receive with")
+    do
+        local hit
+        for _, f in ipairs({ "Core", "UI", "Sniper", "Seller", "Swarm", "Scanner", "Book", "Learn", "Tuner", "Scout", "Auto", "Diag", "Deals", "Store", "Journal", "Seed" }) do
+            for line in io.lines("AuctionMesh/" .. f .. ".lua") do
+                if not line:match("^%s*%-%-") and (line:find("SendAddonMessage", 1, true) or line:find("JoinTemporaryChannel", 1, true) or line:find("JoinChannelByName", 1, true)
+                    or line:find("RegisterAddonMessagePrefix", 1, true) or line:find("CHAT_MSG_ADDON", 1, true) or line:find("SendChatMessage", 1, true)) then hit = f .. ": " .. line end
+            end
+        end
+        check(not hit, "no file sends an addon message, a chat message, or joins a channel" .. (hit and (" (" .. hit .. ")") or ""))
+    end
+    -- the log window holds the switch to the previous session's log
+    do
+        AuctionMeshDB.logPrev = { "old line one", "old line two" }
+        ns.Diag:Show()
+        local w = AuctionMeshLogFrame
+        check(w.prev._shown and w.prev._text == "Last session's log" and not w.edit._text:find("old line one", 1, true), "the log window has a 'Last session's log' button")
+        w.prev._scripts.OnClick(w.prev)
+        check(w.edit._text == "old line one\nold line two" and w.prev._text == "This session's log" and not w.clr._shown, "one click shows the log from before the last reload; no Clear button on it")
+        w.prev._scripts.OnClick(w.prev)
+        check(w.prev._text == "Last session's log" and w.clr._shown, "and one click goes back")
+        ns.Do.Snapshot()
+        check(not w.prev._shown, "the Snapshot window does not have that button")
+        w:Hide()
+    end
     check(type(AuctionMesh_OnAddonCompartmentClick) == "function", "the game's addon list can open the panel")
-    for _, f in ipairs({ "AuctionMesh/UI.lua", "AuctionMesh/Seller.lua", "AuctionMesh/Sniper.lua", "AuctionMesh/Swarm.lua", "AuctionMesh/Scanner.lua", "AuctionMesh/Sync.lua" }) do
+    for _, f in ipairs({ "AuctionMesh/UI.lua", "AuctionMesh/Seller.lua", "AuctionMesh/Sniper.lua", "AuctionMesh/Swarm.lua", "AuctionMesh/Scanner.lua", "AuctionMesh/Book.lua" }) do
         local bad
         for line in io.lines(f) do if line:find("/amesh", 1, true) and not line:match("^%s*%-%-") then bad = line end end
         check(not bad, f:match("[^/]+$") .. ": no message tells the player to type a command")
@@ -613,21 +687,18 @@ do
     UI.tab = "BUY"; UI:Render()
 end
 
-print("sharing: a friend's sweep triggers a check here; next-step line")
+print("a radar read triggers a check; next-step line")
 ns.Deals.cfg.requireTurnover = false
 S.verified, S.checkedAt, S.floor, S.sweep, S.triggers = {}, {}, {}, {}, {}
 LIST[2592], LIST[2589], LIST[2770], LIST[500], LIST[2318], LIST[2319] = nil, nil, nil, nil, nil, nil -- leftovers from earlier sections
 ITEMS[4234] = { "Heavy Leather", 2 }
 LIST[4234] = { { 60, 4 }, { 190, 300 }, { 191, 300 } }
 ns.Store:PutFair(4234, 190, GetServerTime()); gold = 900
-check(ns.Sync:PeerCount() == 0, "nobody connected yet")
--- a friend's addon broadcasts the lowest price it just saw (a normal "D" message)
-local bld = ns.Codec.newDelta(GetServerTime()); bld:add(4234, 60, 604, GetServerTime())
+-- the radar reads the lowest price of the item
 local n1 = #sent
-ns.Sync.Dispatch(bld:finish(), "Friend-Realm"); advance(3)
+S:OnSweep(4234, 60, 604); advance(3)
 local c = 0; for i = n1 + 1, #sent do if sent[i] == "search4234" then c = c + 1 end end
-check(ns.Sync:PeerCount() == 1, "the friend shows up as connected")
-check(c == 1 and S.verified[4234] and S.verified[4234].units == 4, "the friend's price update triggered one check here and the deal is confirmed")
+check(c == 1 and S.verified[4234] and S.verified[4234].units == 4, "a price far under the market in a radar read triggered one check and the deal is confirmed")
 UI.tab = "BUY"; UI.notice = nil; UI:Render()
 local nx = strip(AuctionMeshFrame.next._text)
 print("     " .. nx)
@@ -889,14 +960,13 @@ do
     -- one request reads the whole class: the radar keeps its own clock
     local Sw = ns.Swarm
     Sw.unitReq = { [Sw.units[1]] = 1 }
-    check(Sw:Solo() == true, "a radar read that costs 1 request is not shared out")
-    Sw.claims[Sw.units[1]] = { by = "Friend-Realm", at = Sw.clock() }
+    check(Sw:Solo() == true, "a radar read that costs 1 request runs back to back")
     Sw.doneAt[Sw.units[1]] = Sw.serverTime()
-    Sw.myDone = { [Sw.units[1]] = Sw.serverTime() - 10 }
-    check(Sw:PickUnit() == Sw.units[1], "a friend's claim and a friend's fresh read no longer hold our own radar back")
+    Sw.myDoneClock = { [Sw.units[1]] = Sw.clock() - 10 }
+    check(Sw:PickUnit() == Sw.units[1], "the radar is due again as soon as its last read is done")
     Sw.unitReq[Sw.units[1]] = 6
-    check(Sw:Solo() == false and Sw:PickUnit() == nil, "an expensive read (6 requests) is still shared out as before")
-    Sw.unitReq[Sw.units[1]] = 1; Sw.claims = {}
+    check(Sw:Solo() == false and Sw:PickUnit() == nil, "an expensive read (6 requests) is paced by the radar interval instead")
+    Sw.unitReq[Sw.units[1]] = 1
     -- the under-market alert uses the same bar as the deal rule
     check(math.abs(S.TriggerRatio() - 0.95 / 1.20 * 0.97) < 1e-9, ("alert when the cheapest listing is under %d%% of market (was a fixed 80%%)"):format(S.TriggerRatio() * 100))
     -- small guaranteed vendor profits count while the purse is small
@@ -1066,20 +1136,6 @@ do
     check(gold == 900 and S.verified[5555] and S.verified[5555].units == 5 and S.verified[5555].cost == 10 and not (S.result and S.result.kind == "lost"),
         "radar said 21 but only 5 were left: the quote says so, nothing is bought yet, and the deal becomes those 5")
     S.verified[5555] = nil
-    -- who spotted it
-    reset(); gold = 900; S.cool = {}
-    LIST[5555] = { { 2, 21 }, { 22, 138 }, { 23, 1095 } }
-    S:OnSweep(5555, 2, 1254, true)     -- this price arrived over the channel, from a friend's radar
-    G.holdUntil = nil; advance(1.5)
-    check(S.verified[5555] and S.verified[5555].from == "friend", "a deal that came from a friend's radar is marked as such")
-    UI:Render()
-    print("     " .. label())
-    check(label():find("spotted by a friend", 1, true) and rowsText()[1]:find("Flax Cloth  friend", 1, true), "the big button and the row say 'spotted by a friend'")
-    S.verified[5555] = nil; S.dealSeen = {}
-    S.ownSweep = { [5555] = { q = 1233, p = 22, at = GetTime() - 0.7 } }
-    S:OnSweep(5555, 2, 1254)           -- the same thing seen by your own radar
-    UI:Render()
-    check(S.verified[5555].from == "me" and label():find("spotted by you", 1, true) and rowsText()[1]:find("Flax Cloth  you", 1, true), "a deal your own radar saw says 'spotted by you'")
     S.verified[5555] = nil; S.dealSeen = {}; G.holdUntil = nil
     LIST[5555] = nil
 
@@ -1123,84 +1179,6 @@ do
     Sw.current = nil; S.triggers = {}
     S.hold = 0; reset()
     LIST[2770] = nil
-end
-
-print("sharing: joining says plainly whether it worked and who is there")
-do
-    local Do, Comm, Sync, cfg = ns.Do, ns.Comm, ns.Sync, AuctionMeshDB.cfg
-    UI.tab = "HISTORY"; UI.notice = nil
-    local sp = AuctionMeshFrame.setup
-    local joined, guild = {}, true
-    local oldGet = GetChannelName
-    GetChannelName = function(name) return joined[name:lower()] and 5 or 0 end
-    JoinTemporaryChannel = function(name, pw) if pw == "secret" then joined[name:lower()] = true else fire("CHAT_MSG_CHANNEL_NOTICE", "WRONG_PASSWORD", "", "", "", "", "", 0, 0, name) end end
-    LeaveChannelByName = function(name) joined[name:lower()] = nil end
-    IsInGuild = function() return guild end
-    Sync.peers, Sync.peerInfo = {}, {}
-    -- wrong password
-    sp.chan:SetText("GoldCrew7"); sp.pass:SetText("oops"); sp.join._scripts.OnClick(sp.join)
-    advance(2.5); UI:Render()
-    print("     " .. strip(sp.share._text))
-    check(strip(sp.share._text) == "NOT connected: wrong password for channel 'GoldCrew7'.", "wrong password: the panel says so")
-    check(Comm:Route() == nil, "and nothing is sent anywhere (it used to fall back to the guild without saying)")
-    -- right password, nobody there yet
-    local before = #sentAddon
-    sp.pass:SetText("secret"); sp.join._scripts.OnClick(sp.join)
-    advance(2.5); UI:Render()
-    print("     " .. strip(sp.share._text))
-    check(strip(sp.share._text):find("^Joined channel 'GoldCrew7'. Nobody else has answered %(asked %d+s ago%)"), "joined, nobody there: says joined, and that nobody has answered")
-    advance(6)
-    local rollCall
-    for i = before + 1, #sentAddon do if sentAddon[i]:sub(1, 1) == "P" then rollCall = sentAddon[i] end end
-    check(rollCall ~= nil, "joining sends a roll call on the channel")
-    -- a friend answers
-    local friendP = "P" .. ns.Codec.uint(1) .. ns.Codec.uint(31500) .. ns.Codec.uint(0)
-    local chatBefore = #chat
-    fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, friendP, "CHANNEL", "Bob-Realm")
-    UI.notice = nil; UI:Render()
-    print("     " .. strip(sp.share._text))
-    check(strip(sp.share._text):find("^Connected on channel 'GoldCrew7' with 1 player: Bob %(v3.15.0, heard %d+s ago%)."), "a friend answers: named, with their version and when they were last heard")
-    check(chat[chatBefore + 1] and chat[chatBefore + 1]:find("Connected: Bob-Realm is sharing prices with you.", 1, true), "and chat says so the moment they connect")
-    check(strip(AuctionMeshFrame.barText._text):find("1 friend connected", 1, true), "the bar at the top shows 1 friend connected on every tab")
-    -- our addon answers someone else's roll call
-    before = #sentAddon
-    Sync.answeredAt = nil
-    fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, "P" .. ns.Codec.uint(1) .. ns.Codec.uint(31500) .. ns.Codec.uint(1), "CHANNEL", "Bob-Realm")
-    advance(8)
-    local answered
-    for i = before + 1, #sentAddon do if sentAddon[i]:sub(1, 1) == "P" then answered = true end end
-    check(answered, "when a friend asks who is there, this addon answers")
-    -- an old version's presence (no version in it) still counts
-    fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, "P" .. ns.Codec.uint(1), "CHANNEL", "Old-Realm")
-    UI:Render()
-    check(strip(sp.share._text):find("with 2 players", 1, true) and strip(sp.share._text):find("Old (older version", 1, true), "a friend on an older version is listed as such")
-
-    -- SHARING OFF: one switch, and it is the default
-    check(sp.shareOn._text == "Sharing: on" and cfg.share == true, "pressing Join switched sharing on, and the switch shows it")
-    sp.shareOn._scripts.OnClick(sp.shareOn); UI.notice = nil; UI:Render()
-    print("     " .. strip(sp.share._text))
-    check(cfg.share == false and sp.shareOn._text == "Sharing: off" and strip(sp.share._text) == "Sharing is off. Nothing is sent to any channel or to your guild.",
-        "one click switches it off, and the panel says nothing is sent")
-    check(joined["goldcrew7"] == nil and Comm:Route() == nil, "the addon's channel is left, and there is no route, guild included")
-    check(cfg.channel == "GoldCrew7" and cfg.password == "secret", "the channel name and password stay saved")
-    before = #sentAddon
-    Sync:Hello(); Sync:RollCall(); Sync:Observe(2589, 20, 100, GetServerTime()); if Sync.Bought then Sync:Bought(2589, 5, 20) end
-    advance(200)
-    check(#sentAddon == before, "while off, nothing at all is sent (not even the regular presence beacon)")
-    local peersBefore = #Sync:Peers()
-    fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, friendP, "CHANNEL", "Carol-Realm")
-    check(#Sync:Peers() == peersBefore and Sync.peers["Carol-Realm"] == nil, "and nothing received is used")
-    check(strip(AuctionMeshFrame.barText._text):find("sharing off", 1, true), "the bar says sharing off")
-    -- a fresh install, and every install after this update, starts with it off
-    check(ns.Do.SharingText() == "Sharing is off. Nothing is sent to any channel or to your guild.", "the default is off")
-    -- back on: the saved channel is joined again
-    sp.shareOn._scripts.OnClick(sp.shareOn); advance(3); UI:Render()
-    check(cfg.share == true and joined["goldcrew7"] == true and Comm:Route() == "CHANNEL", "one click switches it back on with the saved channel")
-    sp.shareOn._scripts.OnClick(sp.shareOn) -- leave it off for the rest of the run
-    GetChannelName = oldGet; IsInGuild = function() return false end
-    Sync.peers, Sync.peerInfo = {}, {}
-    cfg.channel, cfg.route = "", "channel"; Comm.channelName = nil
-    UI.tab = "BUY"; UI:Render()
 end
 
 print("moving the panel")
@@ -1278,9 +1256,9 @@ do
         "the Trades tab says so")
     UI.tab = "HISTORY"; UI:Render()
     local sp = AuctionMeshFrame.setup
-    check(sp.tied._text == "Flips may tie up: 50%", "Setup shows the limit")
+    check(sp.tied._text == "50% of what you own", "Setup shows the limit")
     sp.tied._scripts.OnClick(sp.tied); UI:Render()
-    check(cfg.maxTied == 70 and math.abs(ns.Deals.cfg.maxTied - 0.70) < 1e-9 and sp.tied._text == "Flips may tie up: 70%" and S:Capital().paused == false,
+    check(cfg.maxTied == 70 and math.abs(ns.Deals.cfg.maxTied - 0.70) < 1e-9 and sp.tied._text == "70% of what you own" and S:Capital().paused == false,
         "one click raises it to 70%: flips are allowed again")
     ns.Do.MaxTied(50)
     AuctionMeshDB.listed = {}
@@ -1382,7 +1360,7 @@ do
     for _ = 1, 10 do wheel(btn, 1); advance(0.2) end
     UI:Render()
     print("     " .. label() .. "  |  " .. strip(btn.hint._text))
-    check(label():find("^ARMED") and label():find("radar only", 1, true) and strip(btn.hint._text):find("^Rolling%."), "rolling in the box with no deal: ARMED, radar only")
+    check(label():find("^ARMED") and label():find("radar only", 1, true) and strip(btn.hint._text):find("^Armed%."), "rolling in the box with no deal: ARMED, radar only")
     check(S:SnipeMode(), "snipe mode is on while you roll: routine item checks and side classes wait")
     check(gold == 900 and S.buying == nil, "nothing is bought while there is no deal")
     check(ns.Swarm.stats.queries > before, "the radar keeps reading while you roll")
@@ -1406,10 +1384,148 @@ do
     UI.wheelSeen = nil
     ns.Deals.cfg.flips = flipsWere
     -- if the game does not take the wheel as an input, it is switched off
-    S.wheelAt = GetTime(); fire("ADDON_ACTION_BLOCKED", "AuctionMesh", "UNKNOWN()")
-    check(cfg.wheel == false and UI.WheelPress() == false, "if the game refuses wheel inputs, the wheel is switched off and scrolls again")
-    cfg.wheel = nil
+    S.inputAt, S.inputVia = GetTime(), "wheel"; fire("ADDON_ACTION_BLOCKED", "AuctionMesh", "UNKNOWN()")
+    check(UI.BuyMode() == "click" and cfg.buyBlocked.wheel and UI.WheelPress() == false, "if the game refuses wheel inputs, buying falls back to clicks and the wheel scrolls again")
+    cfg.buyMode, cfg.buyBlocked = nil, nil
     LIST[2770] = nil
+
+    -- BUY WITH: the wheel, a key you tap, a key you hold down, or clicks only
+    do
+        local bound = {}
+        SetOverrideBindingClick = function(owner, _, key, target, mouse) bound[owner] = bound[owner] or {}; bound[owner][key] = target .. ":" .. mouse end
+        ClearOverrideBindings = function(owner) bound[owner] = nil end
+        local function keyBound() return bound[btn] and next(bound[btn]) end
+        local sp = AuctionMeshFrame.setup
+        reset(); gold = 900; cfg.autoConfirm = nil; cfg.buyKey = nil
+        local flipsWere2 = ns.Deals.cfg.flips
+        ns.Deals.cfg.flips = false
+        UI.tab = "HISTORY"; UI:Render()
+        check(UI.BuyMode() == "wheel" and sp.buy._text == "Mouse wheel", "Setup, Buy with: the mouse wheel to begin with")
+        sp.buy._scripts.OnClick(sp.buy); UI:Render()
+        check(UI.BuyMode() == "key" and sp.buy._text == "A key: tap it" and sp.key._text == "Not set: click, then press a key", "one click: buy with a key; no key chosen yet")
+        UI.tab = "BUY"; UI:Render()
+        check(strip(btn.hint._text):find("no key chosen yet: Setup tab, Key", 1, true) and not keyBound(), "the snipe box says a key has to be chosen first; nothing is bound")
+        -- choosing the key: click the button, press the key
+        UI.tab = "HISTORY"; UI:Render()
+        sp.key._scripts.OnClick(sp.key); UI:Render()
+        check(UI.capturingKey and sp.key._text == "Press a key... (Esc cancels)", "click Key: it waits for a key press")
+        sp.key._scripts.OnKeyDown(sp.key, "ESCAPE"); UI:Render()
+        check(not UI.capturingKey and cfg.buyKey == nil, "Esc cancels and sets nothing")
+        sp.key._scripts.OnClick(sp.key)
+        IsShiftKeyDown = function() return true end
+        sp.key._scripts.OnKeyDown(sp.key, "LSHIFT")
+        check(UI.capturingKey and cfg.buyKey == nil, "a modifier on its own is not taken as the key")
+        sp.key._scripts.OnKeyDown(sp.key, "F"); UI:Render()
+        IsShiftKeyDown = nil
+        check(not UI.capturingKey and cfg.buyKey == "SHIFT-F" and sp.key._text == "Key: SHIFT-F", "Shift+F pressed: the key is SHIFT-F")
+        sp.key._scripts.OnClick(sp.key); sp.key._scripts.OnKeyDown(sp.key, "F"); UI:Render()
+        check(cfg.buyKey == "F" and sp.key._text == "Key: F", "pressed again without Shift: the key is F")
+        check(not keyBound(), "on the Setup tab the key is not taken over")
+        -- on the Trades tab the key is bound to the snipe box, deal or no deal; other tabs give it back
+        UI.tab = "BUY"; UI:Render()
+        check(bound[btn] and bound[btn].F == "AuctionMeshSnipeButton:KEY", "on the Trades tab F is bound to the snipe box")
+        check(strip(btn.hint._text):find("tap F (it works anywhere while this tab is open), or click here", 1, true), "and the box says so")
+        UI.tab = "SELL"; UI:Render()
+        check(not keyBound(), "on the Bags tab F is your own key again")
+        UI.tab = "BUY"; UI:Render()
+        -- tapping with no deal arms the box, like the wheel does
+        local q0 = ns.Swarm.stats.queries
+        for _ = 1, 6 do btn._scripts.OnClick(btn, "KEY"); advance(0.2) end
+        UI:Render()
+        check(label():find("^ARMED") and S:SnipeMode() and gold == 900 and ns.Swarm.stats.queries > q0, "tapping the key with no deal: ARMED, radar only, nothing bought")
+        check(UI.WheelPress(true) == false, "in key mode the mouse wheel does not buy (it scrolls)")
+        -- a deal appears while tapping: the key alone buys it
+        AuctionMeshDB.outcomes = {}
+        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+        S.priority = 2770
+        local t0, at
+        t0 = GetTime()
+        for _ = 1, 40 do
+            btn._scripts.OnClick(btn, "KEY"); advance(0.1)
+            if gold < 900 and not at then at = GetTime() - t0 end
+        end
+        check(gold == 900 - 36 and at and at <= 2.5, ("a deal appears while tapping F: bought by the key alone, %.1fs after it was listed"):format(at or -1))
+        do
+            local o = AuctionMeshDB.outcomes[#AuctionMeshDB.outcomes]
+            check(o and o.k == "won" and o.v == "key", "the outcome is recorded as bought with the key")
+        end
+        AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test"); LIST[2770] = nil
+        reset(); gold = 900; UI.wheelSeen = nil
+        -- HOLD A KEY DOWN: click the box, then every repeat of a held letter is an input
+        UI:SetBuyMode("hold"); UI:Render()
+        check(UI.BuyMode() == "hold" and not keyBound() and strip(btn.hint._text):find("click this box, then hold any letter key down", 1, true), "hold mode: no key is bound; the box says to click it and hold a letter")
+        local hb = btn.holdBox
+        local focused
+        rawset(hb, "SetFocus", function() focused = true; hb._scripts.OnEditFocusGained(hb) end)
+        rawset(hb, "ClearFocus", function() if focused then focused = false; hb._scripts.OnEditFocusLost(hb) end end)
+        btn._scripts.OnClick(btn, "LeftButton"); advance(1); UI:Render()
+        check(focused and strip(btn.hint._text):find("hold any letter key down; Esc lets go", 1, true), "a click on the box gives it the keyboard")
+        for _ = 1, 6 do hb._scripts.OnChar(hb, "f"); advance(0.1) end
+        UI:Render()
+        check(label():find("^ARMED") and S:SnipeMode() and gold == 900, "holding a letter with no deal: ARMED, nothing bought")
+        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+        S.priority = 2770
+        at, t0 = nil, GetTime()
+        for _ = 1, 60 do
+            hb._scripts.OnChar(hb, "f"); advance(0.05)
+            if gold < 900 and not at then at = GetTime() - t0 end
+        end
+        check(gold == 900 - 36 and at and at <= 2.5, ("a deal appears while the key is held: bought %.1fs after it was listed, no click"):format(at or -1))
+        check(AuctionMeshDB.outcomes[#AuctionMeshDB.outcomes].v == "hold", "recorded as bought with a held key")
+        hb._scripts.OnEscapePressed(hb)
+        check(focused == false and not UI.holdFocus, "Esc gives the keyboard back")
+        AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test"); LIST[2770] = nil
+        reset(); gold = 900; UI.wheelSeen = nil
+        -- the game refuses a held key as an input: that mode is dropped for one that works
+        S.inputAt, S.inputVia = GetTime(), "hold"; fire("ADDON_ACTION_BLOCKED", "AuctionMesh", "UNKNOWN()")
+        print("     " .. strip(UI.notice and UI.notice.text or "?"))
+        check(UI.BuyMode() == "wheel" and cfg.buyBlocked.hold and strip(UI.notice.text):find("does not accept 'A key: hold it down'", 1, true),
+            "if the game refuses a held key, buying falls back to the wheel and the panel says so")
+        -- clicks only
+        UI:SetBuyMode("click"); UI:Render()
+        check(UI.WheelPress(true) == false and not keyBound() and strip(btn.hint._text):find("click here", 1, true), "clicks only: no wheel, no key")
+        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+        S.priority = 2770; advance(1)
+        btn._scripts.OnClick(btn, "LeftButton"); advance(1)
+        check(gold == 900 - 36, "and a click on the box still buys in every mode")
+        AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test"); LIST[2770] = nil
+        -- the settings code carries it
+        UI:SetBuyMode("key")
+        check(ns.Do.SettingsCode():find(";buy=key;key=F;", 1, true), "the settings code says buy=key;key=F")
+        ns.Do.Import("AMS1:buy=hold"); check(UI.BuyMode() == "hold", "a code can set the way to buy (buy=hold)")
+        ns.Do.Import("AMS1:buy=key;key=shift-g"); check(UI.BuyMode() == "key" and cfg.buyKey == "SHIFT-G", "and the key (key=shift-g)")
+        ns.Do.Import("AMS1:wheel=0"); check(UI.BuyMode() == "click", "an older code with wheel=0 still means clicks only")
+        ns.Do.Import("AMS1:wheel=1"); check(UI.BuyMode() == "wheel", "and wheel=1 the mouse wheel")
+        ns.Do.Import("AMS1:buy=banana"); check(UI.BuyMode() == "wheel", "a way to buy that does not exist changes nothing")
+        -- waiting for a key press ends when the Setup tab is left
+        UI.tab = "HISTORY"; UI:Render()
+        sp.key._scripts.OnClick(sp.key)
+        AuctionMeshFrame.tabBuy._scripts.OnClick(AuctionMeshFrame.tabBuy)
+        check(not UI.capturingKey and UI.tab == "BUY", "leaving the Setup tab while it waits for a key cancels the wait")
+        -- THE MOST VALUABLE WAY OUT, with the numbers from the real log: Silk Cloth
+        -- bought at 99c (a vendor pays 1s50c), market at 1s98c
+        do
+            local Se2 = ns.Seller
+            ITEMS[4306] = { "Silk Cloth", 150 }
+            local f = { kind = "VENDOR", units = 11, cost = 99, sell = 150 }
+            local was = Se2.prices[4306]; Se2.prices[4306] = nil
+            ns.Store.fp[4306], ns.Store.ft[4306] = 198, GetServerTime()
+            local exit, net = Se2:BestExit(4306, f)
+            check(exit == "AH" and net == 187, "Silk Cloth, vendor 1s50c, market 1s98c: the auction house (1s87c each after the cut) is the recommendation")
+            ns.Store.fp[4306] = 170
+            exit, net = Se2:BestExit(4306, f)
+            check(exit == "VENDOR" and net == 160, "market down to 1s70c (1s60c after the cut): not 10% better than the vendor's sure 1s50c, so the vendor it is")
+            Se2.prices[4306] = { hold = "a vendor pays as much", at = GetTime() }
+            ns.Store.fp[4306] = 198
+            check(Se2:BestExit(4306, f) == "VENDOR", "a live price check that said the vendor pays as much is believed for 10 minutes")
+            Se2.prices[4306] = was; ns.Store.fp[4306], ns.Store.ft[4306] = nil, nil
+        end
+        cfg.buyMode, cfg.buyBlocked, cfg.buyKey = nil, nil, nil
+        SetOverrideBindingClick, ClearOverrideBindings = nil, nil
+        UI.wheelBound, UI.keyBound = nil, nil
+        ns.Deals.cfg.flips = flipsWere2
+        reset(); UI.notice = nil; UI.wheelSeen = nil
+    end
 
     -- a small flip is allowed even when most of the money is out of reach (the 62c Heavy Stone from the real log)
     ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 0.35, 0.50
@@ -1431,13 +1547,13 @@ do
             "reagents, consumables, gems and enhancements are side reads")
         ns.peerAt = nil; Sw.doneAt = {}
         local u = Sw:PickUnit()
-        check(u and Sw.sideSet[u], "alone: a side class that is due is read by you")
+        check(u and Sw.sideSet[u], "a side class that is due is read")
         for _, s in ipairs(Sw.side) do Sw.doneAt[s] = GetServerTime() end
         Sw.myDoneClock = {}
         check(Sw:PickUnit() == Sw.unitId(7, nil) and Sw:SideGap() == 30, "then it is back to materials; each side class comes round every 30s")
         Sw.scope = "mats"; Sw:BuildUnits()
-        check(#Sw.units == 1 and #Sw.side == 4 and next(Sw.sideOwn) == nil and Sw:PickUnit() == Sw.unitId(7, nil),
-            "scope 'materials', alone: no side reads at all")
+        check(#Sw.units == 1 and #Sw.side == 0 and next(Sw.sideOwn) == nil and Sw:PickUnit() == Sw.unitId(7, nil),
+            "scope 'materials': no side reads at all")
         Sw.scope = "all"; Sw:BuildUnits()
         print(("     whole auction house: %d side classes, each read every %ds"):format(#Sw.side, Sw:SideGap()))
         check(#Sw.units == 1 and #Sw.side >= 14 and Sw:SideGap() > 30, "scope 'everything': materials stay fast, the other classes take at most a quarter of the requests")
@@ -1545,13 +1661,13 @@ do
         local Se = ns.Seller
         AuctionMeshDB.outcomes = {}
         -- a win with the wheel 0.3s after the deal appeared, then a late click that missed
-        S.dealSeen[4306] = GetTime() - 0.3; S.wheelAt = GetTime()
+        S.dealSeen[4306] = GetTime() - 0.3; S.inputAt, S.inputVia = GetTime(), "wheel"
         S.verified[4306] = { key = 4306, units = 16, cost = 1600, sell = 150, profit = 800, deposit = 0, buys = {}, counts = {}, from = "me", kind = "VENDOR", commodity = true, at = GetTime(), rows = rows({ { 100, 16 }, { 196, 31 } }) }
         ITEMS[4306] = { "Silk Cloth", 150 }
         LIST[4306] = { { 100, 16 }, { 196, 31 }, { 197, 1967 } }
         cfg.autoConfirm = nil
         S:Press(4306); advance(1.2)
-        S.dealSeen[4306] = GetTime() - 6.4; S.wheelAt = nil
+        S.dealSeen[4306] = GetTime() - 6.4; S.inputAt, S.inputVia = nil, "click"
         S.verified[4306] = { key = 4306, units = 2, cost = 200, sell = 150, profit = 100, deposit = 0, buys = {}, counts = {}, from = "me", kind = "VENDOR", commodity = true, at = GetTime(), rows = rows({ { 100, 2 }, { 196, 31 } }) }
         S:Press(4306); advance(1.2)
         S.verified[4306] = nil
@@ -1569,7 +1685,7 @@ do
         check(has("gold in hand: 16s 88c") and has("sold, gold on its way: 27s 82c  (next in 4 min)") and has("Thick Leather: 5s 10c in 4 min") and has("Thick Leather: 22s 72c in 13 min"),
             "money: gold in hand, and each sold auction with when its gold arrives")
         check(has("MAILBOX (as read 12 min ago): 3 mail(s), sale gold 0c, 2 sale(s) still to be paid") and has("items in it: 14 x Linen Cloth"), "the mailbox as it was last read, and how long ago")
-        check(has("smallest profit ") and has("one-click buy: works") and has("mouse wheel buys on"), "the settings, including whether one-click buying works")
+        check(has("smallest profit ") and has("one-click buy: works") and has("buy with: Mouse wheel") and not has("sharing"), "the settings, including how you buy and whether one-click buying works; nothing about sharing")
         check(has("| GOT | 0.3s | wheel | GOT IT  16 x Silk Cloth") and has("| MISSED | 6.4s | click | MISSED  Silk Cloth"),
             "the last snipes: result, how long after the deal the input came, and whether it was the wheel or a click")
         check(has("Silk Cloth x16 at 1s 0c each") and has("LAST PURCHASES"), "and the last purchases")
@@ -1588,7 +1704,7 @@ do
         cfg.focusItems, cfg.focusMode = {}, "off"
         local code0 = ns.Do.SettingsCode()
         print("     " .. code0)
-        check(code0:find("^AMS1:min=%d+;margin=%d+;flips=1;scope=%a+;focus=off;tied=%d+;spend=%d+;small=%d+;every=60;wheel=1;tune=1"), "the current settings as one code")
+        check(code0:find("^AMS1:min=%d+;margin=%d+;flips=1;scope=%a+;focus=off;tied=%d+;spend=%d+;small=%d+;every=60;buy=wheel;tune=1"), "the current settings as one code")
         UI.tab = "HISTORY"; UI:Render()
         local sp = AuctionMeshFrame.setup
         -- the whole message is pasted, not just the code
@@ -1630,7 +1746,6 @@ do
         ns.Do.Import("AMS1:watch=-2592;ignore=-2287;itemmin=4306:0")
         check(#cfg.focusItems == 1 and cfg.focusItems[1] == 4306 and not S:Ignored(2287) and S:CfgFor(4306) == D, "a code can also remove: off the watch list, off the ignore list, per-item minimum cleared")
         check(ns.Do.Import("nothing useful here") == false and strip(UI.notice.text):find("^No code found in that text"), "text with no code in it changes nothing")
-        check(cfg.share ~= true, "a code never switches sharing on")
         ns.Do.Import("AMS1:every=90")
         check(cfg.focusEvery == 90 and S.FocusEvery() == 90 and strip(UI.notice.text):find("focus items are re-read every 60s > 90s", 1, true), "how often focus items are re-read is a setting too")
         ns.Do.Import("AMS1:every=5"); check(S.FocusEvery() == 20, "never more often than every 20 seconds")
@@ -1758,7 +1873,7 @@ do
         print(("     Heavy Stone, market 3s00c: the stake-out buys at %s or less, up to %s at a time"):format(tostring(max), tostring(S.stake.cap)))
         check(max and max >= 150 and max < 260 and S.stake.kind == "FLIP", "the buying price comes from the normal deal rules and the item's own listing")
         UI:Render()
-        check(label():find("^STAKE%-OUT READY    Heavy Stone: buys at ") and strip(btn.hint._text):find("^Roll the wheel in this box to run the stake%-out"), "the snipe box shows the stake-out and what it waits for")
+        check(label():find("^STAKE%-OUT READY    Heavy Stone: buys at ") and strip(btn.hint._text):find("^Stake%-out: put the mouse here and keep rolling the wheel"), "the snipe box shows the stake-out and what it waits for")
         -- rolling with nothing cheap: every notch that the auction house allows asks the price; nothing is bought
         local wheel = btn._scripts.OnMouseWheel
         local radar0, starts0 = ns.Swarm.stats.queries, 0
@@ -1868,45 +1983,20 @@ do
     check(S.verified[4306] == nil, "while muted, its deals are not shown")
     S.muted = {}
 
-    -- a friend's purchase is announced
-    reset()
-    S.result = { kind = "lost", key = 2589, text = "MISSED  Linen Cloth: someone was faster.", at = GetTime() }
-    local msgB
-    local oldRoute = ns.Comm.Route
-    ns.Comm.Route = function() return "CHANNEL", 5 end
-    local before = #sentAddon
-    ns.Sync:Bought(2589, 13, 2); advance(8)
-    ns.Comm.Route = oldRoute
-    for i = before + 1, #sentAddon do if sentAddon[i]:sub(1, 1) == "B" then msgB = sentAddon[i] end end
-    check(msgB ~= nil, "a purchase is announced to friends")
-    S.result.at = GetTime()
-    ns.Comm.enabled = true -- sharing on for this check
-    fire("CHAT_MSG_ADDON", ns.Comm.PREFIX_LIVE, msgB, "CHANNEL", "Datacus-Realm")
-    ns.Comm.enabled = false
-    print("     " .. strip(S.result.text))
-    check(S.result.text:find("Your friend Datacus got it.", 1, true), "a deal you missed that a friend got says so")
-
-    -- team side reads: other classes are read for the team, the main radar is not slowed
+    -- side reads: the other categories of the chosen radar setting, nothing else
     Sw.scope = "mats"; Sw:BuildUnits()
-    check(#Sw.units == 1 and #Sw.side == 4, "crafting materials stay the main radar; consumables, gems, reagents and enhancements are side classes")
-    Sw.unitReq = { [Sw.units[1]] = 1 }; Sw.claims = {}; Sw.doneAt = {}
+    check(#Sw.units == 1 and #Sw.side == 0, "crafting materials only: one main read and no side reads at all")
+    Sw.scope = "money"; Sw:BuildUnits()
+    check(#Sw.units == 1 and #Sw.side == 4, "all money-makers: materials stay the main radar; consumables, gems, reagents and enhancements are side reads")
+    Sw.unitReq = { [Sw.units[1]] = 1 }; Sw.doneAt = {}; Sw.sideItems = {}
     Sw.myDoneClock = { [Sw.units[1]] = Sw.clock() }
-    ns.peerAt = nil
-    check(Sw:PickUnit() == nil, "alone: no side reads (the radar has just read, nothing else is due)")
-    ns.peerAt = Sw.clock()
     local u1 = Sw:PickUnit()
-    check(u1 ~= nil and Sw.sideSet[u1], "with a friend connected: a side class is due")
-    Sw.claims[u1] = { by = "Friend-Realm", at = Sw.clock() }
-    local u2 = Sw:PickUnit()
-    check(u2 ~= nil and u2 ~= u1 and Sw.sideSet[u2], "a class a friend has claimed is left to them; another one is taken")
+    check(u1 ~= nil and Sw.sideSet[u1], "a side category that has not been read is due")
     for _, su in ipairs(Sw.side) do Sw.doneAt[su] = Sw.serverTime() end
-    Sw.claims = {}
-    check(Sw:PickUnit() == nil, "all side classes read in the last 30 seconds: back to the main radar only")
-    Sw.current = { unit = Sw.units[1], phase = "query" }
-    check(Sw:Quiet() == true, "the main radar's reading is not broadcast (every friend reads it themselves)")
-    Sw.current = { unit = Sw.side[1], phase = "query" }
-    check(Sw:Quiet() == false, "a side class reading is shared with the team")
-    Sw.current = nil
+    check(Sw:PickUnit() == nil, "all side categories read in the last 30 seconds: back to the main radar only")
+    Sw.scope = "mats"; Sw:BuildUnits()
+    Sw.unitReq = { [Sw.units[1]] = 1 }
+    Sw.myDoneClock = { [Sw.units[1]] = Sw.clock() }
     Sw.myDoneClock[Sw.units[1]] = Sw.clock() - 1
     check(Sw:PickUnit() == Sw.units[1], "the main radar is due again after 0.4 seconds, as before")
     cfg.autoConfirm = false

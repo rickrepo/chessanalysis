@@ -23,7 +23,7 @@
 --        unpaid sales: sale gold takes an hour to arrive.
 --     6. Profit after the 5% AH cut and the deposit is at least `margin` (20%).
 --     9. Never goods that NPC vendors sell in unlimited supply.
---    12. Learned: finished flips (ours and friends') scale the planned price
+--    12. Learned: finished flips scale the planned price
 --        and put an item that failed to sell on hold (see Learn.lua).
 --    11. Trend: the price history database must not show the market price in
 --        free fall (10% or more in ~6h); a slower decline lowers the planned
@@ -32,7 +32,7 @@
 --        cheap end of the listing between two readings), fast enough that
 --        what we buy sells within `maxSellMinutes`.
 --     7. If we have market-price history, the resale price is capped by its average.
---     8. If real sales are on record (sale invoices, ours or friends'), the
+--     8. If real sales are on record (sale invoices), the
 --        resale price is capped by what buyers actually paid.
 --
 -- All amounts are copper.
@@ -162,11 +162,11 @@ local function flipDeal(rows, o, cfg)
     -- price change over the last ~6 hours. A price in free fall is not a flip:
     -- by the time ours sells, "market" is lower. A slow decline is priced in by
     -- assuming it continues: we plan to sell at today's price minus the same drop.
-    -- Rule 12, learned from finished flips (ours and friends'): an item that
+    -- Rule 12, learned from finished flips: an item that
     -- just failed to sell is left alone for a while, and planned prices are
     -- scaled by how sales have really come in against plan.
     if o.blockedHours then
-        return nil, wall, ("did not sell last time (yours or a friend's): skipped for %d more hour(s)"):format(math.ceil(o.blockedHours))
+        return nil, wall, ("did not sell last time: skipped for %d more hour(s)"):format(math.ceil(o.blockedHours))
     end
     if o.learn and o.learn < 1 then ref = floor(ref * o.learn) end
     -- A FALLING PRICE IS PRICED IN, NOT REFUSED. The resale is planned at the

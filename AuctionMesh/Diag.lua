@@ -235,12 +235,13 @@ local function onEvent(_, event, ...)
         -- ours. If it follows the one-click purchase attempt, that feature is switched off.
         local S = ns.Sniper
         if S and S.autoAt and GetTime() - S.autoAt < 0.5 then S.autoAt = nil; S:AutoBlocked() end
-        if S and S.wheelAt and GetTime() - S.wheelAt < 0.5 then
-            -- a mouse-wheel input was not accepted as a real input: stop using the wheel
-            S.wheelAt = nil
-            AuctionMeshDB.cfg.wheel = false
-            Log("WHEEL buying is blocked by the game: switched off")
-            if ns.UI then ns.UI:Notice("This game does not accept the mouse wheel for buying. Click the Buy button instead.", true); ns.UI:Dirty() end
+        if S and S.inputAt and GetTime() - S.inputAt < 0.5 then
+            -- the wheel, the key or a held key was not accepted as a real
+            -- input: stop using that one and fall back to one that works
+            local via = S.inputVia
+            S.inputAt = nil
+            Log("INPUT %s was refused by the game for buying", tostring(via))
+            if ns.UI and ns.UI.InputBlocked then ns.UI:InputBlocked(via) end
         end
     end
     -- Search result events are frequent: log them briefly.
@@ -303,7 +304,8 @@ end
 local win
 local LOG_TITLE = "AuctionMesh log: click in the box, Ctrl+A then Ctrl+C, and paste it to Claude"
 function Diag:Show(previous)
-    self:ShowText(LOG_TITLE, self:Text(previous), true)
+    self.showingPrev = previous and true or false
+    self:ShowText(previous and "AuctionMesh log of the session BEFORE the last reload or login" or LOG_TITLE, self:Text(previous), true)
 end
 
 -- A window with one block of text to copy (the log, or the daily report).
@@ -343,9 +345,18 @@ function Diag:ShowText(titleText, text, isLog)
         clr:SetSize(110, 22); clr:SetPoint("LEFT", sel, "RIGHT", 8, 0); clr:SetText("Clear log")
         clr:SetScript("OnClick", function() Diag:Clear(); edit:SetText(Diag:Text()) end)
         win.clr = clr
+        -- the log from before the last reload or login is one click away, here
+        -- (it used to be a button of its own on the Setup tab)
+        local prev = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+        prev:SetSize(150, 22); prev:SetPoint("LEFT", clr, "RIGHT", 8, 0)
+        prev:SetScript("OnClick", function() Diag:Show(not Diag.showingPrev) end)
+        win.prev = prev
     end
+    if not isLog then self.showingPrev = false end
+    win.prev:SetShown(isLog == true)
+    win.prev:SetText(self.showingPrev and "This session's log" or "Last session's log")
     win.title:SetText(titleText or LOG_TITLE)
-    win.clr:SetShown(isLog == true)
+    win.clr:SetShown(isLog == true and not self.showingPrev)
     win.edit:SetText(text or "")
     win:Show()
     win.edit:SetFocus()

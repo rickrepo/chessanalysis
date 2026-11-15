@@ -1,28 +1,17 @@
--- AuctionMesh Swarm: distributed auction house scanning between friends.
+-- AuctionMesh Swarm: the radar. Reads the auction house one category at a time.
 --
--- Instead of one person waiting on the 15-minute ReplicateItems scan, everyone
--- standing at an auction house with the swarm on shares the work:
+--   * The auction house is cut into work units, one per item class
+--     (crafting materials, consumables, gems, ...).
+--   * One category search (SendBrowseQuery) returns the lowest price and total
+--     quantity of every item in the category, page after page.
+--   * Crafting materials are the main unit, read back to back. The other
+--     classes of the chosen scope are side reads, each every `sideEvery` seconds.
+--   * Only your own client does this. Nothing is shared with other players.
 --
---   * The AH is cut into work units, one per item class/subclass
---     (Herbs, Ore, Cloth armor, Potions, ...).
---   * Each peer claims the stalest unit nobody has claimed (W 1 <unit>),
---     browses it with SendBrowseQuery (one query returns the lowest price and
---     total quantity of every item in that category, page after page), and
---     marks it done (W 2 <unit>). Prices travel over the normal D messages.
---   * Every player has their own query throttle, so N friends scan about N
---     times faster. Faster peers simply claim more units (dynamic load balance).
---   * Units scanned by anyone within `fresh` seconds are skipped. When the whole
---     AH is fresh, peers idle until the oldest unit goes stale again, which
---     gives a continuous rolling scan.
---   * /amesh focus lets each person own certain categories: focused units are
---     claimed first, so "you do herbs/ore, I do gear" works naturally.
---
--- Wire: W <kind> <unit> <time>   kind 1 = claim, 2 = done
--- unit = classID * 256 + subClassID (255 = whole class); identical on all clients.
+-- unit = classID * 256 + subClassID (255 = whole class).
 local _, ns = ...
 ns = ns or {}
 
-local Codec, Comm, Sync = ns.Codec, ns.Comm, ns.Sync
 local Swarm = {}
 ns.Swarm = Swarm
 
@@ -30,20 +19,17 @@ local floor, random, max = math.floor, math.random, math.max
 
 Swarm.cfg = {
     fresh = 20,           -- seconds between sweeps of a category; re-tuned from the sweep's measured cost
-    sideEvery = 30,       -- with a friend connected: each other money-making class is read this often by one of you
+    sideEvery = 30,       -- each other class of the chosen scope is read this often
     soloEvery = 0.4,      -- a one-request radar reads again this soon after its last read (back to back)
     adaptive = true,      -- keep sweeps at about `sweepShare` of the request budget
     sweepShare = 0.30,    -- the rest goes to confirming triggers and routine readings
     perRequest = 0.65,    -- measured seconds per auction house request on this client
-    claimTTL = 90,        -- a claim with no "done" expires after this
     unitTimeout = 60,     -- give up on a unit whose results never complete
     tick = 0.2,
-    claimWait = 0.4,      -- pause after claiming so a competing claim can arrive
 }
 
 Swarm.units = {}        -- list of unit ids
 Swarm.doneAt = {}       -- unit -> server time last completed (by anyone)
-Swarm.claims = {}       -- unit -> { by = name, at = clock }
 Swarm.focus = {}        -- unit or class*256+255 -> true
 Swarm.stats = { units = 0, queries = 0, pages = 0 }
 
@@ -103,24 +89,16 @@ function Swarm:BuildUnits()
     end
     table.sort(list)
     self.units = list
-    -- TEAM SIDE READS. One request reads all crafting materials, so two
-    -- players reading them twice gains nothing. What a team CAN add is ground:
-    -- the other money-making classes (consumables, gems, reagents,
-    -- enhancements), which nobody's radar looks at. With a friend connected,
-    -- each of those is read once every `sideEvery` seconds by whoever claims it
-    -- first; the result is shared. The main radar keeps running back to back.
-    -- sideOwn: side classes that are in your scope (read even when you are alone).
+    -- SIDE READS: the other classes of the chosen scope, each read once every
+    -- `sideEvery` seconds. The main radar keeps running back to back.
     self.side, self.sideSet, self.sideOwn = {}, {}, {}
-    local function side(c, own)
-        local u = self.unitId(c, nil)
-        if not self.sideSet[u] then
+    for _, c in ipairs(scope) do
+        if not mainSet[c] then
+            local u = self.unitId(c, nil)
             self.side[#self.side + 1] = u
-            self.sideSet[u] = true
+            self.sideSet[u], self.sideOwn[u] = true, true
         end
-        if own then self.sideOwn[u] = true end
     end
-    for _, c in ipairs(scope) do if not mainSet[c] then side(c, true) end end
-    for _, c in ipairs(SCOPES.money) do if not mainSet[c] and not inScope[c] then side(c, false) end end
 end
 
 -- Seconds between two reads of one side class: `sideEvery`, or longer when
@@ -129,31 +107,9 @@ end
 function Swarm:SideGap()
     local req = 0
     for _, u in ipairs(self.side or {}) do
-        if self.sideOwn[u] or self:Team() then req = req + ((self.sideReq and self.sideReq[u]) or 1) end
+        req = req + ((self.sideReq and self.sideReq[u]) or 1)
     end
     return max(self.cfg.sideEvery, floor(req * self.cfg.perRequest / 0.25 + 0.5))
-end
-
--- True while the read in progress is the main one-request radar (which every
--- friend runs for themselves).
-function Swarm:Quiet()
-    local cur = self.current
-    return cur ~= nil and self:Solo() and not (self.sideSet and self.sideSet[cur.unit])
-end
-
--- Each player waits a different few seconds before taking a side class, so
--- that one of them reads it and the others see "done" and skip it. No claim
--- messages are needed.
-function Swarm:SideOffset(u)
-    local h = 0
-    local me = tostring(Comm.me or "")
-    for i = 1, #me do h = (h * 31 + me:byte(i)) % 9973 end
-    return (h + u) % 10
-end
-
--- True when at least one friend's addon has been heard recently.
-function Swarm:Team()
-    return ns.peerAt ~= nil and self.clock() - ns.peerAt < 600
 end
 
 ---------------------------------------------------------------- choosing work
@@ -167,9 +123,7 @@ end
 -- materials class (395 items). Sharing out a job that costs one request only
 -- adds waiting: with a friend online the radar came round every 8 seconds and
 -- more than half the request budget sat idle, while deals lasted 7 to 36
--- seconds. So when a full read costs 2 requests or fewer, every player reads
--- on their own clock and ignores claims; friends' reads still arrive as extra
--- data. Work is only split when a read is expensive (the whole auction house).
+-- seconds. When a full read costs 2 requests or fewer it is read back to back.
 function Swarm:Solo()
     if #self.units == 0 then return false end
     local total = 0
@@ -180,16 +134,13 @@ end
 function Swarm:PickUnit()
     local now, clock = self.serverTime(), self.clock()
     local best, bestScore
-    -- a side class that is due and that no friend is already reading
+    -- a side class that is due
     if self.side and #self.side > 0 and not (ns.Sniper and ns.Sniper.SnipeMode and ns.Sniper:SnipeMode()) then
-        local team, gap = self:Team(), self:SideGap()
+        local gap = self:SideGap()
         for _, u in ipairs(self.side) do
-            local c = self.claims[u]
-            local claimed = c and (clock - c.at) < self.cfg.claimTTL and c.by ~= Comm.me
-            local mine = self.sideOwn[u] or team
             -- a class with nothing (or one item) in it is looked at every 10 minutes, not every 30 seconds
             local g = (self.sideItems and self.sideItems[u] and self.sideItems[u] <= 1) and max(gap, 600) or gap
-            if mine and not claimed and now - (self.doneAt[u] or 0) >= g + (team and self:SideOffset(u) or 0) then
+            if now - (self.doneAt[u] or 0) >= g then
                 local score = now - (self.doneAt[u] or 0) + random()
                 if not bestScore or score > bestScore then best, bestScore = u, score end
             end
@@ -206,9 +157,7 @@ function Swarm:PickUnit()
         -- 1.5 seconds old on average before it was even seen.
         local age = solo and (clock - (self.myDoneClock[u] or -1e9)) or (now - (self.doneAt[u] or 0))
         local due = solo and self.cfg.soloEvery or self.cfg.fresh
-        local c = self.claims[u]
-        local claimed = not solo and c and (clock - c.at) < self.cfg.claimTTL and c.by ~= Comm.me
-        if age >= due and not claimed then
+        if age >= due then
             -- Focus wins outright; otherwise stalest first; jitter splits ties.
             local score = (focused(u) and 1e12 or 0) + age + random()
             if not bestScore or score > bestScore then best, bestScore = u, score end
@@ -216,36 +165,6 @@ function Swarm:PickUnit()
     end
     return best
 end
-
-local function note(kind, u)
-    -- Work-sharing notes are only worth sending when a friend is listening.
-    if not ns.peerAt or Swarm.clock() - ns.peerAt > 600 then return end
-    local buf, n = { "W" }, 1
-    n = Codec.putUInt(buf, n, kind)
-    n = Codec.putUInt(buf, n, u)
-    n = Codec.putUInt(buf, n, Swarm.serverTime())
-    Comm:Enqueue(Comm.CONTROL, table.concat(buf, "", 1, n))
-end
-
-function Swarm:OnNote(msg, sender)
-    local kind, pos = Codec.readUInt(msg, 2)
-    local u, t
-    u, pos = Codec.readUInt(msg, pos)
-    t = Codec.readUInt(msg, pos)
-    if not kind or not u or not t then return end
-    if kind == 1 then
-        local mine = self.current and self.current.unit == u
-        -- Race: both claimed the same unit. Lower name keeps it.
-        if mine and sender < (Comm.me or "") and self.current.phase == "claimed" then
-            self.current = nil
-        end
-        self.claims[u] = { by = sender, at = self.clock() }
-    elseif kind == 2 then
-        if t > (self.doneAt[u] or 0) then self.doneAt[u] = t end
-        self.claims[u] = nil
-    end
-end
-Sync.OPS[87] = function(_, msg, sender) Swarm:OnNote(msg, sender) end -- 'W'
 
 ---------------------------------------------------------------- running a unit
 
@@ -278,18 +197,12 @@ function Swarm:Step()
         local u = self:PickUnit()
         self.idle = (u == nil)
         if not u then return end
-        self.claims[u] = { by = Comm.me, at = clock }
-        if not self:Solo() and not (self.sideSet and self.sideSet[u]) then note(1, u) end
-        -- Wait one beat so a competing claim can arrive before we spend a query.
         self.current = { unit = u, phase = "claimed", at = clock }
         return
     end
 
     if cur.phase == "claimed" then
-        -- the pause for competing claims only matters when friends are online
-        local shared = not self:Solo() and not (self.sideSet and self.sideSet[cur.unit])
-        local wait = (shared and ns.peerAt and clock - ns.peerAt < 600) and self.cfg.claimWait or 0
-        if clock - cur.at < wait or not ex.ready() then return end
+        if not ex.ready() then return end
         if ns.Sniper and not ns.Sniper:YieldTo("swarm") then return end
         self.resultsSeen = false
         self.sideMark = ns.measure and ns.measure.items or 0 -- items counted so far, to tell how many this read adds
@@ -310,10 +223,8 @@ function Swarm:Step()
             self.myDone[cur.unit] = self.serverTime()
             self.myDoneClock = self.myDoneClock or {}
             self.myDoneClock[cur.unit] = clock
-            self.claims[cur.unit] = nil
             if ns.Scout then ns.Scout:Sweep() end
             local side = self.sideSet and self.sideSet[cur.unit]
-            if not self:Solo() or side then note(2, cur.unit) end
             if side then
                 -- a side class: counted and shared, but it does not set the radar's pace
                 self.sideReq = self.sideReq or {}
@@ -371,13 +282,7 @@ function Swarm:Coverage()
     for _, u in ipairs(self.units) do
         if now - (self.doneAt[u] or 0) < self.cfg.fresh then fresh = fresh + 1 end
     end
-    local workers, clock = {}, self.clock()
-    for _, c in pairs(self.claims) do
-        if clock - c.at < self.cfg.claimTTL then workers[c.by] = true end
-    end
-    local n = 0
-    for _ in pairs(workers) do n = n + 1 end
-    return fresh, #self.units, n
+    return fresh, #self.units, 1
 end
 
 -- BUDGET. A full sweep of everything in scope costs R requests (measured, not
@@ -476,7 +381,7 @@ function Swarm:Init()
                 Swarm.blocked = (Swarm.blocked or 0) + 1
                 if ns.Log then ns.Log("RADAR read blocked by the game (%d in a row)", Swarm.blocked) end
                 if Swarm.blocked >= 3 then
-                    Swarm:Stop("The game blocked automatic scanning three times. Prices will come from item checks and from friends instead.")
+                    Swarm:Stop("The game blocked automatic scanning three times. Prices will come from item checks instead.")
                     Swarm.manual = true
                 end
             end
@@ -490,11 +395,11 @@ end
 -- Manual mode: one keypress = one step (for clients that require a hardware event).
 function Swarm:ManualStep()
     if #self.units == 0 then self:BuildUnits() end
-    local was, wait = self.active, self.cfg.claimWait
-    self.active, self.cfg.claimWait = true, 0
+    local was = self.active
+    self.active = true
     self:Step()
     if self.current and self.current.phase == "claimed" then self:Step() end
-    self.active, self.cfg.claimWait = was, wait
+    self.active = was
 end
 
 return Swarm

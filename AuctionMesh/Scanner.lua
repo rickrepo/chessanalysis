@@ -1,10 +1,9 @@
 -- AuctionMesh Scanner: turns auction house activity into price observations.
 --
 -- Passive (free, no extra server queries): every browse page, commodity
--- search and item search you do anyway is captured and shared.
+-- search and item search you do anyway is recorded in the price book.
 -- Active: /amesh scan runs a full ReplicateItems scan, which the server allows
--- once per 15 minutes. The mesh announces full scans so a guildmate who
--- scanned 3 minutes ago saves everyone else the scan.
+-- once per 15 minutes.
 --
 -- The replicate list arrives in pieces and can hold 150k+ auctions. We wait
 -- until it stops growing, then process it with a per-frame time budget so the
@@ -12,7 +11,7 @@
 local _, ns = ...
 ns = ns or {}
 
-local Sync = ns.Sync
+local Book = ns.Book
 local Scanner = {}
 ns.Scanner = Scanner
 
@@ -61,10 +60,6 @@ function Scanner:OnBrowse(results, reset)
         local r = results[i]
         if r.itemKey then observeMin(batch, keyOf(r.itemKey), r.minPrice, r.totalQuantity) end
     end
-    -- The main radar reads the same class on every friend's client, about
-    -- once a second: broadcasting it would only flood the channel. Side
-    -- classes and anything you browse yourself are shared.
-    local quiet = ns.Swarm and ns.Swarm.Quiet and ns.Swarm:Quiet() or false
     for key, v in pairs(batch) do
         local prev = browseMin[key]
         if prev then
@@ -74,7 +69,7 @@ function Scanner:OnBrowse(results, reset)
         -- One category query just told us the lowest price and quantity of this
         -- item. The sniper decides from that whether a full look is worth a request.
         if ns.Sniper and ns.Sniper.OnSweep then ns.Sniper:OnSweep(key, v[1], v[2]) end
-        Sync:Observe(key, v[1], v[2], nil, quiet)
+        Book:Observe(key, v[1], v[2])
     end
 end
 
@@ -84,7 +79,7 @@ function Scanner:OnCommodity(itemID)
     local first = AH.GetCommoditySearchResultInfo(itemID, 1)
     if not first or not first.unitPrice then return end
     local qty = AH.GetCommoditySearchResultsQuantity and AH.GetCommoditySearchResultsQuantity(itemID) or first.quantity or 0
-    Sync:Observe(itemID, first.unitPrice, qty)
+    Book:Observe(itemID, first.unitPrice, qty)
 end
 
 function Scanner:OnItemSearch(itemKey)
@@ -101,7 +96,7 @@ function Scanner:OnItemSearch(itemKey)
             qty = qty + q
         end
     end
-    if best then Sync:Observe(keyOf(itemKey), best, qty) end
+    if best then Book:Observe(keyOf(itemKey), best, qty) end
 end
 
 ---------------------------------------------------------------- full scan
@@ -113,18 +108,12 @@ function Scanner:FullScan(force)
         say("Open the Auction House first."); return
     end
     if scan then say("A full scan is already running."); return end
-    local ago, by = Sync:FreshestScan()
-    if not force and ago and ago < Sync.cfg.fullScanCooldown then
-        say(("%s did a full scan %d min ago and the mesh already has it. A new full scan is not needed.")
-            :format(by or "Someone", floor(ago / 60)))
-        return
-    end
-    if not force and Sync.scanInProgress and GetTime() - Sync.scanInProgress.at < 300 then
-        say(("%s is running a full scan right now; results will arrive over the mesh."):format(Sync.scanInProgress.by))
+    local ago = Book:FreshestScan()
+    if not force and ago and ago < Book.cfg.fullScanCooldown then
+        say(("You did a full scan %d min ago. A new one is not needed yet."):format(floor(ago / 60)))
         return
     end
     scan = { phase = "wait", started = GetTime(), lastGrowth = GetTime(), count = 0 }
-    Sync:AnnounceScan(1)
     if ns.Gate then ns.Gate:Use("full scan ReplicateItems") end
     C_AuctionHouse.ReplicateItems()
     say("Full scan requested; waiting for the server's auction list...")
@@ -179,10 +168,10 @@ function Scanner:ProcessReplicate(n)
         worker:SetScript("OnUpdate", nil)
         local items = 0
         for _ in pairs(agg) do items = items + 1 end
-        local fresh = Sync:ObserveBatch(agg)
-        Sync:AnnounceScan(2)
+        local fresh = Book:ObserveBatch(agg)
+        Book:FullScanDone()
         scan = nil
-        say(("Full scan done: %d auctions, %d items, %d net-new prices shared with the mesh."):format(n, items, fresh))
+        say(("Full scan done: %d auctions, %d items, %d prices updated."):format(n, items, fresh))
     end)
 end
 

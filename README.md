@@ -1,6 +1,6 @@
 # AuctionMesh
 
-AuctionMesh is a WoW Forever addon (Midnight retail client, interface 16001) that lets a group of friends share auction house prices in real time and split the scanning work between them. It also includes a simple **sniper** that lists only the deals you can afford right now.
+AuctionMesh is a WoW Forever addon (Midnight retail client, interface 16001) for sniping and flipping on the auction house: a radar that reads prices about once a second, a **snipe box** that buys a deal the moment it appears, and a ledger of what you bought, what it sold for and what to do with each item. It works alone: nothing is sent to other players.
 
 ## How to use it
 
@@ -29,8 +29,8 @@ Open the auction house. The panel opens inside the auction house window and pric
 ```
 
 * **Trades** is the money and the market: what you have, deals you can buy right now, and your own auctions.
-* **Bags** is what you hold and the one thing to do with each item: post it, sell it to a vendor, collect it from the mailbox, or wait.
-* **Setup** has a control for every setting, and what the request engine has learned. No chat commands are needed.
+* **Bags** is what you hold and the one thing to do with each item: post it or sell it to a vendor (whichever pays more), collect it from the mailbox, or wait.
+* **Setup** has a control for every setting, in five short groups. No chat commands are needed.
 * The mouse wheel scrolls a list that is longer than the panel.
 
 ### Where the panel lives
@@ -117,26 +117,26 @@ A slim **DETAILS** handle sits on the panel's right edge. Clicking it slides a s
 
 The addon never cancels an auction itself; a "cancel and post again" recommendation is something you do in the game's own Auctions tab.
 
-### Setup: every control in one place
+### Setup: five short groups
 
-Nothing has to be typed in chat. The Setup tab has a control for everything that can be changed, each showing its current value:
+Nothing has to be typed in chat. The Setup tab has a control for everything that can be changed, each showing its current value, and nothing else:
 
-| Control | What it does |
-|---|---|
-| Smallest profit worth showing a deal for | Two boxes, silver and copper. Smaller deals are hidden |
-| Profit a flip must leave after the auction house cut | A percentage box. Self-tuning nudges it from how trades turn out |
-| What to look for | Vendor deals + flips, or vendor deals only (every deal guaranteed) |
-| Buy with the mouse wheel | On or off. On: while a deal is showing, rolling the wheel anywhere presses Buy |
-| Flips may tie up | The most of your money that may sit in auctions that have not sold: 30%, 50%, 70% or 100% |
-| What the radar reads | Click to change: crafting materials only, all money-makers, whole auction house. Materials are read about every second in all three |
-| Laser focus | Click to change: off, prime items (picked from measured activity), or my own list |
-| Import | A box and **Apply**: paste a settings code (or the whole message it came in) and everything in it is set |
-| The panel | Inside the auction house window or a window of its own; opens by itself on or off |
-| Share prices with friends | **Sharing: off** by default: nothing is sent anywhere. To use it: channel name, password, **Join**; or **Use my guild**. The line underneath says whether you are connected and to whom; **Who is there?** asks everyone to answer |
-| Auto-adjust (Self-tuning switch) | One switch for the pace, the split of requests, the profit bar, the smallest profit and the radar's quiet time. **Forget what was learned** needs a second click |
-| Share with Claude | **Daily report** (once a day), **Log** and **Last session's log** (when something looks wrong), **Rebuild from purchases** |
+| Group | Control | What it does |
+|---|---|---|
+| DEALS | Smallest profit worth showing | Two boxes, silver and copper. Smaller deals are hidden |
+| | Profit a flip must leave after the auction house cut | A percentage box. Auto-adjust nudges it from how trades turn out |
+| | Show | Vendor deals + flips, or vendor deals only (every deal guaranteed) |
+| | Money in unsold auctions, at most | 30%, 50%, 70% or 100% of what you own |
+| BUYING | Buy with | Mouse wheel, a key you tap, a key you hold down, or clicks only (see Sniping) |
+| | Key | Click it, then press the key to buy with |
+| WATCHING | Radar reads | Crafting materials only, all money-makers, or the whole auction house. Materials are read about every second in all three |
+| | Look for flips only on | Laser focus: off, prime items (picked from measured activity), or my own list |
+| CLAUDE | Import | A box and **Apply**: paste a settings code (or the whole message it came in) and everything in it is set |
+| | Send to Claude | **Snapshot** (any time), **Daily report** (once a day), **Log** (when something looks wrong; the log window also has last session's log) |
+| ADDON | The panel | Inside the auction house window or a window of its own; opens by itself on or off |
+| | Auto-adjust | One switch for the pace, the split of requests, the profit bar, the smallest profit and the radar's quiet time. **Forget what was learned** needs a second click |
 
-The heading of the Setup tab shows the installed version, e.g. `SETTINGS (AuctionMesh version 3.20.0)`. Hovering a button explains it. Below the controls is everything the request engine has learned.
+Under the controls are three lines: the last thing auto-adjust changed (and when), the server's measured request limit, and what one radar read costs. The heading shows the installed version, e.g. `SETTINGS (AuctionMesh version 3.29.0)`, and the line under it shows what your last click did. Hovering a button explains it.
 
 To track an item you bought some other way, drag it from your bags onto the panel.
 
@@ -175,7 +175,7 @@ A **Snapshot** button sits on the panel's header, on every tab. It opens one sho
 |---|---|
 | MONEY | Gold in hand; sale gold waiting in the mailbox; every sold auction with the gold due and when; every unsold auction with your price, your cost, its age and the cheapest other listing; everything bought and not listed; the total; gold at the start of the day and profit banked |
 | MAILBOX | What it held when it was last read (items, sale gold, sales still to be paid) and how long ago that was. The mailbox can only be read while it is open |
-| SETTINGS | Smallest profit, flip margin, flips on or off, what the radar reads, laser focus, the unsold-auctions limit, mouse wheel, whether one-click buying works, self-tuning, sharing |
+| SETTINGS | Smallest profit, flip margin, flips on or off, what the radar reads, laser focus, the unsold-auctions limit, how you buy, whether one-click buying works, auto-adjust |
 | SNIPING | Got / missed / gone this session; how often the snipe box was armed and how many purchases the wheel started; deals hidden by the smallest-profit setting; muted items; the last 20 outcomes, each with **how long after the deal appeared your input came** and whether it was the wheel or a click |
 | WHY CHECKS WERE NOT DEALS | The eight most common reasons today |
 | LAST PURCHASES | The last 12, each with what became of it |
@@ -186,7 +186,7 @@ A **Snapshot** button sits on the panel's header, on every tab. It opens one sho
 The Snapshot ends with your **settings code**, one line that holds every setting that decides what is shown as a deal:
 
 ```
-AMS1:min=100;margin=25;flips=1;scope=mats;focus=prime;list=2589,2592;tied=50;spend=35;small=15;wheel=1;tune=1;itemmin=4306:300;ignore=2287
+AMS1:min=100;margin=25;flips=1;scope=mats;focus=prime;list=2589,2592;tied=50;spend=35;small=15;buy=wheel;tune=1;itemmin=4306:300;ignore=2287
 ```
 
 Claude reads it in your Snapshot and sends back a changed one. On the Setup tab, paste it into **Import** (the whole message can be pasted; the code is found in it) and press **Apply**. The panel and chat then say exactly what changed, for example `Imported 3 changes: smallest profit 1s 0c > 75c; watch list: added Wool Cloth; Silk Cloth: smallest profit 3s 0c.`
@@ -205,16 +205,18 @@ Claude reads it in your Snapshot and sends back a changed one. On the Setup tab,
 | `tied=50`, `spend=35`, `small=15` | The capital limits, in percent: unsold auctions, one flip, the always-allowed small flip |
 | `every=60` | With laser focus on, how often each focus item's full listing is re-read, in seconds (20 to 300). Each re-read is one request the radar does not get; flips straight from the radar need a listing read in the last two minutes |
 | `stake=2838` / `stake=0` | Sets a stake-out on one item, or ends it |
-| `wheel=1`, `tune=1` | Mouse wheel buying; auto-adjust |
+| `buy=wheel` / `key` / `hold` / `click` | How you buy (the older `wheel=1` / `wheel=0` still work) |
+| `key=F` | The key for `buy=key`; modifiers as `SHIFT-F`, `CTRL-F`, `ALT-F` |
+| `tune=1` / `tune=0` | Auto-adjust on or off |
 
 * A code need not carry everything: `AMS1:min=60;watch=+2592` changes those two things and nothing else.
 * With laser focus on **prime items**, your own watch list is watched as well, on top of what the addon picked.
-* Anything in a code that is not understood is left alone and named. A code never changes sharing.
+* Anything in a code that is not understood is left alone and named.
 * A focus code (`AMF1:`) pasted into the same box still works.
 
 ### Auto-adjust: settings that follow what really happens
 
-The **Self-tuning** switch on the Setup tab covers the request pace, the flip profit bar, and two more things. Every change is written down with its reason: on the first rows under the settings, in chat, and in the Snapshot.
+The **Auto-adjust** switch on the Setup tab covers the request pace, the flip profit bar, and two more things. Every change is written down with its reason: on the first rows under the settings, in chat, and in the Snapshot.
 
 | What adjusts | Rule |
 |---|---|
@@ -245,7 +247,7 @@ From that, Claude can send back a **focus code**, for example `AMF1:2589,2592,c7
 | The report showed | What was changed |
 |---|---|
 | One request returns the whole materials class (395 items) | Recorded as fact; the radar is nearly free |
-| With a friend online the radar came round every 8s and under half the request budget was used, while deals lasted 7 to 36 seconds | A radar read that costs 1 or 2 requests is no longer shared out: each player reads on their own clock, every 3s. Work is only split when a read is expensive |
+| The radar came round every 8s and under half the request budget was used, while deals lasted 7 to 36 seconds | A radar read that costs 1 or 2 requests is read on its own clock, back to back |
 | "Sells an hour" was wildly inflated (cancelled auctions counted as sales) | Sales are measured from the cheap end of full listings only; the old figures were discarded |
 | 66 under-market alerts gave 3 deals | The alert bar is now the deal rule's own bar (77% of market at a 20% margin, was a fixed 80%) |
 | 404 routine checks gave 1 deal | Items actually seen under market are checked first |
@@ -311,9 +313,19 @@ The mouse resting in the box pauses nothing. It used to: the radar stood still w
 
 This has not run in the real game yet. What it saves is the radar read and the item check: about half a second against a deal shown straight from the radar, about a second and a half against one that needed an item check.
 
-**No key binding is needed** for the wheel; the addon handles it. If you would rather use a key, the game's own Key Bindings screen (Options, Keybindings, AddOns) lists **AuctionMesh: Buy the best deal**; any key bound there presses the box.
+**Four ways to buy** (Setup tab, **Buy with**; one click changes it). Clicking the box works in all of them.
 
-**Buy with the mouse wheel.** While a deal is on the button, rolling the mouse wheel anywhere on the panel presses Buy; one flick of the wheel is several presses, which covers both steps. With **Mouse wheel buys: on** (Setup tab, the default) the wheel does this anywhere on screen while a deal is up, and goes back to normal the moment there is none. If the game does not accept the wheel as an input, that switches itself off too.
+| Buy with | How |
+|---|---|
+| **Mouse wheel** (the default) | Put the mouse in the snipe box and roll. While a deal is up the wheel buys anywhere on screen, and goes back to scrolling the moment there is none. Confirmed in the real game |
+| **A key: tap it** | Press **Key** on the Setup tab, then the key you want (a modifier can be held with it; mouse side buttons work; Esc cancels). While the Trades tab is open, that key presses the snipe box wherever the mouse is; on other tabs and with the panel closed the key does what it always did. Tap it repeatedly, like rolling the wheel |
+| **A key: hold it down** | Click the snipe box once, then hold any letter key down. The game repeats a held letter many times a second, and every repeat is one input. While the box has the keyboard, keys do not reach the game (you cannot walk or chat); Esc gives it back |
+| **Clicks only** | Neither the wheel nor a key buys; only clicks on the box |
+
+* Tapping or holding with no deal on screen arms the box exactly as rolling does: snipe mode, radar only, and the first input after a deal appears buys it.
+* The key modes have not run in the real game yet. A key bound through the game is a real input, so tapping should behave like the wheel. Holding is less certain: the game may not accept a repeated character as an input for buying. If it refuses one, the addon drops that mode, falls back to one that works and says so on the panel.
+* The Snapshot's settings line and the settings code say which one is in use (`buy=wheel`, `buy=key;key=F`, `buy=hold`, `buy=click`).
+* The game's own Key Bindings screen (Options, Keybindings, AddOns) also lists **AuctionMesh: Buy the best deal**, for a permanent binding.
 
 What the seventh real log showed (version 3.28):
 
@@ -351,7 +363,7 @@ What the fourth real log changed (version 3.19):
 |---|---|
 | 24 Wool Cloth at 1s; a quote for 16 came back as 6 at 1s plus 10 dearer. The deal was dropped as missed | The quote says how many cheap units are left. The deal is offered again at once for those: `6 of 16 still there` |
 | Silk Cloth at 1s was missed four times in a row | After 3 misses in a row on one item, that item is muted for 10 minutes: someone faster is on it, and each try costs requests and your attention |
-| Crafting materials were read every 6 seconds with the radar idle half the time (scope set to the wider one, work split with a friend) | Materials are always read back to back, about every 0.65 seconds, by every player. The other classes are side reads |
+| Crafting materials were read every 6 seconds with the radar idle half the time (scope set to the wider one) | Materials are always read back to back, about every 0.65 seconds. The other classes are side reads |
 | A vendor-price alert waited 3 seconds because the game refreshed its own list of your auctions | That pause is 1 second, not 2 |
 | Six flips in four minutes were skipped as "money tied up", among them 45 Wool Cloth at 32c under a 1s 68c market. All of that money had already sold | Sold gold on its way no longer counts against the limit (see Capital) |
 
@@ -365,14 +377,10 @@ What the third real log changed (version 3.17), all aimed at the seconds before 
 | "Not buyable" appeared again, for units another buyer was taking | That guess is gone. Your own auctions are known from the server's list. After a miss the same units are ignored for 4 seconds (the listing goes on showing sold units for a moment); a repeat miss at the same price waits four times longer each time, up to 10 minutes |
 | The game's list of sold auctions gives the amount paid and the time until pay-out | "Sold: still on its way" uses those figures directly, so the total matches the game's Auctions tab |
 
-**If a friend got it.** When you miss a deal and a friend on the channel bought it, the result says so: `MISSED ... Bob got it`. The gold stayed in the team.
-
-**Who spotted it.** Every deal says `spotted by you` (your own radar) or `spotted by a friend` (it arrived over the channel from a friend's radar). A friend's deal is one they saw first and can click first; the label is on the big button, on the row, in the tooltip, and in the daily report.
-
 What the second real report corrected:
 
 * **Clicks were being lost.** When the auction house was busy the addon held your click and sent it a moment later. The game blocks that, so the click did nothing. Clicks now always go out at once.
-* **The radar was switching itself off.** Any action the game blocked, including one of those held clicks, turned the radar off for the rest of the session. Deals then only arrived second-hand from friends, after they had seen them. Now only three blocked radar reads in a row can do that.
+* **The radar was switching itself off.** Any action the game blocked, including one of those held clicks, turned the radar off for the rest of the session. Now only three blocked radar reads in a row can do that.
 * **"Not buyable (your own auctions?)" was usually wrong.** It was shown whenever the server's price skipped the cheap units, which is also exactly what happens when someone else buys them first. The item was then ignored for 30 minutes. Now it is reported as MISSED, the item is read again, and it is only called not buyable if the cheap units are still listed after the server refused to sell them.
 * **Old category lists were read as new.** The game re-sends its last category list after every item search; reading that as a fresh radar read produced alerts for prices long gone.
 
@@ -384,32 +392,9 @@ What the second real report corrected:
 
 The message is on the big button for 6 seconds, flashes in large text in the middle of your screen, and then stays on the line under the button with its age until the next outcome. That line also keeps a count for the session: "3 got, 1 missed, 2 gone before a click".
 
-### Sharing is off unless you switch it on
+### Nothing is shared
 
-**Sharing: off** is the default, and updating to 3.24 switches it off on existing installs too. While it is off the addon sends nothing to any chat channel or to your guild, uses nothing it receives, and sits in no channel of its own. Everything else works the same: the radar, the snipe box and your own deals need no sharing.
-
-* The switch is on the Setup tab, next to **Who is there?**. The bar at the top of every tab says `sharing off` while it is off.
-* Pressing **Join** (with a channel name and password) or **Use my guild** switches it on. Switching it off leaves the channel; the name and password stay saved, so switching it back on is one click.
-* The guild is used only when you press **Use my guild**. It used to be the fallback whenever no channel had been chosen, which meant a player in a guild was sending to it without having asked for that.
-* When it is on, what is exchanged are hidden addon messages (not chat lines), at most about one a second: prices of the side categories, deals, purchases and what the request engine has measured.
-
-### Sharing: knowing that it worked
-
-Pressing **Join** now reports what actually happened, about two seconds later:
-
-| The line on the Setup tab | Meaning |
-|---|---|
-| red: `NOT connected: wrong password for channel 'X'.` | Someone already uses that channel name with another password |
-| red: `NOT connected: channel 'X' is not joined. Press Join.` | The game did not let you in (bad name, or you are already in 10 chat channels) |
-| orange: `Joined channel 'X'. Nobody else has answered (asked 3s ago).` | You are in, and no other AuctionMesh has replied. Your friend must be online, on the same realm and faction, with exactly the same name and password |
-| green: `Connected on channel 'X' with 1 player: Bob (v3.15.0, heard 4s ago).` | Working. Each friend is named with their addon version and when they were last heard |
-
-* Joining sends a **roll call**: every AuctionMesh on the channel answers within a second or two, so the list fills at once instead of whenever a friend next happens to send something. **Who is there?** repeats it on demand.
-* The first time a friend is heard, chat says `Connected: Bob-Realm is sharing prices with you.`
-* The bar at the top of every tab ends with `1 friend connected` or `no friends connected`.
-* A friend on a version before 3.15 does not answer roll calls; they appear as "older version" once they send anything (within about 2.5 minutes).
-
-Two faults fixed here. A private channel that had not been joined used to fall back to the guild silently, so the panel could say "connected" while two friends in different guilds were not talking. And messages queued while not connected were held back for up to 16 seconds after joining.
+Since version 3.29 the addon has no communication code. It sends no addon messages, joins no chat channel and sends nothing to a guild; there is nothing to switch off. An install that had joined a channel for the old sharing feature leaves it once, ten seconds after the first login with this version, and says so in chat.
 
 ### Moving the panel
 
@@ -523,13 +508,11 @@ The server's limit can't be beaten, so the addon learns how to spend it. Everyth
 | The limit, per scenario | Seconds from "sent" to "server ready", kept separately for each kind of request (category read, next page, item check, more results) and for each hour of the day | The radar interval is planned with what a request costs at this hour |
 | The safe pace | Requests go out the moment the server is ready. Two refusals within 50 requests add a short pause (0.10s, then 0.25s, 0.5s, 1s) | Fewer refused requests, each of which costs a 5 second stop |
 | A faster pace | After 300 clean requests a shorter pause is **tried** for 30 requests. It is kept if none fails. If one fails, the next try waits twice as long | The pause never stays longer than it has to |
-| Where requests pay | Every item check is scored by what asked for it: vendor-price alert, under-market alert, price-drop alert, friend's hint, watch list | Alerts of a kind that keeps being real are checked first |
+| Where requests pay | Every item check is scored by what asked for it: vendor-price alert, under-market alert, price-drop alert, watch list | Alerts of a kind that keeps being real are checked first |
 | The split | Once a minute. Alerts waited more than 4s for a check: 5 points move from radar to checks. Nothing waited and the checks were routine: 5 points move to the radar. Radar share stays between 15% and 70% | A calm market gets a fresher radar; a busy one gets faster confirmations |
 | Waste | Requests the client never sent, and answers that never came | An answer is given up after 4 times the measured cost instead of a fixed 3s |
 
-With friends connected, the measured figures are sent on the channel every 10 minutes at most. A friend who has just installed the addon starts from them and then measures for themselves.
-
-These are fixed, bounded rules fed by measurements, not a neural network. The **Self-tuning** button on the Setup tab freezes the pace, the split and the profit bar where they are (measuring continues); **Forget what was learned** clears it all and needs a second click.
+These are fixed, bounded rules fed by measurements, not a neural network. The **Auto-adjust** button on the Setup tab freezes the pace, the split and the profit bar where they are (measuring continues); **Forget what was learned** clears it all and needs a second click.
 
 What one radar read really costs (items returned, requests used, largest page) is also measured and shown in the radar line: "Radar: 212 items in 5 requests, re-read every 11s. limit 1.6/s."
 
@@ -548,29 +531,13 @@ AuctionMesh uses the cheap, wide one as its radar and spends the narrow one only
 4. **Volume for free.** A drop in an item's listed quantity between two sweeps means units were bought, so every material's trading volume is measured without extra requests.
 5. **Routine.** Each of the 50 watched staples also gets one full look every 5 minutes to keep its market price current.
 
-Compared with re-reading 50 items one by one, this covers every crafting material and uses fewer requests. It should also spot a new cheap listing within one sweep instead of one round. **With friends on the channel.** One request already reads every crafting material, so splitting that between two players gains nothing and only adds waiting: each of you reads materials yourself, back to back, and those reads are not broadcast. What a team adds is ground. Reagents, consumables, gems and enhancements are each read once every 30 seconds by whichever of you gets there first, and the result is shared, so those deals are seen without slowing anyone's main radar. Deals a friend's radar found are labelled as theirs, and a purchase by a friend is announced to the team.
+Compared with re-reading 50 items one by one, this covers every crafting material and uses fewer requests. It should also spot a new cheap listing within one sweep instead of one round.
 
 The game's full-download scan (one request for the entire auction house, allowed once per 15 minutes) is not used.
 
-### Sharing with other players, live
+### Learning from results
 
-Everyone running AuctionMesh on the same hidden channel (or in the same guild) is one network. Nothing extra to set up beyond typing the same channel name and password into the Setup tab once per person. What travels between you, within a second or two:
-
-| Shared | What it does for you |
-|---|---|
-| Lowest price and quantity of every item a friend's sweep sees | **Shared radar:** a friend's sweep triggers a deal check on your side, without you spending a sweep on it |
-| Which category each of you is sweeping | The sweep is split: each category is read by one of you |
-| Market prices from full readings | Fills everyone's price history database |
-| Real sale prices from invoices | Everyone knows what buyers actually paid |
-| "Deal here I can't afford" hints | A friend with more gold gets it checked immediately |
-| Price history (6h, 24h, 3 days, 7 days back) when someone logs in | A newcomer has trends straight away |
-| A presence signal every few minutes | The radar line shows "Sharing live with N other players" (or says nobody is connected) |
-
-Limit set by the game: each player can send about one hidden message a second, so this carries prices and signals, not bulk data.
-
-### Learning from results, together
-
-The addon predicts a resale price for every flip. It now checks every prediction against what happened, and everyone on your channel shares those results, so the rules are tuned on the whole group's trades.
+The addon predicts a resale price for every flip. It checks every prediction against what happened and adjusts the rules from your own results.
 
 **What counts as a result**
 
@@ -585,15 +552,15 @@ The addon predicts a resale price for every flip. It now checks every prediction
 | **Item record** | An item that expired is not flipped again for 12 hours; 24 after two failures in a row | Up to 48 hours; a sale clears it |
 | **Profit bar** | Under 70% of the last 20 flips sold: bar goes up 5 points. Over 90% sold: down 2 points | Between 12% and 50%; reconsidered once per 10 results |
 
-The bottom of the Setup tab shows the current state, for example: "Learning from 23 finished flips (9 yours, 14 from friends): 87% of the last 20 sold, sales came in at 96% of the planned price. Profit bar: 22%."
+The bottom of the Setup tab shows the current state, for example: "Learning from 23 finished flips: 87% of the last 20 sold, sales came in at 96% of the planned price. Profit bar: 22%."
 
-This is scorekeeping and calibration, not a neural network. It needs finished flips to learn from, so it changes nothing at first, and it learns faster the more people on the channel are trading.
+This is scorekeeping and calibration, not a neural network. It needs finished flips to learn from, so it changes nothing at first.
 
 ### The price history database
 
 AuctionMesh keeps a database of price history inside its own saved data (an addon can't query an outside database while you play, so this is the only place it can be used for decisions).
 
-* **What is stored:** one record per item per hour, for 7 days: the market price read from a full live listing, and the trading volume at the time. Readings shared by friends on your channel are recorded too, so the database fills faster with more people.
+* **What is stored:** one record per item per hour, for 7 days: the market price read from a full live listing, and the trading volume at the time.
 * **How it is used:**
   * a deal on an item whose market price fell 10% or more in about 6 hours is refused ("price is falling fast");
   * a slower decline lowers the planned resale price by the same amount;
@@ -608,11 +575,20 @@ It needs a few hours of readings before trends appear. The optional central serv
 The game's addon API has no realm-wide sales history. It offers two real sources, and AuctionMesh uses only those:
 
 * **The complete live listing of an item.** Before judging a deal or pricing a post, the item is searched and every page of its listing is loaded. The "market price" is read from that full listing (rule 2 above). Price history is built only from these readings, at most one per 30 minutes, never from the single lowest price seen while browsing.
-* **Real sales.** When sale gold is taken from your mailbox, the sale invoice says what the buyer actually paid. That is recorded, shown in chat ("Sold: 6 x Linen Cloth at 77c each"), and shared with your friends. When a recent sale is on record, a flip's resale price can't exceed what buyers actually paid, and the deal row says "(buyers paid 77c)".
+* **Real sales.** When sale gold is taken from your mailbox, the sale invoice says what the buyer actually paid. That is recorded, shown in chat ("Sold: 6 x Linen Cloth at 77c each"). When a recent sale is on record, a flip's resale price can't exceed what buyers actually paid, and the deal row says "(buyers paid 77c)".
 
 Item tooltips show all three: cheapest listing, market price from the full listing, and what buyers paid.
 
 ### Bags tab (selling)
+
+**The most valuable way out is the recommendation.** Something bought under vendor price is not automatically sold to a vendor. For everything you hold the addon compares the two ways out with real figures:
+
+| Way out | Figure used |
+|---|---|
+| Vendor | The vendor price, in your hand at once |
+| Auction house | The item's live price (checked whenever the auction house is open, re-checked every 45 seconds), one step under the cheapest other seller, minus the 5% cut, and minus the posting fee on a realm where it does not come back. With the auction house closed: the item's last full listing (up to 6 hours old), or the radar's last read (up to 10 minutes old) |
+
+The auction house is recommended when it pays at least **10% more** than the vendor; otherwise the vendor's certain gold wins. Example from a real log: Silk Cloth bought at 99c, vendor price 1s 50c, market 1s 98c. The auction house leaves 1s 87c each after the cut, so the row says **Post it**, and the drawer adds what a vendor would give right now. If a live check finds the market no better than the vendor, the row goes back to **Sell to any vendor** and the item is checked again in 10 minutes.
 
 Everything you bought is listed here, with what you paid, what it sells for, the profit per item, and the one thing to do with it:
 
@@ -627,7 +603,8 @@ Everything you bought is listed here, with what you paid, what it sells for, the
 | It says | What happens |
 |---|---|
 | **In your mailbox** | Open any mailbox. AH purchases and sale gold are collected automatically, and the inbox is checked against your bags. |
-| **Sell to any vendor** | Talk to any vendor. Nothing is sold by itself: press **Sell all to vendor** (it shows the total you'll receive) or **Sell** on a single row. Only the units you bought are sold, never copies you already owned. |
+| **Sell to any vendor** | A vendor is the best way out for this item. Talk to any vendor. Nothing is sold by itself: press **Sell all to vendor** (it shows the total you'll receive) or **Sell** on a single row. Only the units you bought are sold, never copies you already owned. |
+| **Post it: worth more than at a vendor** | It was bought under vendor price, but the auction house pays more (see above). Open the auction house and press **Post**. At a vendor the row says **Worth more on the auction house** and still has its own **Sell** button; **Sell all to vendor** leaves it alone. |
 | **Ready to post** | Press **Post** (or **Post next**). The price is 1 step under the cheapest other seller, and never below what you paid plus the deposit plus the 5% cut. It posts everything of that item in one click. |
 | **Checking the price... / Price check is next** | The live price for this item is being fetched (about a second). The **Post** button is on the row all the same: a click then asks for the price first and posts on the next click. Prices are refreshed every 45 seconds while an item waits, so this is normally only seen in the first moment after the auction house opens. (The button used to disappear whenever a price was more than 90 seconds old, while **Post next** stayed.) |
 | orange text on the row | **Why the last press of Post did nothing**, shown next to the button for 4 seconds: `Getting the live price first. Press Post again in a second.`, `The auction house is busy for a moment. Keep pressing.`, `Posting: waiting for the auction house to confirm.`, `Not enough gold for the posting fee (1s 00c).`, or `Not posted. The game says: ...` with the game's own error. Post can be pressed as fast as you like: a press with no live price asks for one and no longer holds that price check back (it used to, so spamming Post could do nothing for as long as you kept pressing). The mouse resting on a button pauses nothing either. |
@@ -649,65 +626,25 @@ The top line of the window shows the result of your last click for 10 seconds, s
 
 ### If something goes wrong
 
-* Press **Log** on the Setup tab, then Ctrl+A, Ctrl+C, and paste it to Claude. It records every auction house call, every error, and every decision (which listings a deal was based on, quotes, purchases, posts).
-* **Rebuild from purchases** on the Setup tab rebuilds the Bags list from your purchase log. To track anything else, drag it from your bags onto the panel.
+* Press **Log** on the Setup tab (the log window also has **Last session's log**, for after a reload), then Ctrl+A, Ctrl+C, and paste it to Claude. It records every auction house call, every error, and every decision (which listings a deal was based on, quotes, purchases, posts).
+* To track an item the Bags tab does not show, drag it from your bags onto the panel.
 * All requests go through one queue, so your clicks go first and background scanning slows down automatically after an "Internal auction error".
 
 ## What WoW lets addons do
 
 | Question | Answer |
 |---|---|
-| Can an addon make HTTP or API calls to a server? | **No.** Addon Lua has no sockets and no HTTP. That's why there's a companion app (below). |
-| Can addons talk to each other in game? | **Yes**, with hidden addon messages (`C_ChatInfo.SendAddonMessage`). Players never see them in chat. |
-| With no limits? | **No.** Each message is at most 255 bytes, and the client throttles each prefix to a burst of about 10 messages, then about 1 per second. Sending too much can also disconnect you. |
-| Is a chat channel the best route? | **Yes.** On a private custom channel, one send reaches every member at once. Whispers would need one send per friend. AuctionMesh joins a password-protected channel and hides it from your chat windows. Guild is the fallback. |
-| How do we avoid the 15-minute full scan? | **Swarm scanning** (below). Normal category searches, split across everyone. |
+| Can an addon reach the internet? | **No.** Addon Lua has no sockets and no HTTP |
+| Can it buy by itself? | **No.** Asking the server for a price needs a real input from you (a click, a wheel notch, a key). The addon can then send the purchase itself once the price is back (confirmed in the real game) |
+| Can it sell by itself? | It could at a vendor, but it does not: nothing is sold or posted without your click |
+| How fast can it ask the auction house? | About one request every half second; the game queues anything faster. The radar, the item checks and your purchases all share that |
+| Does it talk to other players? | **No.** Since version 3.29 the addon has no communication code at all: no addon messages, no chat channel, nothing sent to a guild |
 
-Since bandwidth is the scarce resource, the protocol is built to save bytes:
+Everything you browse by hand in the game's own auction screens is also recorded in the price book.
 
-* **Compact binary-in-text encoding.** About 16 to 20 price records fit in one 255-byte message (item, copper price, quantity and timestamp each take a few characters).
-* **Only new information is sent.** A price is broadcast only if it's new, it changed, its quantity moved more than 25%, or our copy is more than 30 minutes old. If a friend already broadcast the same data, yours is dropped.
-* **Priority lanes on two prefixes.** Control messages go first, then live prices, then bulk catch-up. Each prefix has its own throttle budget, so catch-up never delays live prices.
-* **Hash-based catch-up.** When you log in, you send 32 bucket hashes in one message. Only friends whose buckets differ answer, and they split the differing buckets between them. Each one streams only the records newer than your last logout.
+## Optional: a price table kept outside the game
 
-## Swarm scanning (the speed feature)
-
-Scanning starts automatically when the AH opens:
-
-1. The AH is split into about 100 work units, one per item class or subclass (Herbs, Ore, Cloth, Potions, Plate…).
-2. Each friend claims the **stalest unclaimed** unit and browses it. One `SendBrowseQuery` returns the lowest price and listed quantity of every item in that category. When it's finished, the friend marks it done and the prices go out over the mesh.
-3. Every player has their **own** query throttle, so the swarm scales with the number of people. Faster players automatically claim more units.
-4. Units that anyone scanned in the last 5 minutes are skipped. When everything is fresh, the swarm waits, so you get a continuous rolling scan instead of one big scan every 15 minutes.
-
-Simulated speedup (100 categories, 1 query per second per player, 1 to 3 pages each): **1 player 212 s → 4 players 53 s → 8 players 29 s**, with no duplicated queries.
-
-
-Passive capture is always on: every browse page, commodity search and item search you do by hand is shared too.
-
-## The central database (companion app)
-
-Because addons can't reach the internet, the central database is synced from **outside** the game:
-
-```
- in game  ──(hidden addon channel, real time)──  in game
-    │ SavedVariables (on /reload or logout)            ▲ Seed.lua (read at login or /reload)
-    ▼                                                 │
- companion/mesh_companion.py  ──HTTPS──  server/mesh_server.py (SQLite)
-```
-
-Run the server once (Python 3.9+, no dependencies):
-
-```bash
-MESH_TOKEN=pick-a-secret python3 server/mesh_server.py --port 8787 --db mesh.sqlite
-```
-
-Each player runs the companion next to the game:
-
-```bash
-python3 companion/mesh_companion.py --wow "C:/Program Files (x86)/World of Warcraft/_forever_" --account YOURACCOUNT --server https://your-server:8787 --token pick-a-secret --watch
-```
-
-The server and every client use the same conflict rule: the newer timestamp wins; on equal timestamps, the lower price wins. That way everyone ends up with the same table. Put the server behind HTTPS if it's reachable from the internet.
+The addon itself sends nothing to anyone. The repository also holds an optional pair of Python programs (`companion/`, `server/`) that run outside the game: the companion reads the addon's saved prices from disk after a `/reload` or logout and can write a price table back as `Seed.lua`. Nothing in the addon needs them, and they are not started by it.
 
 ## Changelog
 
@@ -716,8 +653,7 @@ Every release, newest first, is in [CHANGELOG.md](CHANGELOG.md).
 ## Install & use
 
 1. Copy the `AuctionMesh` folder into `World of Warcraft/_forever_/Interface/AddOns/`. The folder name may differ on your install; it's the one Auctioneer lives in.
-2. Everyone in the group opens the **Setup** tab once, types the same channel name and password into the two boxes and presses **Join**. Or press **Use my guild** to share with guild members instead.
-3. Open the AH. The window opens and scanning starts by itself. Price lines also show up in item tooltips.
+2. Open the auction house. The panel opens and price reading starts by itself. Price lines also show up in item tooltips.
 
 There are no commands to remember. The panel opens with the auction house; elsewhere, click AuctionMesh in the game's addon list next to the minimap. Everything that can be changed is a control on the **Setup** tab.
 
@@ -728,8 +664,7 @@ lua5.1 tests/ui_smoke.lua      # whole addon against a fake game client: scan, b
 lua5.1 tests/deals_test.lua    # deal rules, posting prices, price history
 lua5.1 tests/purchase_test.lua # purchase confirmation + mailbox check
 lua5.1 tests/seller_test.lua   # posting / vendor safety
-lua5.1 tests/sim.lua           # multi-player network simulator
-lua5.1 tests/tuner_test.lua    # request-budget learner: limit, pace trials, split, sharing
+lua5.1 tests/tuner_test.lua    # request-budget learner: limit, pace trials, split
 lua5.1 tests/journal_test.lua  # trade journal: purchase to sale, partial sales, expiry, totals
 lua5.1 tests/scout_test.lua    # opportunity counts, prime items, laser focus, focus codes, daily report
 python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
@@ -737,14 +672,12 @@ python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 
 ## Known limits / to verify in game
 
-* **Not yet run in the real client.** The protocol logic is tested offline against stubbed WoW APIs. The AH calls follow the retail `C_AuctionHouse` API, which Auctioneer's Forever build also uses.
+* **Confirmed in the real game so far** (from logs): one-click buying, buying with the mouse wheel, the radar reads, posting, the mailbox and the import code. **Not yet tried in the real game:** buying with a key (tap or hold), the stake-out, and the vendor-or-auction-house recommendation. Holding a key relies on the game repeating typed characters and accepting them as inputs for buying; if the game refuses, that mode switches itself off and says so.
 * **The request engine's learning is tested with a fake clock only.** The rules (pause steps, trial lengths, split limits) are sensible starting values, not values proven on a live realm. The Setup tab shows what it actually measured; the log has a `TUNER` line for every change it makes.
 * **Prime items use starting thresholds** (30 sold an hour, 10 minutes of watching, top 12). They are meant to be adjusted from the daily reports.
 * **The two "Sold" lines** rely on the game's sale invoices (`seller_temp_invoice` with its arrival time). If this realm delivers sale gold with no delay, "still on its way" simply stays empty.
 * If the client blocks automatic `SendBrowseQuery` (an `ADDON_ACTION_BLOCKED` message appears), automatic price reading will not work on this client; tell me and I'll add a button for it.
-* While the swarm runs, it uses the AH browse list, so don't browse by hand at the same time.
+* While the radar runs, it uses the AH browse list, so don't browse by hand at the same time.
 * The sniper never buys by itself. Every purchase is your click, which the game requires anyway. Check the numbers on expensive buys.
 * **Deposits** are counted as a cost, since you lose them if an item doesn't sell. The amount comes from the game's own deposit calculation where that's available. Otherwise it's estimated at 15% of the vendor price, then replaced with the real figure after your first post of that item. Until an item's details have loaded, it's never treated as an AH flip.
 * Prices are stored per item ID, so different item levels of the same gear collapse into the cheapest one. Battle pets are stored per species.
-* Midnight blocks addon messages in some instanced or combat situations. Sends are paused in combat and retried automatically.
-* Anyone on the channel can send data, so only share the channel password with people you trust.
