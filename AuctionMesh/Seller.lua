@@ -556,7 +556,9 @@ function Seller:NextToPrice()
     if self.priority then
         local k = self.priority
         self.priority = nil
-        if not last[k] or now - last[k] >= 5 then last[k] = now; return k end
+        -- you pressed Post on it: checked at once (not more than one check per 1.5s, however fast you press)
+        if not last[k] or now - last[k] >= 1.5 then last[k] = now; return k end
+        self.priority = k -- too soon: keep it for the next turn instead of dropping it
     end
     for key, f in pairs(flips()) do
         if f.kind == "FLIP" and (bagCount[key] or 0) > 0 then
@@ -601,6 +603,7 @@ function Seller:OnResults(key, rows, commodity)
     local f = flips()[key]
     if not f or f.kind ~= "FLIP" then return end
     if self.pending and self.pending.key == key then self.pending = nil end
+    if self.note and self.note.key == key then self.note = nil end -- the price it was waiting for is here
     -- The posting fee comes back when the item sells, so the lowest acceptable
     -- price only has to cover what you paid plus the 5% cut.
     local feeEach = 0
@@ -633,29 +636,57 @@ function Seller:Busy()
     return self.posting ~= nil or GetTime() < (self.quietUntil or 0)
 end
 
+-- WHY NOTHING HAPPENED. Every press of Post that does not post says why, on
+-- the row itself (next to the button being pressed), for 4 seconds. Chat gets
+-- the message once, not once per press.
+function Seller:Note(key, text)
+    local was = self.note
+    self.note = { key = key, text = text, at = GetTime() }
+    if not was or was.text ~= text or GetTime() - was.at > 4 then
+        if ns.Print then ns.Print(nameOf(key) .. ": " .. text) end
+    end
+    if ns.UI then ns.UI:Dirty() end
+end
+
+function Seller:NoteFor(key)
+    local n = self.note
+    return (n and n.key == key and GetTime() - n.at < 4) and n.text or nil
+end
+
 -- Must run from a click or keypress (posting is hardware-event protected).
 function Seller:Post(key)
-    if self.posting then say("Still posting the last item, one moment..."); return end
-    local AH = C_AuctionHouse
-    if not ns.Gate:ReadyForUser() then
-        say("The Auction House is busy, press again in a second.")
-        self.quietUntil = GetTime() + 1.5
+    if self.posting then
+        self:Note(self.posting.key, "Posting: waiting for the auction house to confirm.")
         return
     end
+    local AH = C_AuctionHouse
+    -- The price first. A press with no live price only asks for one; it must
+    -- NOT quieten the background, because the price check is background work.
+    -- (Pressing Post repeatedly used to push the price check back each time,
+    -- so the button could be spammed for as long as you liked with no effect.)
     local p = self.prices[key]
     if not p or not p.price or GetTime() - p.at >= PRICE_TTL then
         self.priority = key
-        say(nameOf(key) .. ": checking current price, click again in a moment.")
+        self:Note(key, (p and p.hold) and "Not posted: the market is below what you paid."
+            or "Getting the live price first. Press Post again in a second.")
+        return
+    end
+    if not ns.Gate:ReadyForUser() then
+        self.quietUntil = GetTime() + 1.0
+        self:Note(key, "The auction house is busy for a moment. Keep pressing.")
         return
     end
     local bag, slot = self.FindInBags(key)
-    if not bag then self:Refresh(); return end
+    if not bag then self:Note(key, "Not found in your bags."); self:Refresh(); return end
     local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
     local qty = self:PostQty(key, p)
-    if qty <= 0 then self:Refresh(); return end
+    if qty <= 0 then self:Note(key, "None of it is in your bags."); self:Refresh(); return end
     local deposit = (p.commodity and AH.CalculateCommodityDeposit(key, DURATION, qty)
         or AH.CalculateItemDeposit(loc, DURATION, qty)) or 0
-    if deposit > GetMoney() then say("Not enough gold for the deposit (" .. money(deposit) .. ")."); return end
+    if deposit > GetMoney() then
+        self:Note(key, "Not enough gold for the posting fee (" .. Seller.short(deposit) .. ").")
+        return
+    end
 
     ns.Gate:Use(("post %dx %s @%d (deposit %d, commodity=%s, step=%d)"):format(qty, tostring(key), p.price, deposit, tostring(p.commodity), Deals.cfg.step))
     self.posting = { key = key, qty = qty, before = bagCount[key] or 0, price = p.price,
@@ -670,7 +701,7 @@ function Seller:Post(key)
     if not ok then
         ns.Log("POST refused by client for %s", tostring(key))
         self.posting = nil
-        say("The game refused that post. " .. nameOf(key) .. " stays on the Bags tab.")
+        self:Note(key, "The game refused that post. Press again.")
         return
     end
     self:Refresh()
@@ -679,7 +710,7 @@ function Seller:Post(key)
         local q = Seller.posting
         if q and q.key == key and q.at == Seller.posting.at then
             Seller.posting = nil
-            say(nameOf(key) .. " wasn't posted (no change in your bags); it's still on the Bags tab.")
+            Seller:Note(key, "Not posted: the auction house did not take it. Press Post again.")
             Seller:Refresh()
         end
     end)
@@ -692,6 +723,7 @@ function Seller:CheckPosted()
     local gone = q.before - (bagCount[q.key] or 0)
     if gone <= 0 then return end
     self.posting = nil
+    if self.note and self.note.key == q.key then self.note = nil end
     ns.Log("POST confirmed by bags: %s -%d", tostring(q.key), gone)
     -- Sale invoices only carry the item's name: remember which item it is.
     AuctionMeshDB.names = AuctionMeshDB.names or {}
@@ -719,23 +751,24 @@ end
 function Seller:OnError(msg)
     if not self.posting then return end
     ns.Log("POST error for %s: %s", tostring(self.posting.key), tostring(msg))
+    local key = self.posting.key
     self.posting = nil
-    self.quietUntil = GetTime() + 2
-    say("Post failed: " .. tostring(msg) .. ". Item kept on the Bags tab; press again in a moment.")
+    self.quietUntil = GetTime() + 1
+    self:Note(key, "Not posted. The game says: " .. tostring(msg))
     self:Refresh()
 end
 
 -- Post-next for the keybind: first AH item with a ready price.
 function Seller:PostNext()
-    if self.posting then say("Still posting the last item, one moment..."); return end
+    if self.posting then return self:Post(self.posting.key) end
     for _, e in ipairs(self:Entries()) do
         local p = e.action == "AH" and self.prices[e.key]
         if p and p.price and GetTime() - p.at < PRICE_TTL then return self:Post(e.key) end
     end
     for _, e in ipairs(self:Entries()) do
-        if e.action == "AH" then self.priority = e.key; say("Pricing items, press again in a moment."); return end
+        if e.action == "AH" then return self:Post(e.key) end -- no live price yet: asks for it and says so on the row
     end
-    say("Nothing ready to post.")
+    say("Nothing to post.")
 end
 
 ---------------------------------------------------------------- recovering / adding items

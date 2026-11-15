@@ -37,7 +37,7 @@ ready = false; S:Post(2770); ok(S.posting == nil and AuctionMeshDB.flips[2770], 
 ready = true; T = T + 3
 print("-- post rejected (bags unchanged)")
 S:Post(2770); ok(S.posting ~= nil, "post in flight")
-S:Post(2770); ok(#printed > 0 and printed[#printed]:find("Still posting"), "second press while posting is ignored")
+S:Post(2770); ok(#printed > 0 and printed[#printed]:find("Posting: waiting for the auction house to confirm", 1, true), "second press while posting is ignored")
 S:ScanBags(); S:CheckPosted(); advance(5)
 ok(S.posting == nil and AuctionMeshDB.flips[2770] and AuctionMeshDB.flips[2770].units == 20, "rejected post: item stays in Flip Bag")
 print("-- error message")

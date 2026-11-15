@@ -252,11 +252,31 @@ do  -- the row's Post button and the Post next button are there together, always
     check(r[1] and r[1]:find("%[Post%]") and not r[1]:find("Ready to post") and AuctionMeshPostButton:IsShown(),
         "with no live price yet the row still has its Post button, next to Post next")
     posted = {}
-    click(1)
+    click(1); UI:Render()
     check(#posted == 0, "a click then asks for the price first; nothing is posted at a price that was not checked")
+    r = rowsText()
+    print("     " .. tostring(r[1]))
+    check(r[1] and r[1]:find("Getting the live price first. Press Post again in a second.", 1, true), "and the row itself says why nothing was posted")
     advance(3); UI:Render()
     r = rowsText()
-    check(Se:PriceReady(2589) and r[1] and r[1]:find("Ready to post"), "and the price is there a moment later")
+    check(Se:PriceReady(2589) and r[1] and r[1]:find("Ready to post"), "the price is there a moment later and the row says Ready to post")
+    -- the auction house refuses a post: the reason is on the row
+    do
+        local realPost = C_AuctionHouse.PostCommodity
+        C_AuctionHouse.PostCommodity = function() fire("UI_ERROR_MESSAGE", 1, "You don't have enough money to post that auction") end
+        click(1); UI:Render()
+        r = rowsText()
+        print("     " .. tostring(r[1]))
+        check(#posted == 0 and r[1] and r[1]:find("Not posted. The game says: You don't have enough money to post that auction", 1, true),
+            "a refused post shows the game's own reason on the row")
+        C_AuctionHouse.PostCommodity = realPost
+        advance(5); UI:Render()
+    end
+    -- pressing Post over and over with no price: the price check is not held back, and the post goes out
+    Se.prices[2589] = nil; posted = {}
+    for _ = 1, 10 do click(1); advance(0.2) end
+    check(#posted == 1 and posted[1].qty == 6 and posted[1].price == 77,
+        "spamming Post with no price yet: the price arrives and the item is posted once (each press used to push the price check back)")
 end
 click(1); advance(1)
 check(posted[1] and posted[1].qty == 6 and posted[1].price == 77 and AuctionMeshDB.flips[2589] == nil, "one click posted all 6 at 77c; removed after bags confirmed")

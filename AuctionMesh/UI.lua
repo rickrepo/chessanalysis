@@ -160,6 +160,10 @@ local function fillSell(r, e, short)
     local busy = Se.pending and Se.pending.key == e.key
     if Se.posting and Se.posting.key == e.key then busy = true end
     local text, button = STATE[e.action](e, ready, busy)
+    if Se.posting and Se.posting.key == e.key then text = GOLD .. "Posting...|r" end
+    -- why the last press of Post did nothing, right next to the button
+    local why = e.action == "AH" and Se:NoteFor(e.key)
+    if why then text = ORANGE .. why .. "|r" end
     r.state:SetText(text)
     local paid, sell, _, profit, live = Se:Numbers(e)
     r.c[1]:SetText(tostring(e.count))
