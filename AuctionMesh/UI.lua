@@ -131,11 +131,13 @@ local function fillBuy(r, d, short)
 end
 
 local STATE = {
+    -- The Post button is on the row whenever the auction house is open. With
+    -- no live price yet, a click on it asks for the price first.
     AH = function(e, ready, busy)
         if not ahOpen() then return GOLD .. "Open the AH to post|r", nil end
-        if busy then return GREY .. "Checking price...|r", nil end
         if ready then return GOLD .. "Ready to post|r", "Post" end
-        return GREY .. "Waiting for price check|r", nil
+        if busy then return GREY .. "Checking the price...|r", "Post" end
+        return GREY .. "Price check is next|r", "Post"
     end,
     VENDOR = function() return GREEN .. "Sell to any vendor|r", merchantOpen() and "Sell" or nil end,
     MAIL = function(e) return BLUE .. (e.seen and "In your mailbox" or "In your mailbox (not checked yet)") .. "|r", nil end,
@@ -154,8 +156,7 @@ local function fillSell(r, e, short)
     local Se = ns.Seller
     local name = ns.Sniper.nameOf(e.key)
     r.name:SetText(e.count > 1 and (name .. " x" .. e.count) or name)
-    local p = Se.prices[e.key]
-    local ready = p and p.price and GetTime() - p.at < 90
+    local ready = Se:PriceReady(e.key)
     local busy = Se.pending and Se.pending.key == e.key
     if Se.posting and Se.posting.key == e.key then busy = true end
     local text, button = STATE[e.action](e, ready, busy)
@@ -677,7 +678,11 @@ function UI:Render()
     end
     frame.footer:SetText(table.concat(parts, "    "))
 
-    frame.post:SetShown(tab == "SELL" and ahOpen())
+    do  -- "Post next" only when there is something to post
+        local toPost = false
+        for _, e in ipairs(entries) do if e.action == "AH" then toPost = true end end
+        frame.post:SetShown(tab == "SELL" and ahOpen() and toPost)
+    end
     do  -- vendor sales always need your click
         local nv, gain = 0, 0
         for _, e in ipairs(entries) do

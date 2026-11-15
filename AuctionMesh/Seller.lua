@@ -19,7 +19,20 @@ ns.Seller = Seller
 local floor, min, max = math.floor, math.min, math.max
 local DURATION = 1          -- 12h: cheapest deposit
 local DURATION_HOURS = 12
-local PRICE_TTL = 90        -- a computed post price is trusted this long
+-- A computed post price is trusted for PRICE_TTL seconds and is checked again
+-- once it is PRICE_REFRESH old, so it never runs out while the item is waiting
+-- to be posted. (It used to be checked again only after it had run out: the
+-- row's Post button then disappeared until the new price arrived, while the
+-- "Post next" button stayed.)
+local PRICE_TTL = 120
+local PRICE_REFRESH = 45
+Seller.PRICE_TTL = PRICE_TTL
+
+-- True when this item has a live price that Post can use right now.
+function Seller:PriceReady(key)
+    local p = self.prices[key]
+    return (p and p.price and GetTime() - p.at < PRICE_TTL) and true or false
+end
 local HOLD_TTL = 600        -- re-check held items after this
 local PRICE_TIMEOUT = 6
 local LAST_BAG = 5          -- 0-4 bags + reagent bag
@@ -510,7 +523,7 @@ function Seller:NextToPrice()
     for key, f in pairs(flips()) do
         if f.kind == "FLIP" and (bagCount[key] or 0) > 0 then
             local p = self.prices[key]
-            local ttl = (p and p.hold) and HOLD_TTL or PRICE_TTL
+            local ttl = (p and p.hold) and HOLD_TTL or PRICE_REFRESH
             -- at most one price check per item every 20s, whatever else happens
             if (not p or now - p.at >= ttl) and (not last[key] or now - last[key] >= 20) then
                 last[key] = now

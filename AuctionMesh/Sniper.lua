@@ -169,7 +169,10 @@ function Sniper:Search(key, src, waited, from)
         if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(key) end
         self.checkedAt[key] = GetTime() - TRIGGER_MIN + 4 -- retry in ~4s
         local Se = ns.Seller
-        if Se and Se.pending and Se.pending.key == key then Se.pending = nil end
+        if Se and Se.pending and Se.pending.key == key then
+            Se.pending = nil
+            if Se.pricedAt then Se.pricedAt[key] = nil end -- not sent: do not make it wait 20s for another try
+        end
         return false
     end
     ns.Gate:Use("search " .. tostring(key), "search")
@@ -739,7 +742,10 @@ function Sniper:Tick()
         if unsent or now - sr.at > timeout then
             if ns.Tuner then ns.Tuner:Wasted(unsent and "unsent" or "timeout") end
             local Se = ns.Seller
-            if Se and Se.pending and Se.pending.key == sr.key then Se.pending = nil end
+            if Se and Se.pending and Se.pending.key == sr.key then
+                Se.pending = nil
+                if Se.pricedAt then Se.pricedAt[sr.key] = nil end -- the answer never came: ask again at once
+            end
             self.searching = nil
         end
     end

@@ -238,10 +238,31 @@ MailFrame:Show(); fire("MAIL_SHOW"); advance(2); MailFrame:Hide(); fire("MAIL_CL
 UI.tab = "SELL"; UI:Render(); advance(6)
 r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
 check(r[1] and r[1]:find("Ready to post") and r[1]:find("Paid 20c  >  Sell 77c  >  %+53c each") and r[1]:find("%[Post%]"), "ready to post with live price and profit after the cut")
+do  -- the row's Post button and the Post next button are there together, always
+    local Se = ns.Seller
+    check(AuctionMeshPostButton:IsShown(), "Post next is shown while something is waiting to be posted")
+    local was = Se.prices[2589].at
+    advance(60); UI:Render()
+    check(Se.prices[2589].at > was and Se:PriceReady(2589), "the price is checked again before it runs out (it used to run out first, and the Post button vanished)")
+    -- even with no price at all (just opened, or the answer is late) the button stays
+    local keep = Se.prices[2589]
+    Se.prices[2589] = nil; UI:Render()
+    r = rowsText()
+    print("     " .. tostring(r[1]))
+    check(r[1] and r[1]:find("%[Post%]") and not r[1]:find("Ready to post") and AuctionMeshPostButton:IsShown(),
+        "with no live price yet the row still has its Post button, next to Post next")
+    posted = {}
+    click(1)
+    check(#posted == 0, "a click then asks for the price first; nothing is posted at a price that was not checked")
+    advance(3); UI:Render()
+    r = rowsText()
+    check(Se:PriceReady(2589) and r[1] and r[1]:find("Ready to post"), "and the price is there a moment later")
+end
 click(1); advance(1)
 check(posted[1] and posted[1].qty == 6 and posted[1].price == 77 and AuctionMeshDB.flips[2589] == nil, "one click posted all 6 at 77c; removed after bags confirmed")
 UI.tab = "SELL"; UI.notice = nil; UI:Render()
 check(#rowsText() == 0, "Bags tab is empty once everything is posted")
+check(not AuctionMeshPostButton:IsShown(), "with nothing to post there is no Post next button either")
 UI.tab = "BUY"; UI:Render()
 r = rowsText(); for _, l in ipairs(r) do print("     " .. l) end
 check(r[1] and r[1]:find("Linen Cloth x6") and r[1]:find("LISTED") and r[1]:find("+3s18c", 1, true), "the posted auction is on the Trades tab as LISTED with its expected profit")
