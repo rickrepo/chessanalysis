@@ -614,6 +614,20 @@ function UI:RenderSetup()
         self.chanFilled = true
     end
     local lines = ns.Tuner:Lines()
+    do  -- what the auto-adjust last changed, first, so it is never a surprise
+        local a = ns.Auto and ns.Auto:Lines(2) or {}
+        if cfg.tune == false then
+            table.insert(lines, 1, { "Auto-adjust", "off: nothing changes by itself (Self-tuning switch above)" })
+        elseif #a == 0 then
+            table.insert(lines, 1, { "Auto-adjust", "on: watching. Smallest profit is reviewed every 10 minutes of use" })
+        else
+            for i = #a, 1, -1 do
+                local age = GetServerTime() - a[i].t
+                table.insert(lines, 1, { i == 1 and "Auto-adjust, last change" or "Auto-adjust, before that",
+                    a[i].m .. "  (" .. (age < 90 and (age .. "s") or (floor(age / 60) .. " min")) .. " ago)" })
+            end
+        end
+    end
     for i = 1, #sp.rows do
         local l = lines[i]
         sp.rows[i].label:SetText(l and l[1] or "")
@@ -1136,12 +1150,12 @@ function UI:Create()
         "Click to change.\nOff: every material is watched.\nPrime items: the addon picks the items measured to sell fastest with the most gold moving, and checks each one every 30 seconds.\nMy own list: items you added in the drawer, or a focus code.\nVendor-price deals are always shown, whatever the focus.")
     sp.focus:SetPoint("TOPRIGHT", 0, y(5) + 5)
 
-    setting(y(6), "Focus code (paste one you were given)")
+    setting(y(6), "Import: paste what Claude sent, then Apply")
     sp.apply = tip(button(sp, 50, "Apply", function()
-        if ns.Do.FocusCode(sp.code:GetText()) then sp.code:SetText("") end
-    end), "A focus code starts with AMF1: and lists the items to focus on. Applying it switches laser focus to that list.")
+        if ns.Do.Import(sp.code:GetText()) then sp.code:SetText("") end
+    end), "Paste a settings code (it starts with AMS1:) or a focus code (AMF1:), or the whole message it came in: the code is found in the text. Apply sets everything in it and says exactly what changed: smallest profit, flip margin, what the radar reads, laser focus, items added to or removed from your watch list, a smallest profit for single items, items to ignore. Sharing is never changed by a code. Your current code is in the Snapshot.")
     sp.apply:SetPoint("TOPRIGHT", 0, y(6) + 5)
-    sp.code = box(196, false, 400)
+    sp.code = box(196, false, 4000)
     sp.code:SetPoint("RIGHT", sp.apply, "LEFT", -8, 0)
 
     setting(y(7), "The panel")
@@ -1174,7 +1188,7 @@ function UI:Create()
     sp.share:SetPoint("RIGHT", sp.shareOn, "LEFT", -8, 0)
     sp.share:SetWordWrap(false)
 
-    setting(y(10), "Self-tuning: pace, split of requests, profit bar")
+    setting(y(10), "Auto-adjust: pace, profit bar, smallest profit, quiet time")
     sp.forget = tip(button(sp, 170, "Forget what was learned", function()
         -- two clicks, so it can't happen by accident
         if UI.forgetUntil and GetTime() < UI.forgetUntil then
@@ -1346,6 +1360,7 @@ end
 
 function UI:SetMinProfit(copper)
     copper = math.max(1, math.floor(copper))
+    if ns.Auto then ns.Auto:Manual("min") end -- (ignored when the auto-adjust itself is the one setting it)
     AuctionMeshDB.cfg.minProfit = copper
     ns.Deals.cfg.minProfit = copper
     local S = ns.Sniper

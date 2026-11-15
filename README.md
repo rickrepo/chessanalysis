@@ -130,10 +130,10 @@ Nothing has to be typed in chat. The Setup tab has a control for everything that
 | Flips may tie up | The most of your money that may sit in auctions that have not sold: 30%, 50%, 70% or 100% |
 | What the radar reads | Click to change: crafting materials only, all money-makers, whole auction house. Materials are read about every second in all three |
 | Laser focus | Click to change: off, prime items (picked from measured activity), or my own list |
-| Focus code | A box and **Apply**, for a code you were given (see below) |
+| Import | A box and **Apply**: paste a settings code (or the whole message it came in) and everything in it is set |
 | The panel | Inside the auction house window or a window of its own; opens by itself on or off |
 | Share prices with friends | **Sharing: off** by default: nothing is sent anywhere. To use it: channel name, password, **Join**; or **Use my guild**. The line underneath says whether you are connected and to whom; **Who is there?** asks everyone to answer |
-| Self-tuning | One switch for the pace, the split of requests and the profit bar. **Forget what was learned** needs a second click |
+| Auto-adjust (Self-tuning switch) | One switch for the pace, the split of requests, the profit bar, the smallest profit and the radar's quiet time. **Forget what was learned** needs a second click |
 | Share with Claude | **Daily report** (once a day), **Log** and **Last session's log** (when something looks wrong), **Rebuild from purchases** |
 
 The heading of the Setup tab shows the installed version, e.g. `SETTINGS (AuctionMesh version 3.20.0)`. Hovering a button explains it. Below the controls is everything the request engine has learned.
@@ -180,6 +180,46 @@ A **Snapshot** button sits on the panel's header, on every tab. It opens one sho
 | WHY CHECKS WERE NOT DEALS | The eight most common reasons today |
 | LAST PURCHASES | The last 12, each with what became of it |
 | ENGINE | Minutes working, how often the radar read, the server's request limit, checks, deals, purchases |
+
+### Import: paste what Claude sent
+
+The Snapshot ends with your **settings code**, one line that holds every setting that decides what is shown as a deal:
+
+```
+AMS1:min=100;margin=25;flips=1;scope=mats;focus=prime;list=2589,2592;tied=50;spend=35;small=15;wheel=1;tune=1;itemmin=4306:300;ignore=2287
+```
+
+Claude reads it in your Snapshot and sends back a changed one. On the Setup tab, paste it into **Import** (the whole message can be pasted; the code is found in it) and press **Apply**. The panel and chat then say exactly what changed, for example `Imported 3 changes: smallest profit 1s 0c > 75c; watch list: added Wool Cloth; Silk Cloth: smallest profit 3s 0c.`
+
+| In the code | Sets |
+|---|---|
+| `min=75` | Smallest profit worth showing a deal for, in copper |
+| `margin=22` | Profit a flip must leave after the cut, in percent |
+| `flips=1` / `flips=0` | Flips on, or vendor deals only |
+| `scope=mats` / `money` / `all` | What the radar reads |
+| `focus=off` / `prime` / `list` | Laser focus |
+| `list=2589,2592` | Your own watch list, replaced by these items |
+| `watch=+2592,-4306` | Adds items to your watch list, or takes them off, leaving the rest as it is |
+| `itemmin=4306:300` | A smallest profit for one item only (`4306:0` clears it) |
+| `ignore=+2287,-2589` | Items never to show deals for; `-` takes one off the list |
+| `tied=50`, `spend=35`, `small=15` | The capital limits, in percent: unsold auctions, one flip, the always-allowed small flip |
+| `wheel=1`, `tune=1` | Mouse wheel buying; auto-adjust |
+
+* A code need not carry everything: `AMS1:min=60;watch=+2592` changes those two things and nothing else.
+* With laser focus on **prime items**, your own watch list is watched as well, on top of what the addon picked.
+* Anything in a code that is not understood is left alone and named. A code never changes sharing.
+* A focus code (`AMF1:`) pasted into the same box still works.
+
+### Auto-adjust: settings that follow what really happens
+
+The **Self-tuning** switch on the Setup tab covers the request pace, the flip profit bar, and two more things. Every change is written down with its reason: on the first rows under the settings, in chat, and in the Snapshot.
+
+| What adjusts | Rule |
+|---|---|
+| Smallest profit | Looked at after every 10 minutes of use. At most one deal shown and three or more hidden by the minimum: 25% lower. Fifteen or more deals shown: 25% higher. Never under 20c, never over 2% of everything you own (at least 1s) |
+| The radar's quiet time when a deal appears | 6 seconds until your inputs have been timed. Then the median of your last inputs plus one second, between 2 and 6. While the wheel is rolling in the snipe box: 1 second |
+
+A setting you change yourself, or import, is left alone for 30 minutes. With the switch off nothing changes by itself.
 
 ### The daily report, and focus codes
 

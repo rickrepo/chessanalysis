@@ -184,6 +184,23 @@ function Sniper:Search(key, src, waited, from)
     ns.lastQuery = "sniper"
 end
 
+-- PER-ITEM SETTINGS (from an imported settings code). An item can have its own
+-- smallest profit, and an item can be ignored altogether.
+local itemCfg = {}
+function Sniper:CfgFor(key)
+    local im = AuctionMeshDB.cfg.itemMin
+    local v = im and im[key]
+    if not v then return Deals.cfg end
+    local c = itemCfg[key]
+    if not c then c = setmetatable({}, { __index = Deals.cfg }); itemCfg[key] = c end
+    c.minProfit = v
+    return c
+end
+function Sniper:Ignored(key)
+    local ig = AuctionMeshDB.cfg.ignore
+    return (ig and ig[key]) and true or false
+end
+
 -- Everything the deal rules need to know about one item, apart from its listing.
 function Sniper:DealOptions(key, commodity)
     local avg, n = Store.a[key], Store.an[key]
@@ -237,7 +254,8 @@ function Sniper:Evaluate(key, rows, commodity)
         return dirty()
     end
     self:Turnover(key, rows)
-    local deal, wall, reason = Deals.evaluate(rows, self:DealOptions(key, commodity))
+    local deal, wall, reason = Deals.evaluate(rows, self:DealOptions(key, commodity), self:CfgFor(key))
+    if deal and self:Ignored(key) then deal, reason = nil, "on your ignore list (settings code)" end
     do  -- deals that exist but are hidden by your own minimum: counted, so the panel can say so
         local p = not deal and reason and tonumber(tostring(reason):match("profit %$(%d+) is under your"))
         if p and p >= 50 then
@@ -271,13 +289,14 @@ function Sniper:Evaluate(key, rows, commodity)
         if fresh then
             self.dealSeen[key] = GetTime()
             if ns.Scout then ns.Scout:Deal(key, deal) end
+            if ns.Auto then ns.Auto:Shown() end
         end
         self.verified[key] = deal
         if fresh then
             -- SPEED. Deals last seconds. The radar goes silent so the auction
             -- house is free the instant you click, and the price is locked in
             -- right away so that your first click is the purchase itself.
-            if Sniper.hold > 0 then ns.Gate.holdUntil = GetTime() + Sniper.hold end
+            if Sniper.hold > 0 then ns.Gate.holdUntil = GetTime() + Sniper:HoldFor() end
             if ns.UI and ns.UI.Now then ns.UI:Now() end
         end
         ns.Log("DEAL %s %s: buy %d for %d, sell %d each, profit %d, sells %s/h, eta %s min (rows: %s)", deal.kind, tostring(key),
@@ -347,7 +366,7 @@ function Sniper:InstantVendor(key, price, qty, v, prev)
     n = min(n, floor(self:Budget() / price))
     if n <= 0 then return false end
     local profit = n * (v - price)
-    local need = Deals.cfg.minProfit
+    local need = self:CfgFor(key).minProfit
     local gold = GetMoney()
     if gold < 500 then need = min(need, max(10, floor(gold * 0.10))) end
     if profit < need then return false end
@@ -360,10 +379,11 @@ function Sniper:InstantVendor(key, price, qty, v, prev)
     self.dealSeen[key] = now
     self.stats.deals = self.stats.deals + 1
     if ns.Scout then ns.Scout:Deal(key, deal) end
+    if ns.Auto then ns.Auto:Shown() end
     if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
     ns.Log("DEAL VENDOR %s straight from the radar: %d new units at %d, vendor pays %d, profit %d (no item check; the quote decides)",
         tostring(key), n, price, v, profit)
-    if Sniper.hold > 0 then ns.Gate.holdUntil = now + Sniper.hold end
+    if Sniper.hold > 0 then ns.Gate.holdUntil = now + Sniper:HoldFor() end
     if ns.UI and ns.UI.Now then ns.UI:Now() end
     return true
 end
@@ -392,7 +412,7 @@ function Sniper:InstantFlip(key, price, qty, prev)
         if r.price > price then rows[#rows + 1] = { price = r.price, qty = r.qty } end
     end
     if #rows < 2 then return false end
-    local deal, wall = Deals.evaluate(rows, self:DealOptions(key, true))
+    local deal, wall = Deals.evaluate(rows, self:DealOptions(key, true), self:CfgFor(key))
     -- only the new units: anything more needs the real listing
     if not deal or deal.kind ~= "FLIP" or deal.units > n then return false end
     deal.commodity, deal.key, deal.from = true, key, "me"
@@ -405,12 +425,21 @@ function Sniper:InstantFlip(key, price, qty, prev)
     self.dealSeen[key] = now
     self.stats.deals = self.stats.deals + 1
     if ns.Scout then ns.Scout:Deal(key, deal) end
+    if ns.Auto then ns.Auto:Shown() end
     if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
     ns.Log("DEAL FLIP %s straight from the radar: %d new units at %d, market %s, sell %d each, profit %d (listing read %.0fs ago; the quote decides)",
         tostring(key), deal.units, price, tostring(wall), deal.sell, deal.profit, now - last.at)
-    if Sniper.hold > 0 then ns.Gate.holdUntil = now + Sniper.hold end
+    if Sniper.hold > 0 then ns.Gate.holdUntil = now + Sniper:HoldFor() end
     if ns.UI and ns.UI.Now then ns.UI:Now() end
     return true
+end
+
+-- How long the radar stays quiet when a deal appears: 6 seconds, unless the
+-- auto-adjust has something better (1 second while the wheel is rolling,
+-- otherwise how fast your inputs really come).
+function Sniper:HoldFor()
+    if ns.Auto then return ns.Auto:Hold(self:SnipeMode(), Sniper.hold) end
+    return Sniper.hold
 end
 
 -- SNIPE MODE: you are rolling the wheel in the snipe box (a notch in the last
@@ -473,7 +502,7 @@ function Sniper:OnSweep(key, price, qty, shared)
     local market = (ft and GetServerTime() - ft <= 1800) and Store.fp[key] or nil
     if ns.Scout then ns.Scout:Read(key, price, market) end -- counted for every item, affordable or not
     if price > self:Budget() then return end
-    if self:Muted(key) then return end -- three misses in a row: left alone for 10 minutes
+    if self:Muted(key) or self:Ignored(key) then return end -- missed five times running, or on your ignore list
     local why
     local v = self.vendorOf(key)
     if v and price <= floor(v / (1 + Deals.cfg.vendorMargin)) then
@@ -845,7 +874,10 @@ function Sniper:Tick()
     end
     if ns.Scout then
         -- time the engine is actually working (auction house and panel open), for the daily report
-        if self.tickAt and not ns.Gate:UserBusy() and AuctionHouseFrame and AuctionHouseFrame:IsShown() then ns.Scout:Online(now - self.tickAt) end
+        if self.tickAt and not ns.Gate:UserBusy() and AuctionHouseFrame and AuctionHouseFrame:IsShown() then
+            ns.Scout:Online(now - self.tickAt)
+            if ns.Auto then ns.Auto:Worked(now - self.tickAt) end
+        end
         self.tickAt = now
     end
     if self:Busy() or not ns.Gate:Ready() then return end
@@ -1274,7 +1306,7 @@ function Sniper:OnPriceQuote(unitPrice, total)
                 d.profit = left * floor(d.sell * (1 - Deals.cfg.cut)) - leftCost - (Deals.cfg.depositIsCost and (d.deposit or 0) or 0)
             end
             if d.instant then d.at = GetTime() - VERIFIED_TTL + 8 end
-            local need = d.kind == "VENDOR" and 10 or Deals.cfg.minProfit
+            local need = d.kind == "VENDOR" and 10 or self:CfgFor(b.key).minProfit
             if d.profit >= need and leftCost <= GetMoney() then
                 ns.Log("QUOTE says %s%d of the %d cheap units are still there (cost %s%d, profit %d): offered again at once",
                     guess and "about " or "", left, b.units, guess and "at most " or "", leftCost, d.profit)
@@ -1282,7 +1314,7 @@ function Sniper:OnPriceQuote(unitPrice, total)
                 C_Timer.After(0.4, function() if not Sniper.buying then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end end)
                 self.verified[b.key] = d
                 self.buying = nil
-                if Sniper.hold > 0 then ns.Gate.holdUntil = GetTime() + Sniper.hold end
+                if Sniper.hold > 0 then ns.Gate.holdUntil = GetTime() + Sniper:HoldFor() end
                 if ns.UI then ns.UI:Notice(("Someone took some of them. %s%s%d are still there: keep rolling, or click Buy again.|r"):format("|cff33ff66", guess and "About " or "", left), true) end
                 if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
                 return

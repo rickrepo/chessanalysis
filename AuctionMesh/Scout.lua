@@ -281,10 +281,23 @@ function Scout:Focus(budget, vendorSold, classOf)
     local set, list, text = nil, {}, "Focus is off: every material is watched."
     if mode == "prime" then
         local prime = self:Prime(budget, vendorSold)
-        if #prime >= self.cfg.primeMin then
+        local own = cfg.focusItems or {}
+        if #prime >= self.cfg.primeMin or #own > 0 then
             set = {}
-            for i = 1, min(#prime, self.cfg.primeTop) do set[prime[i].key] = true; list[#list + 1] = prime[i].key end
-            text = ("Focused on the %d items with the best measured activity."):format(#list)
+            if #prime >= self.cfg.primeMin then
+                for i = 1, min(#prime, self.cfg.primeTop) do set[prime[i].key] = true; list[#list + 1] = prime[i].key end
+            end
+            local picked, extra = #list, 0
+            -- your own watch list is always included, on top of what the addon picked
+            for _, key in ipairs(own) do
+                if not set[key] then set[key] = true; list[#list + 1] = key; extra = extra + 1 end
+            end
+            if picked == 0 then
+                text = ("Focused on your own watch list (%d item%s). The addon adds its own picks once selling speed is measured."):format(extra, extra == 1 and "" or "s")
+            else
+                text = ("Focused on the %d items with the best measured activity%s."):format(picked,
+                    extra > 0 and (", plus %d from your own watch list"):format(extra) or "")
+            end
         else
             text = ("Focus is waiting: %d prime item%s so far, %d needed. Selling speed takes about %d minutes of watching to measure."):format(
                 #prime, #prime == 1 and "" or "s", self.cfg.primeMin, floor(self.cfg.primeObs / 60))
@@ -507,6 +520,25 @@ function Scout:Snapshot(o)
         " | one-click buy: ", cfg.autoConfirm == false and "BLOCKED by the game (second input needed)" or (cfg.autoTried and "works" or "on, not tried yet"),
         " | self-tuning ", cfg.tune ~= false and "on" or "off", " | posting fee comes back: ", cfg.feeBack == nil and "not known yet" or tostring(cfg.feeBack))
     if o.sharing then add("sharing: ", (tostring(o.sharing):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))) end
+    do
+        local parts = {}
+        for _, k in ipairs(cfg.focusItems or {}) do parts[#parts + 1] = plainName(k) .. "(" .. k .. ")" end
+        if #parts > 0 then add("own watch list: ", table.concat(parts, ", ")) end
+        parts = {}
+        for k, v in pairs(cfg.itemMin or {}) do parts[#parts + 1] = plainName(k) .. "(" .. k .. ") " .. coin(v) end
+        table.sort(parts)
+        if #parts > 0 then add("smallest profit per item: ", table.concat(parts, ", ")) end
+        parts = {}
+        for k in pairs(cfg.ignore or {}) do parts[#parts + 1] = plainName(k) .. "(" .. k .. ")" end
+        table.sort(parts)
+        if #parts > 0 then add("ignored items: ", table.concat(parts, ", ")) end
+    end
+    if ns.Auto then
+        local lines = ns.Auto:Lines(6)
+        add("auto-adjust (", cfg.tune ~= false and "on" or "off", "): ", #lines == 0 and "no changes yet" or "last changes, newest first")
+        for _, l in ipairs(lines) do add("  ", date("%H:%M", l.t), " ", l.m) end
+    end
+    if o.code then add("settings code (Claude sends back a changed one; paste it into the box on the Setup tab): ", o.code) end
 
     -- SNIPING
     add("")

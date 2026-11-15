@@ -400,7 +400,7 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
     check(not lg:IsShown(), "the Bags tab has no MONEY section")
     UI.tab = "HISTORY"; UI:Render()
     local sp = AuctionMeshFrame.setup
-    check(sp:IsShown() and sp.rows[1].label._text == "Server limit, measured", "Setup tab: settings and what the request engine has learned")
+    check(sp:IsShown() and sp.rows[1].label._text == "Auto-adjust" and sp.rows[2].label._text == "Server limit, measured", "Setup tab: settings, what auto-adjust is doing, and what the request engine has learned")
     for i = 1, 7 do print("     " .. tostring(sp.rows[i].label._text) .. " | " .. strip(sp.rows[i].value._text)) end
     local st = UI.barState
     print("     bar: " .. st.mode .. " " .. ("%.2f"):format(st.fill) .. " " .. st.text)
@@ -1111,7 +1111,7 @@ do
     Sw.current = nil
     ns.Store.fp[2319], ns.Store.ft[2319] = 100, GetServerTime()
     C_AuctionHouse.GetBrowseResults = function() return { { itemKey = { itemID = 2319 }, minPrice = 40, totalQuantity = 5 } } end
-    S.triggers = {}
+    S.triggers = {}; S.verified[2319] = nil; S.checkedAt[2319] = nil
     fire("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
     check(ns.Scout:Day().reads == reads0 and S.triggers[2319] == nil, "a category list that is not the answer to our own radar request is ignored (no alerts for prices that are long gone)")
     Sw.current = { unit = Sw.units[1], phase = "query", at = Sw.clock(), requests = 1 }
@@ -1573,6 +1573,115 @@ do
         AuctionMeshLogFrame:Hide()
         AuctionMeshDB.flips[4306] = nil; ns.Journal:Dropped(4306, nil, "test"); LIST[4306] = nil
         S.ownSoldQty, S.ownSoldPay = {}, {}; AuctionMeshDB.mailSeen = nil; cfg.autoConfirm = false
+    end
+
+    -- IMPORT: paste what Claude sent, Apply, and the settings are set
+    do
+        reset()
+        local D = ns.Deals.cfg
+        local keep = { cfg.minProfit, cfg.margin, cfg.scope, cfg.focusMode, cfg.focusItems, cfg.maxTied, cfg.maxSpend, cfg.smallFlip, D.maxSpend, D.maxTied, D.smallFlip, cfg.flips }
+        ITEMS[4306] = { "Silk Cloth", 150 }; ITEMS[2592] = { "Wool Cloth", 33 }; ITEMS[2287] = { "Haunch of Meat", 6 }
+        cfg.focusItems, cfg.focusMode = {}, "off"
+        local code0 = ns.Do.SettingsCode()
+        print("     " .. code0)
+        check(code0:find("^AMS1:min=%d+;margin=%d+;flips=1;scope=%a+;focus=off;tied=%d+;spend=%d+;small=%d+;wheel=1;tune=1"), "the current settings as one code")
+        UI.tab = "HISTORY"; UI:Render()
+        local sp = AuctionMeshFrame.setup
+        -- the whole message is pasted, not just the code
+        sp.code:SetText("Here is the tweak. Paste this:\n\n`AMS1:min=75;margin=22;scope=money;focus=prime;watch=+2592,+4306;itemmin=4306:300;ignore=2287;tied=70;spend=40;small=20;bogus=1`.\n\nThen roll the wheel.")
+        sp.apply._scripts.OnClick(sp.apply); UI:Render()
+        print("     " .. strip(UI.notice and UI.notice.text or "?"))
+        check(sp.code._text == "" and cfg.minProfit == 75 and D.minProfit == 75 and cfg.margin == 22 and cfg.scope == "money" and cfg.focusMode == "prime",
+            "the code is found in the pasted text and applied: smallest profit, margin, what the radar reads, laser focus")
+        check(cfg.focusItems[1] == 2592 and cfg.focusItems[2] == 4306, "items are added to your own watch list")
+        check(cfg.maxTied == 70 and math.abs(D.maxTied - 0.7) < 1e-9 and cfg.maxSpend == 40 and math.abs(D.maxSpend - 0.4) < 1e-9 and cfg.smallFlip == 20 and math.abs(D.smallFlip - 0.2) < 1e-9,
+            "and the capital limits")
+        local n = strip(UI.notice.text)
+        check(n:find("^Imported %d+ changes: smallest profit ") and n:find("watch list: added Wool Cloth", 1, true) and n:find("Silk Cloth: smallest profit 3s 0c", 1, true)
+            and n:find("ignored from now on: Haunch of Meat", 1, true) and n:find("Not understood and left alone: bogus", 1, true),
+            "Apply says exactly what changed, and what it did not understand")
+        -- a smallest profit for one item only
+        check(S:CfgFor(4306).minProfit == 300 and S:CfgFor(2770).minProfit == 75 and S:CfgFor(4306).margin == D.margin, "Silk Cloth has its own smallest profit; everything else keeps the general one")
+        local o = { budget = 5000, gold = 5000, commodity = true, vendor = 150, noFlip = true }
+        local d1, _, why = ns.Deals.evaluate(rows({ { 100, 4 }, { 196, 500 }, { 197, 900 } }), o, S:CfgFor(4306))
+        local d2 = ns.Deals.evaluate(rows({ { 100, 4 }, { 196, 500 }, { 197, 900 } }), o, S:CfgFor(2770))
+        check(d1 == nil and tostring(why):find("under your $300 minimum", 1, true) and d2 and d2.profit == 200, "a 2s Silk Cloth deal is now too small, while the same deal on another item is shown")
+        -- an ignored item is never shown
+        check(S:Ignored(2287) and not S:Ignored(4306), "Haunch of Meat is on the ignore list")
+        S.ownSweep[2287] = { q = 100, p = 9, at = GetTime() - 0.7 }
+        S:OnSweep(2287, 2, 150)
+        check(S.verified[2287] == nil and #S.triggers == 0, "its deals are not shown and not even checked")
+        -- prime focus also watches your own list
+        local set, list, text = S:FocusSet()
+        print("     " .. tostring(text))
+        check(set and set[2592] and set[4306] and tostring(text):find("your own watch list", 1, true), "with laser focus on prime items, your own watch list is watched as well")
+        -- the snapshot carries the code
+        local snapText = ns.Do.Snapshot(); AuctionMeshLogFrame:Hide()
+        check(snapText:find("paste it into the box on the Setup tab): AMS1:min=75;margin=22;", 1, true) and snapText:find("itemmin=4306:300;ignore=2287", 1, true)
+            and snapText:find("own watch list: Wool Cloth(2592), Silk Cloth(4306)", 1, true), "the Snapshot holds the settings code, so the next suggestion starts from what is really set")
+        -- the same code again changes nothing
+        sp.code:SetText(ns.Do.SettingsCode()); sp.apply._scripts.OnClick(sp.apply)
+        check(strip(UI.notice.text) == "Settings code read: everything in it is already set that way.", "applying the code you already have changes nothing, and says so")
+        -- removing things, and text with no code in it
+        ns.Do.Import("AMS1:watch=-2592;ignore=-2287;itemmin=4306:0")
+        check(#cfg.focusItems == 1 and cfg.focusItems[1] == 4306 and not S:Ignored(2287) and S:CfgFor(4306) == D, "a code can also remove: off the watch list, off the ignore list, per-item minimum cleared")
+        check(ns.Do.Import("nothing useful here") == false and strip(UI.notice.text):find("^No code found in that text"), "text with no code in it changes nothing")
+        check(cfg.share ~= true, "a code never switches sharing on")
+        cfg.minProfit, cfg.margin, cfg.scope, cfg.focusMode, cfg.focusItems, cfg.maxTied, cfg.maxSpend, cfg.smallFlip = keep[1], keep[2], keep[3], keep[4], keep[5], keep[6], keep[7], keep[8]
+        D.maxSpend, D.maxTied, D.smallFlip, D.minProfit, D.margin = keep[9], keep[10], keep[11], keep[1], keep[2] / 100
+        cfg.itemMin, cfg.ignore = nil, nil
+        ns.Swarm.scope = cfg.scope; ns.Swarm:BuildUnits(); ns.Scout:Changed()
+        UI.tab = "BUY"; UI.notice = nil; UI:Render()
+    end
+
+    -- AUTO-ADJUST: settings that follow what really happens
+    do
+        reset()
+        local A, D = ns.Auto, ns.Deals.cfg
+        local keepMin, keepTune = cfg.minProfit, cfg.tune
+        local function review(shown) A.win = { at = GetTime(), shown = shown, worked = 0 }; A:Worked(601) end
+        cfg.tune = true; A.d.log, A.d.manual = {}, {}
+        -- nothing shown, deals hidden by the minimum: it comes down, in steps, never under 20c
+        UI:SetMinProfit(200); A.d.manual = {}
+        S.underMin = { n = 6, best = 150, at = GetTime() }
+        review(0)
+        print("     " .. tostring(A.d.log[#A.d.log] and A.d.log[#A.d.log].m))
+        check(cfg.minProfit == 150 and D.minProfit == 150 and A.d.log[#A.d.log].m == "smallest profit 2s 0c > 1s 50c: 0 deals shown and 6 hidden by it in the last 10 minutes (best hidden: 1s 50c)",
+            "no deal shown and 6 hidden by a 2s minimum: it is lowered to 1s 50c, and the reason is written down")
+        S.underMin = nil; review(0)
+        check(cfg.minProfit == 150, "nothing hidden: nothing changes")
+        -- far more deals than can be acted on: it goes up, never over 2% of what you own
+        gold = 20000; review(20)
+        check(cfg.minProfit == 188, ("20 deals in 10 minutes: raised by a quarter (%d)"):format(cfg.minProfit))
+        gold = 900
+        -- a setting you change yourself is left alone for 30 minutes
+        UI:SetMinProfit(300)
+        S.underMin = { n = 9, best = 250, at = GetTime() }
+        review(0)
+        check(cfg.minProfit == 300, "you set it yourself: auto-adjust leaves it alone")
+        A.d.manual.min = GetServerTime() - 1801; S.underMin = { n = 9, best = 250, at = GetTime() }; review(0)
+        check(cfg.minProfit == 225, "half an hour later it may adjust again")
+        -- switched off: nothing moves
+        cfg.tune = false; S.underMin = { n = 9, best = 200, at = GetTime() }; review(0)
+        check(cfg.minProfit == 225, "with the switch off nothing changes by itself")
+        cfg.tune = true
+        -- the radar's quiet time follows how fast your inputs come
+        AuctionMeshDB.outcomes = {}
+        check(A:Hold(false, 6) == 6, "no inputs measured yet: the radar stays quiet 6 seconds after a deal appears")
+        for _, r in ipairs({ 0.9, 1.4, 1.0, 6.4, 1.1 }) do table.insert(AuctionMeshDB.outcomes, { t = 0, k = "lost", r = r }) end
+        check(math.abs(A:Hold(false, 6) - 2.1) < 1e-9, "your inputs come about 1.1s after a deal: quiet time 2.1 seconds instead of 6")
+        check(A:Hold(true, 6) == 1, "while the wheel is rolling: 1 second")
+        -- shown on the Setup tab and in the Snapshot
+        UI.tab = "HISTORY"; UI.notice = nil; UI:Render()
+        local sp = AuctionMeshFrame.setup
+        print("     " .. strip(sp.rows[1].label._text) .. ": " .. strip(sp.rows[1].value._text))
+        check(strip(sp.rows[1].label._text) == "Auto-adjust, last change" and strip(sp.rows[1].value._text):find("^smallest profit 3s 0c > 2s 25c"), "the Setup tab shows the last change auto-adjust made")
+        local snapText = ns.Do.Snapshot(); AuctionMeshLogFrame:Hide()
+        check(snapText:find("auto-adjust (on): last changes, newest first", 1, true) and snapText:find("smallest profit 2s 0c > 1s 50c", 1, true), "and the Snapshot lists them")
+        A.d.log, A.d.manual = {}, {}
+        AuctionMeshDB.outcomes = {}
+        UI:SetMinProfit(keepMin); A.d.manual = {}; cfg.tune = keepTune
+        UI.tab = "BUY"; UI.notice = nil; UI:Render()
     end
 
     -- five misses in a row: the item is left alone for 3 minutes

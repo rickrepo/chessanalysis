@@ -145,10 +145,14 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         -- learned from a sale invoice: on this realm the posting fee does not come back
         if db.cfg.feeBack == false then Deals.cfg.depositIsCost = true end
         if db.cfg.maxTied then Deals.cfg.maxTied = db.cfg.maxTied / 100 end
+        if db.cfg.maxSpend then Deals.cfg.maxSpend = db.cfg.maxSpend / 100 end
+        if db.cfg.smallFlip then Deals.cfg.smallFlip = db.cfg.smallFlip / 100 end
         r.scout = r.scout or {}
         ns.Scout:Attach(r.scout)
         r.tune = r.tune or {}
         ns.Tuner:Attach(r.tune)
+        db.auto = db.auto or {}
+        ns.Auto:Attach(db.auto)
         if db.cfg.tune == false then ns.Tuner.cfg.enabled = false end
         if db.cfg.autoTune == false then ns.Learn.cfg.autoTune = false end
         local pruned = Store:Prune(GetServerTime() - Sync.cfg.maxAge)
@@ -427,7 +431,7 @@ function Do.Tuning(on)
     on = on and true or false
     ns.Tuner.cfg.enabled, cfg.tune = on, on
     ns.Learn.cfg.autoTune, cfg.autoTune = on, on
-    UI:Notice(on and "Self-tuning on: the pace, the split of requests and the profit bar adjust themselves from results."
+    UI:Notice(on and "Self-tuning on: the pace, the split of requests, the profit bar, the smallest profit and the radar's quiet time adjust themselves from results."
         or "Self-tuning off: everything stays as it is now (still measured).", true)
 end
 
@@ -457,7 +461,7 @@ end
 function Do.Snapshot()
     local text = ns.Scout:Snapshot({
         version = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or "?",
-        realm = realmKey(), gold = GetMoney(), sharing = Do.SharingText(),
+        realm = realmKey(), gold = GetMoney(), sharing = Do.SharingText(), code = Do.SettingsCode(),
     })
     ns.Diag:ShowText("AuctionMesh snapshot: click in the box, Ctrl+A then Ctrl+C, and paste it to Claude", text)
     return text
@@ -481,6 +485,185 @@ function Do.FocusMode()
     local mode = ns.Scout:SetMode()
     local _, _, text = Sniper:FocusSet()
     UI:Notice("Laser focus: " .. ns.Scout.MODE_NAMES[mode] .. ". " .. text, true)
+end
+
+---------------------------------------------------------------- settings code
+-- One line that holds every setting that decides what is shown as a deal.
+-- The Snapshot carries it, Claude sends back a changed one, and pasting that
+-- into the box on the Setup tab applies it. Sharing is never part of it.
+--   AMS1:min=100;margin=25;flips=1;scope=mats;focus=prime;list=2589,2592;
+--        tied=50;spend=35;small=15;wheel=1;tune=1;itemmin=4306:200;ignore=2287
+-- Changes only (an import need not carry everything):
+--   watch=+2589,-4306   add to / remove from your own watch list
+--   ignore=+2287,-2589  add to / remove from the ignore list
+local function coinText(c)
+    c = floor((c or 0) + 0.5)
+    local g, s, k = floor(c / 10000), floor(c / 100) % 100, c % 100
+    return (g > 0 and (g .. "g ") or "") .. ((g > 0 or s > 0) and (s .. "s ") or "") .. k .. "c"
+end
+
+function Do.SettingsCode()
+    local cfg = AuctionMeshDB.cfg
+    local t = {}
+    local function put(k, v) t[#t + 1] = k .. "=" .. tostring(v) end
+    put("min", cfg.minProfit)
+    put("margin", cfg.margin)
+    put("flips", cfg.flips ~= false and 1 or 0)
+    put("scope", cfg.scope or "mats")
+    put("focus", cfg.focusMode or "off")
+    do
+        local ids = {}
+        for _, k in ipairs(cfg.focusItems or {}) do ids[#ids + 1] = tostring(k) end
+        if #ids > 0 then put("list", table.concat(ids, ",")) end
+    end
+    put("tied", cfg.maxTied or 50)
+    put("spend", cfg.maxSpend or floor(Deals.cfg.maxSpend * 100 + 0.5))
+    put("small", cfg.smallFlip or floor(Deals.cfg.smallFlip * 100 + 0.5))
+    put("wheel", cfg.wheel ~= false and 1 or 0)
+    put("tune", cfg.tune ~= false and 1 or 0)
+    do
+        local ids = {}
+        for k, v in pairs(cfg.itemMin or {}) do ids[#ids + 1] = k .. ":" .. v end
+        table.sort(ids)
+        if #ids > 0 then put("itemmin", table.concat(ids, ",")) end
+        local ig = {}
+        for k in pairs(cfg.ignore or {}) do ig[#ig + 1] = tostring(k) end
+        table.sort(ig)
+        if #ig > 0 then put("ignore", table.concat(ig, ",")) end
+    end
+    return "AMS1:" .. table.concat(t, ";")
+end
+
+-- Finds a settings code (AMS1:) and/or a focus code (AMF1:) anywhere in the
+-- pasted text and applies it. Says exactly what changed.
+function Do.Import(text)
+    text = tostring(text or "")
+    local body = text:match("AMS1%s*:%s*([^%s]+)")
+    local hasFocus = text:find("AMF1", 1, true) ~= nil
+    if not body then
+        if hasFocus then return Do.FocusCode(text) end
+        UI:Notice("|cffff8040No code found in that text.|r A settings code starts with AMS1: and a focus code with AMF1:.", true)
+        return false
+    end
+    body = body:gsub("[%.%)%]\"'`,]+$", "")
+    local cfg = AuctionMeshDB.cfg
+    local changes, unknown = {}, {}
+    local function note(name, old, new)
+        if tostring(old) ~= tostring(new) then changes[#changes + 1] = ("%s %s > %s"):format(name, tostring(old), tostring(new)) end
+    end
+    local function clamp(v, lo, hi) return math.max(lo, math.min(hi, floor(v + 0.5))) end
+    local function nameOf(id) return (C_Item.GetItemInfo(id)) or ("item " .. id) end
+    local function onoff(v) return (v == "1" or v == "on" or v == "true") end
+    local function hasItem(list, id) for i, k in ipairs(list) do if k == id then return i end end end
+    for pair in body:gmatch("[^;]+") do
+        local k, v = pair:match("^%s*([%a_]+)%s*=%s*(.-)%s*$")
+        local n = tonumber(v)
+        if k == "min" and n then
+            n = clamp(n, 1, 1000000)
+            local old = cfg.minProfit
+            if old ~= n then UI:SetMinProfit(n) end
+            note("smallest profit", coinText(old), coinText(n))
+        elseif k == "margin" and n then
+            local old = cfg.margin
+            if old ~= clamp(n, 5, 90) then Do.Margin(n) end
+            note("flip margin", tostring(old) .. "%", tostring(cfg.margin) .. "%")
+        elseif k == "flips" then
+            local on = onoff(v)
+            local old = cfg.flips ~= false
+            if old ~= on then UI:SetVendorOnly(not on) end
+            note("flips", old and "on" or "off", on and "on" or "off")
+        elseif k == "scope" and Do.SCOPE_NAMES[v] then
+            local old = cfg.scope
+            if old ~= v then Do.Scope(v) end
+            note("radar reads", tostring(old), v)
+        elseif k == "focus" and ns.Scout.MODE_NAMES[v] then
+            local old = cfg.focusMode or "off"
+            if old ~= v then ns.Scout:SetMode(v) end
+            note("laser focus", old, v)
+        elseif k == "list" then
+            local ids, seen = {}, {}
+            for tok in v:gmatch("%d+") do
+                local id = tonumber(tok)
+                if id > 0 and not seen[id] then seen[id] = true; ids[#ids + 1] = id end
+            end
+            note("own watch list", #(cfg.focusItems or {}) .. " items", #ids .. " items")
+            cfg.focusItems = ids
+        elseif k == "watch" then
+            cfg.focusItems = cfg.focusItems or {}
+            for sign, tok in v:gmatch("([%+%-]?)(%d+)") do
+                local id = tonumber(tok)
+                local at = hasItem(cfg.focusItems, id)
+                if sign == "-" then
+                    if at then table.remove(cfg.focusItems, at); changes[#changes + 1] = "watch list: removed " .. nameOf(id) end
+                elseif not at and id > 0 then
+                    cfg.focusItems[#cfg.focusItems + 1] = id
+                    changes[#changes + 1] = "watch list: added " .. nameOf(id)
+                end
+            end
+        elseif k == "tied" and n then
+            local old = cfg.maxTied or 50
+            n = clamp(n, 10, 100)
+            if old ~= n then Do.MaxTied(n) end
+            note("unsold auctions may hold", old .. "%", n .. "%")
+        elseif k == "spend" and n then
+            local old = cfg.maxSpend or floor(Deals.cfg.maxSpend * 100 + 0.5)
+            n = clamp(n, 10, 100)
+            cfg.maxSpend, Deals.cfg.maxSpend = n, n / 100
+            note("one flip may take (of gold in hand)", old .. "%", n .. "%")
+        elseif k == "small" and n then
+            local old = cfg.smallFlip or floor(Deals.cfg.smallFlip * 100 + 0.5)
+            n = clamp(n, 0, 50)
+            cfg.smallFlip, Deals.cfg.smallFlip = n, n / 100
+            note("a small flip is always allowed up to", old .. "%", n .. "%")
+        elseif k == "wheel" then
+            local on, old = onoff(v), cfg.wheel ~= false
+            cfg.wheel = on
+            note("mouse wheel buys", old and "on" or "off", on and "on" or "off")
+        elseif k == "tune" then
+            local on, old = onoff(v), cfg.tune ~= false
+            if old ~= on then Do.Tuning(on) end
+            note("self-tuning", old and "on" or "off", on and "on" or "off")
+        elseif k == "itemmin" then
+            cfg.itemMin = cfg.itemMin or {}
+            for id, amt in v:gmatch("(%d+):(%d+)") do
+                id, amt = tonumber(id), tonumber(amt)
+                local old = cfg.itemMin[id]
+                cfg.itemMin[id] = amt > 0 and amt or nil
+                if old ~= cfg.itemMin[id] then
+                    changes[#changes + 1] = ("%s: smallest profit %s"):format(nameOf(id), amt > 0 and coinText(amt) or "back to the general one")
+                end
+            end
+        elseif k == "ignore" then
+            cfg.ignore = cfg.ignore or {}
+            for sign, tok in v:gmatch("([%+%-]?)(%d+)") do
+                local id = tonumber(tok)
+                if sign == "-" then
+                    if cfg.ignore[id] then cfg.ignore[id] = nil; changes[#changes + 1] = "no longer ignored: " .. nameOf(id) end
+                elseif not cfg.ignore[id] and id > 0 then
+                    cfg.ignore[id] = true
+                    Sniper.verified[id] = nil
+                    changes[#changes + 1] = "ignored from now on: " .. nameOf(id)
+                end
+            end
+        elseif k then
+            unknown[#unknown + 1] = k
+        end
+    end
+    ns.Scout:Changed()
+    Sniper.checkedAt = {}
+    if ns.Auto then ns.Auto:Manual("min") end -- an imported setting is yours: auto-adjust leaves it alone for 30 minutes
+    if hasFocus then ns.Scout:ApplyCode(text) end
+    local msg
+    if #changes == 0 then
+        msg = "Settings code read: everything in it is already set that way."
+    else
+        msg = ("|cff33ff66Imported %d change%s:|r %s."):format(#changes, #changes == 1 and "" or "s", table.concat(changes, "; "))
+    end
+    if #unknown > 0 then msg = msg .. " |cffff8040Not understood and left alone: " .. table.concat(unknown, ", ") .. ".|r" end
+    ns.Log("IMPORT %s -> %s", body, (msg:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")))
+    if ns.Print then ns.Print(msg) end
+    UI:Notice(msg, true)
+    return true, changes
 end
 
 function Do.FocusCode(text)
