@@ -120,7 +120,7 @@ local function fillBuy(r, d, short)
     local b = S.buying
     if S:OneClick(d.key) then
         r.btn:SetText("BUY NOW"); r.btn:Enable()
-    elseif (b and b.key == d.key) or (S.queued and S.queued.key == d.key) or (S.arming and S.arming.key == d.key) then
+    elseif b and b.key == d.key then
         r.btn:SetText("..."); r.btn:Enable() -- keep clicking: the click that lands after the price is in buys
     else
         r.btn:SetText("Buy")
@@ -339,12 +339,16 @@ function UI:RenderMoney(entries, short)
     for _, e in ipairs(entries) do
         local paid, _, net = Se:Numbers(e)
         if e.action == "LISTED" then
-            if e.live == 0 then
-                -- No longer listed: it sold or it expired. Counted only once a
-                -- sale invoice for it has been seen at the mailbox.
-                if not soldKeys[e.key] then ended = ended + 1 end
+            if e.live == 0 and soldKeys[e.key] then
+                -- sold: its gold is already in the two "Sold" lines above
             else
+                -- Still counted when the auction house no longer shows it: it
+                -- then either sold (the gold is on its way) or came back (the
+                -- item is in the mail). Either way its value has not gone
+                -- anywhere. (Leaving these out made the total look 11 silver
+                -- short in a real session.)
                 listed = listed + floor((e.listed.price or 0) * cut) * e.count
+                if e.live == 0 then ended = ended + 1 end
             end
         elseif e.action == "HOLD" then
             held, heldCost = held + 1, heldCost + (paid or 0) * e.count
@@ -362,7 +366,7 @@ function UI:RenderMoney(entries, short)
     lg.rows[3].label:SetText("Sold: still on its way")
     lg.rows[3].value:SetText(plus(onway, TEAL) .. ((onway > 0 and nextIn) and ("  %snext %s|r"):format(GREEN,
         nextIn >= 90 and (floor(nextIn / 60 + 0.5) .. " min") or (floor(nextIn) .. "s")) or ""))
-    lg.rows[4].label:SetText("Listed: if it sells at the listed prices")
+    lg.rows[4].label:SetText(ended > 0 and "Listed or just sold: at the listed prices" or "Listed: if it sells at the listed prices")
     lg.rows[4].value:SetText(plus(listed, ORANGE))
     lg.rows[5].label:SetText("Bought, not listed yet: at the live price")
     lg.rows[5].value:SetText(plus(bought, ORANGE))
@@ -370,7 +374,8 @@ function UI:RenderMoney(entries, short)
     lg.total.value:SetText(short(gold + waiting + onway + listed + bought))
     local parts = {}
     if held > 0 then parts[#parts + 1] = ("%d held item%s that cost %s (tab Bags)"):format(held, held == 1 and "" or "s", short(heldCost)) end
-    if ended > 0 then parts[#parts + 1] = ("%d auction%s that ended, sold or expired: a mailbox visit tells which"):format(ended, ended == 1 and "" or "s") end
+    local endedNote = ended > 0 and (" %d of your auctions %s no longer seen on the auction house (sold, or returned): still counted above; the mailbox shows which."):format(
+        ended, ended == 1 and "is" or "are") or ""
     -- the cut and the posting fees, stated every time
     local fees = 0
     for _, Lr in pairs(AuctionMeshDB.listed or {}) do fees = fees + (Lr.fee or 0) end
@@ -378,13 +383,14 @@ function UI:RenderMoney(entries, short)
     local feeText = fees > 0 and (" Posting fees paid on your auctions: %s (%s)."):format(short(fees),
         fb == true and "come back when they sell, confirmed here" or fb == false and "do NOT come back on this realm; already taken off profits"
         or "should come back when they sell; the first sale will confirm it") or ""
-    lg.note:SetText((#parts > 0 and ("Not counted: " .. table.concat(parts, "; ") .. ".") or "All amounts are after the 5% auction house cut.") .. feeText)
+    lg.note:SetText((#parts > 0 and ("Not counted: " .. table.concat(parts, "; ") .. ".") or "All amounts are after the 5% auction house cut.") .. endedNote .. feeText)
 end
 
 -- THE BIG BUY BUTTON (Trades tab). It never moves and always acts on the best
 -- deal, so it can be clicked without looking for a row, and clicked repeatedly.
---   teal    a deal: the first click asks for the price, the next one buys
---   green   BUY NOW: the price is locked in, this click buys
+--   teal    a deal: the first click asks the server for the price
+--   green   BUY NOW: the price is in, this click buys (two clicks in all; the
+--           game does not let an addon ask for a price without a click)
 --   grey    nothing to buy; shows what happened to the last deal for 6 seconds
 function UI:RenderSnipe(short)
     local sn = frame.snipe
@@ -408,8 +414,8 @@ function UI:RenderSnipe(short)
             text, colour, fill = GREEN .. "BUY NOW|r    " .. what, { 0.2, 1, 0.4 }, { 0.05, 0.22, 0.10 }
         elseif b and b.key == key and b.phase == "wait" then
             text, colour = GOLD .. "BUYING...|r    " .. what, ACCENT
-        elseif (b and b.key == key) or (S.queued and S.queued.key == key) or (S.arming and S.arming.key == key) then
-            text, colour = TEAL .. "LOCKING THE PRICE (keep clicking)|r    " .. what, ACCENT
+        elseif b and b.key == key then
+            text, colour = TEAL .. "ASKING THE PRICE (keep clicking)|r    " .. what, ACCENT
         else
             text, colour = TEAL .. "BUY|r    " .. what, ACCENT
         end

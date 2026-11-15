@@ -213,16 +213,23 @@ The report itself (now v2) adds: your auctions with the cheapest listing now, re
 
 ### Sniping: from "a deal appeared" to "it's yours"
 
-The first real report showed deals lasting 7 to 36 seconds, so everything between a deal appearing and your purchase landing is built for speed.
+Real reports show deals on this realm lasting 1 to 3 seconds, a few lasting 10 to 45. Everything between a deal appearing and your purchase landing is built for speed.
 
 | Step | What the addon does |
 |---|---|
-| A deal is confirmed | If the first page of the listing already proves the deal, it acts on it at once instead of fetching the rest (each further page costs 0.6s and can only add dearer units) |
-| The same instant | The panel redraws immediately, a sound plays, and the radar goes **silent for 6 seconds** so the auction house is free for your click instead of busy with a background request |
-| About half a second later | The addon asks the server what the deal's units cost right now. Asking is not buying: nothing is spent. When the answer is in, the button turns green and says **BUY NOW** |
-| Your click | **One click buys.** Before, the first click asked for the price and a second click bought |
+| A deal is confirmed | If the first page of the listing already proves the deal, it acts on it at once instead of fetching the rest |
+| The same instant | The panel redraws immediately, a sound plays, and the radar goes **silent for 6 seconds** so the auction house is free for your click |
+| Your first click | Asks the server for the price, **inside that click**. If the auction house is busy the game queues it itself |
+| Your next click | Buys. Two clicks is the minimum: this game refuses a price request that does not come directly from a click |
 
-**The big Buy button** on the Trades tab never moves and always acts on the best deal, so you don't have to find a row. It is safe to click repeatedly: a click that has nothing to do yet (the price is on its way, the purchase is being confirmed) is ignored, and the first click that can buy, buys. It never buys twice.
+**The big Buy button** on the Trades tab never moves and always acts on the best deal. Click it repeatedly: the first click asks for the price, clicks while the price is on its way are ignored, and the first click after it arrives buys. It never buys twice.
+
+What the second real report corrected:
+
+* **Clicks were being lost.** When the auction house was busy the addon held your click and sent it a moment later. The game blocks that, so the click did nothing. Clicks now always go out at once.
+* **The radar was switching itself off.** Any action the game blocked, including one of those held clicks, turned the radar off for the rest of the session. Deals then only arrived second-hand from friends, after they had seen them. Now only three blocked radar reads in a row can do that.
+* **"Not buyable (your own auctions?)" was usually wrong.** It was shown whenever the server's price skipped the cheap units, which is also exactly what happens when someone else buys them first. The item was then ignored for 30 minutes. Now it is reported as MISSED, the item is read again, and it is only called not buyable if the cheap units are still listed after the server refused to sell them.
+* **Old category lists were read as new.** The game re-sends its last category list after every item search; reading that as a fresh radar read produced alerts for prices long gone.
 
 **You always know how it ended.** Every deal you went for, or that left before you could, ends in one of three messages:
 
@@ -231,8 +238,6 @@ The first real report showed deals lasting 7 to 36 seconds, so everything betwee
 * **GONE** someone else bought it N seconds after it appeared (orange). It left before you clicked.
 
 The message is on the big button for 6 seconds, flashes in large text in the middle of your screen, and then stays on the line under the button with its age until the next outcome. That line also keeps a count for the session: "3 got, 1 missed, 2 gone before a click".
-
-If the game does not allow an addon to ask for a price without a click, one-click buying switches itself off permanently and the first click asks instead; everything else stays the same.
 
 ### Sharing: knowing that it worked
 
@@ -255,6 +260,17 @@ Two faults fixed here. A private channel that had not been joined used to fall b
 ### Moving the panel
 
 Inside the auction house the panel is part of that window and cannot be dragged on its own (the addon does not move the game's windows). The **Pop out** button at the top right turns it into a separate window; drag it by its background, by an item row or by the drawer, and its position is remembered. **Dock** puts it back.
+
+### Why the total can differ from your gold
+
+Gold spent on a flip is not gone, it is somewhere else until the sale pays out. The MONEY section's total counts all of it:
+
+* gold on the character;
+* **sold, waiting to be paid:** read from the auction house's own list of your auctions (the same list the game's Auctions tab shows as gold coming in) and from mailbox invoices;
+* **listed:** at your listed prices, after the cut. An auction the auction house no longer shows is still counted here until the mailbox shows whether it sold or came back;
+* **bought, not listed yet.**
+
+A purchase that cannot be found in your bags or mailbox is kept on the list and looked for again at the next mailbox visit; it is only dropped if it is still missing more than five minutes later.
 
 ### The cut and the posting fee
 

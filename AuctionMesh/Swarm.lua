@@ -168,6 +168,7 @@ Swarm.exec = {
     start = function(u)
         local c, s = Swarm.unitParts(u)
         ns.Gate:Use(("swarm browse class %d sub %s"):format(c, tostring(s)), "browse")
+        Swarm.browseSentAt = GetTime()
         C_AuctionHouse.SendBrowseQuery({
             searchString = "",
             sorts = { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } },
@@ -176,7 +177,7 @@ Swarm.exec = {
         })
     end,
     full = function() return C_AuctionHouse.HasFullBrowseResults() end,
-    more = function() ns.Gate:Use("swarm next page", "page"); C_AuctionHouse.RequestMoreBrowseResults() end,
+    more = function() ns.Gate:Use("swarm next page", "page"); Swarm.browseSentAt = GetTime(); C_AuctionHouse.RequestMoreBrowseResults() end,
     gotResults = function() return Swarm.resultsSeen end,
 }
 
@@ -355,16 +356,22 @@ function Swarm:Init()
         if event == "AUCTION_HOUSE_CLOSED" then
             if Swarm.active then Swarm:Stop() end
         elseif event == "ADDON_ACTION_BLOCKED" then
-            if arg1 == "AuctionMesh" and ns.deferredBuyAt and ns.Gate and GetTime() - ns.deferredBuyAt < 0.5 then
-                -- the game wants a real click for purchases: stop holding clicks
-                ns.Sniper.noDefer, ns.Sniper.buying, ns.Sniper.queued = true, nil, nil
-                if ns.Print then ns.Print("Press Buy once more (the game needs a direct click).") end
-            elseif arg1 == "AuctionMesh" and Swarm.active then
-                Swarm:Stop("The game blocked automatic scanning. Prices will come from your own AH searches and from friends instead.")
-                Swarm.manual = true
+            -- Only a blocked RADAR READ may switch the radar off: the block must
+            -- follow one of our own category requests within half a second.
+            -- (Any blocked action used to do it. One blocked Buy click turned
+            -- the radar off for the rest of the session, and deals then only
+            -- arrived second-hand from friends, after they had seen them.)
+            if arg1 == "AuctionMesh" and Swarm.active and Swarm.browseSentAt and GetTime() - Swarm.browseSentAt < 0.5 then
+                Swarm.blocked = (Swarm.blocked or 0) + 1
+                if ns.Log then ns.Log("RADAR read blocked by the game (%d in a row)", Swarm.blocked) end
+                if Swarm.blocked >= 3 then
+                    Swarm:Stop("The game blocked automatic scanning three times. Prices will come from item checks and from friends instead.")
+                    Swarm.manual = true
+                end
             end
         else
             Swarm.resultsSeen = true
+            Swarm.blocked = 0 -- a radar read came back: reads are allowed
         end
     end)
 end

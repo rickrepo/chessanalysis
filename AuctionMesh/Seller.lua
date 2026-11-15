@@ -189,6 +189,8 @@ function Seller:SellVendor(onlyKey)
     end
     if #queue == 0 then return end
     self.selling = true
+    local all = {}
+    for key in pairs(flips()) do all[key] = bagCount[key] or 0 end
     local i = 0
     local function finish()
         -- Count what actually left the bags; only that is removed from the Bags tab.
@@ -205,6 +207,10 @@ function Seller:SellVendor(onlyKey)
             end
         end
         Seller.selling = false
+        -- tracked items that were not in the button's queue but left the bags meanwhile: sold by hand
+        local byHand = {}
+        for key, was in pairs(all) do if not before[key] then byHand[key] = was end end
+        Seller:CheckSoldByHand(byHand)
         if earned > 0 then say("Sold vendor flips for " .. money(earned) .. ".") end
         Seller:Refresh()
     end
@@ -339,17 +345,33 @@ end
 function Seller:SalesMoney()
     local s = AuctionMeshDB.sales
     local waiting, onway, nextAt, keys = 0, 0, nil, {}
-    if not s then return waiting, onway, nil, keys end
     local now = GetServerTime()
-    waiting = s.waiting or 0
-    for _, p in ipairs(s.pending or {}) do
-        if p.at <= now then
-            waiting = waiting + p.amount
-        else
-            onway = onway + p.amount
-            if not nextAt or p.at < nextAt then nextAt = p.at end
+    if s then
+        waiting = s.waiting or 0
+        for _, p in ipairs(s.pending or {}) do
+            if p.at <= now then
+                waiting = waiting + p.amount
+            else
+                onway = onway + p.amount
+                if not nextAt or p.at < nextAt then nextAt = p.at end
+            end
+            if p.key then keys[p.key] = true end
         end
-        if p.key then keys[p.key] = true end
+    end
+    -- Auctions the auction house itself reports as sold and not yet paid out,
+    -- for which no invoice has been seen at the mailbox yet: counted at your
+    -- own listed price, after the cut.
+    local S = ns.Sniper
+    for key, qty in pairs(S and S.ownSoldQty or {}) do
+        local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
+        if L and not keys[key] then
+            local n = min(qty, L.qty or qty)
+            onway = onway + floor((L.price or 0) * (1 - Deals.cfg.cut)) * n
+            -- everything of it sold: nothing of it is "listed" any more
+            local live = 0
+            for _, q in pairs(S.own and S.own[key] or {}) do live = live + q end
+            if live == 0 then keys[key] = true end
+        end
     end
     return waiting, onway, nextAt and (nextAt - now) or nil, keys
 end
@@ -435,7 +457,12 @@ function Seller:Reconcile()
         local inMail = self.mailCount[key] or 0
         local have = (bagCount[key] or 0) + inMail
         if inMail > 0 then f.mailVerified = now end
-        if self.mailComplete and have < (f.units or 0) and now - (f.at or 0) > 120 then
+        if have >= (f.units or 0) then f.missingSince = nil end
+        if self.mailComplete and have < (f.units or 0) and now - (f.at or 0) > 120 and not f.missingSince then
+            -- first time it is not found: keep it, and look again at a later mailbox visit
+            f.missingSince = now
+            ns.Log("RECONCILE %s: expected %d, bags %d, mail %d -> not found yet, kept for now", tostring(key), f.units, bagCount[key] or 0, inMail)
+        elseif self.mailComplete and have < (f.units or 0) and f.missingSince and now - f.missingSince > 300 then
             local missing = f.units - have
             ns.Log("RECONCILE %s: expected %d, bags %d, mail %d -> removing %d", tostring(key), f.units,
                 bagCount[key] or 0, inMail, missing)

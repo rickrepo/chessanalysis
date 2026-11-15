@@ -192,10 +192,22 @@ function Scanner:Init()
         "COMMODITY_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_UPDATED",
     }) do pcall(f.RegisterEvent, f, e) end
     f:SetScript("OnEvent", function(_, event, arg1)
-        if event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" then
-            Scanner:OnBrowse(C_AuctionHouse.GetBrowseResults(), true)
-        elseif event == "AUCTION_HOUSE_BROWSE_RESULTS_ADDED" then
-            Scanner:OnBrowse(arg1, false)
+        if event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" or event == "AUCTION_HOUSE_BROWSE_RESULTS_ADDED" then
+            -- The game fires this again after every single-item search, with the
+            -- SAME old category list. Reading it as a fresh radar read produced
+            -- alerts for prices that were long gone (seen in a real log). So a
+            -- category list is only read when it answers our own radar request,
+            -- or when you are browsing in the game's own screens.
+            local Sw = ns.Swarm
+            local ours = Sw and Sw.current and Sw.current.phase == "query"
+            local yours = not (ns.UI and ns.UI:IsShown())
+            if ours or yours then
+                if event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" then
+                    Scanner:OnBrowse(C_AuctionHouse.GetBrowseResults(), true)
+                else
+                    Scanner:OnBrowse(arg1, false)
+                end
+            end
         elseif event == "COMMODITY_SEARCH_RESULTS_UPDATED" then
             Scanner:OnCommodity(arg1)
         elseif event == "ITEM_SEARCH_RESULTS_UPDATED" then

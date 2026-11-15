@@ -86,7 +86,10 @@ do
     local e = {}
     for _, x in ipairs(Se:Entries()) do e[x.key .. x.action] = x end
     check(e["10AH"] and e["10MAIL"] and e["10MAIL"].seen, "item split between bags and mailbox, mailbox part marked seen")
-    check(AuctionMeshDB.flips[11] == nil, "purchase found in neither bags nor mailbox: removed with a message")
+    check(AuctionMeshDB.flips[11] ~= nil and AuctionMeshDB.flips[11].missingSince, "purchase found in neither bags nor mailbox: kept for now, looked for again at a later mailbox visit")
+    T = T + 400
+    Se:ScanBags(); Se:ScanMail(); Se:Reconcile()
+    check(AuctionMeshDB.flips[11] == nil, "still missing at a second mailbox visit more than 5 minutes later: only then removed, with a message")
     check(AuctionMeshDB.flips[12] and e["12MAIL"] and not e["12MAIL"].seen, "very recent purchase kept (mail may be on its way), shown as unchecked")
 end
 

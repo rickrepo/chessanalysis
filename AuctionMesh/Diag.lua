@@ -231,9 +231,7 @@ local function onEvent(_, event, ...)
     elseif (event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN") and (...) ~= ADDON then
         return
     elseif event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
-        -- ours: if it follows a price request sent without a click, stop doing that
-        local S = ns.Sniper
-        if S and S.armSentAt and GetTime() - S.armSentAt < 2 then S:ArmFailed("blocked") end
+        -- ours: logged below; nothing is switched off because of it
     end
     -- Search result events are frequent: log them briefly.
     Log("EVENT %s(%s) outstanding=%d", event, args(...), Gate.outstanding)
@@ -257,9 +255,12 @@ function Diag:Init()
         if C_AuctionHouse[name] then
             hooksecurefunc(C_AuctionHouse, name, function(...)
                 local ours = (Gate.usedAt == GetTime()) or name:find("^Cancel") or name:find("^Confirm")
-                if not ours then Gate.userUntil = GetTime() + 8 end
+                -- Reading lists (the game's Auctions tab does this by itself) only
+                -- needs a short pause; buying, selling and cancelling get 8 seconds.
+                local pause = (name:find("^Query") or name:find("Browse") or name:find("^Refresh")) and 2 or 8
+                if not ours then Gate.userUntil = math.max(Gate.userUntil or 0, GetTime() + pause) end
                 Log("CALL %s(%s) ready=%s%s", name, args(...), tostring(C_AuctionHouse.IsThrottledMessageSystemReady()),
-                    ours and "" or "  [you / game UI: background paused 8s]")
+                    ours and "" or ("  [you / game UI: background paused %ds]"):format(pause))
             end)
         end
     end
