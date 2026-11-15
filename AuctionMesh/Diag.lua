@@ -89,6 +89,9 @@ ns.Gate = Gate
 local BLIZZ = { "ItemSellFrame", "CommoditiesSellFrame", "ItemBuyFrame", "CommoditiesBuyFrame", "WoWTokenSellFrame" }
 function Gate:UserBusy()
     if GetTime() < (self.userUntil or 0) then return true end
+    -- A deal has just appeared: nothing else is sent, so the auction house is
+    -- free the instant you click Buy.
+    if GetTime() < (self.holdUntil or 0) then return true end
     local hb = ns.UI and ns.UI.hoverBtn
     if hb and hb.IsShown and hb:IsShown() and hb:IsMouseOver() then return true end
     local ah = AuctionHouseFrame
@@ -227,6 +230,10 @@ local function onEvent(_, event, ...)
         Gate:Penalize("show error " .. tostring((...)))
     elseif (event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN") and (...) ~= ADDON then
         return
+    elseif event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+        -- ours: if it follows a price request sent without a click, stop doing that
+        local S = ns.Sniper
+        if S and S.armSentAt and GetTime() - S.armSentAt < 2 then S:ArmFailed("blocked") end
     end
     -- Search result events are frequent: log them briefly.
     Log("EVENT %s(%s) outstanding=%d", event, args(...), Gate.outstanding)

@@ -146,6 +146,10 @@ fire("ADDON_LOADED", "AuctionMesh")
 fire("PLAYER_LOGIN")
 local UI, S, Se = ns.UI, ns.Sniper, ns.Seller
 AuctionMeshDB.cfg.minProfit, ns.Deals.cfg.minProfit = 20, 20 -- the walkthrough uses small deals
+-- The walkthrough below drives the two-click path (first click asks for the price, second buys),
+-- which is what happens when the game does not allow a price request without a click.
+-- One-click buying and holding fire have their own section at the end.
+AuctionMeshDB.cfg.prearm = false; S.hold = 0
 ns.Deals.cfg.requireTurnover = false -- the fake auction house has no other buyers until the "volume" section
 local function rowsText()
     local out = {}
@@ -190,11 +194,11 @@ check(r[1] and r[1]:find("Copper Ore") and r[1]:find("SAFE  Buy 12 for 36c, vend
 check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c, relist at 77c", 1, true) and r[2]:find("| +3s18c |", 1, true), "flip shows exact buy and resale price")
 check(S.verified[2447] == nil, "Peacebloom (500 cheap units) correctly rejected")
 check(strip(AuctionMeshFrame.footer._text):find("Make now  + 3s42c  (2 deals)", 1, true), "footer: Make now + 3s42c (2 deals)")
-check(morePages >= 3, "partial results: the rest of each listing was requested before judging")
+check(morePages >= 1 and morePages < 3, ("first page already proves a deal: acted on at once; only the item that was NOT a deal had the rest of its listing fetched (%d extra page)"):format(morePages))
 
 print("buying")
 click(1); advance(0.5)
-check(rowsText()[1]:find("%[Confirm%]"), "Buy asks the server for the real total, then shows Confirm")
+check(rowsText()[1]:find("%[BUY NOW%]"), "Buy asks the server for the real total, then shows BUY NOW")
 click(1); advance(1)
 check(gold == 3200 - 36 and AuctionMeshDB.flips[2770] and AuctionMeshDB.flips[2770].units == 12 and AuctionMeshDB.flips[2770].cost == 3, "confirmed: 12 bought for exactly 36c and recorded")
 check(chat[#chat]:find("Bought: 12 x"), "chat says Bought: 12 x ...")
@@ -813,6 +817,102 @@ do
     C_AuctionHouse.CalculateCommodityDeposit = dep0
     ns.Sniper.ClearFees()
     AuctionMeshDB.listed = {}
+end
+
+print("sniping speed: one click, hold fire, spam-safe, and a clear outcome")
+do
+    local G, cfg = ns.Gate, AuctionMeshDB.cfg
+    local btn = AuctionMeshSnipeButton
+    local function label() return strip(btn.label._text) end
+    local function press() btn._scripts.OnClick(btn) end
+    local function reset()
+        S.verified, S.checkedAt, S.triggers, S.sweep, S.dealSeen, S.floor = {}, {}, {}, {}, {}, {}
+        S.buying, S.queued, S.arming, S.searching, S.result, S.lastEval, S.priority = nil, nil, nil, nil, nil, nil, nil
+        G.holdUntil, G.outstanding, G.nextAt, G.penaltyUntil = nil, 0, 0, 0
+    end
+    cfg.prearm = nil; S.hold = 6; S.armFails = 0
+    cfg.focusMode = "off"; ns.Scout:Changed()
+    local flashes = {}
+    UIErrorsFrame = { AddMessage = function(_, text, r, g, b) flashes[#flashes + 1] = { strip(text), r, g, b } end }
+    S.tally = { won = 0, lost = 0, gone = 0 }
+    UI.tab = "BUY"; UI.notice = nil; gold = 900
+    reset()
+    ITEMS[2770] = { "Copper Ore", 5 }
+    LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+    local sentBefore = #sent
+    S.priority = 2770; advance(0.6)
+    check(S.verified[2770] ~= nil, "a deal appears")
+    check(G.holdUntil and G:UserBusy() == true and G:Ready() == false, "the radar goes silent at once, so the auction house is free for your click")
+    advance(0.6)
+    local b = S.buying
+    check(b and b.key == 2770 and b.armed and b.phase == "confirm", "the price was locked in without a click (asking is not buying)")
+    check(gold == 900, "nothing has been spent")
+    print("     " .. label())
+    check(label():find("^BUY NOW    Copper Ore x12    pay 36c    make %+ 24c"), "the big button says BUY NOW with what you pay and make")
+    check(rowsText()[1]:find("%[BUY NOW%]"), "and so does the row")
+    press(); advance(0.1)
+    check(S.buying and S.buying.phase == "wait", "ONE click sends the purchase")
+    press(); press(); press()
+    advance(0.5)
+    check(gold == 900 - 36 and AuctionMeshDB.flips[2770] and AuctionMeshDB.flips[2770].units == 12, "bought once; the extra clicks did nothing (safe to spam)")
+    print("     " .. label())
+    check(S.result and S.result.kind == "won" and label():find("^GOT IT  12 x Copper Ore for 36c"), "the panel says GOT IT")
+    check(G.holdUntil == nil, "and the radar runs again")
+    check(flashes[#flashes][1]:find("^AuctionMesh: GOT IT  12 x Copper Ore for 36c") and flashes[#flashes][3] == 1, "the same message flashes in green in the middle of the screen")
+    check(strip(btn.result._text) == "This session: 1 got, 0 missed, 0 gone before a click", "the line under the button keeps count")
+    AuctionMeshDB.flips[2770] = nil
+    ns.Journal:Dropped(2770, nil, "test")
+
+    -- someone else is faster: the listing is gone by the time you click
+    reset(); gold = 900
+    LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+    S.priority = 2770; advance(1.3)
+    check(S:OneClick(2770), "second deal: price locked in again")
+    LIST[2770] = { { 9, 200 }, { 10, 300 } } -- bought by someone else
+    local realConfirm = C_AuctionHouse.ConfirmCommoditiesPurchase
+    C_AuctionHouse.ConfirmCommoditiesPurchase = function() C_Timer.After(0.2, function() fire("COMMODITY_PURCHASE_FAILED") end) end
+    press(); advance(0.5)
+    C_AuctionHouse.ConfirmCommoditiesPurchase = realConfirm
+    print("     " .. label())
+    check(gold == 900 and S.result and S.result.kind == "lost" and label():find("^MISSED  Copper Ore: someone was faster. Nothing spent."), "you clicked but someone was faster: the panel says MISSED, nothing spent")
+    check(S.verified[2770] == nil and S.buying == nil, "the deal is off the list")
+    check(flashes[#flashes][1]:find("^AuctionMesh: MISSED  Copper Ore") and flashes[#flashes][2] == 1, "MISSED flashes in red in the middle of the screen")
+
+    -- it disappears before you click at all
+    reset(); gold = 900; cfg.prearm = false
+    LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+    S.priority = 2770; advance(1)
+    check(S.verified[2770] ~= nil and S.buying == nil, "third deal on screen (price not locked in this time)")
+    LIST[2770] = { { 9, 200 }, { 10, 300 } }
+    S.checkedAt = {}; S.priority = 2770; G.holdUntil = nil; advance(1)
+    print("     " .. label())
+    check(S.verified[2770] == nil and S.result and S.result.kind == "gone" and label():find("^GONE  Copper Ore: someone else bought it"), "it was bought by someone else before any click: the panel says GONE")
+    advance(7); UI:Render()
+    print("     " .. label())
+    check(not label():find("^GONE"), "after 6 seconds the button shows the next thing to do")
+    print("     " .. strip(btn.result._text))
+    check(strip(btn.result._text):find("^Last: GONE  Copper Ore: someone else bought it, %d+ seconds after it appeared. %(%d+s ago%)    This session: 1 got, 1 missed, 1 gone before a click"),
+        "but the outcome stays on the line underneath, with its age and the session's count")
+
+    -- two-click path, spammed: clicks while the price is on its way are ignored, the next one buys
+    reset(); gold = 900
+    LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+    S.priority = 2770; advance(1)
+    press()
+    check(S.buying and S.buying.phase == "quote" and label():find("^LOCKING THE PRICE %(keep clicking%)"), "first click asks for the price; the button says keep clicking")
+    press(); press()
+    check(S.buying.phase == "quote" and gold == 900, "clicks while the price is on its way do nothing and cause no error")
+    advance(0.3); press(); advance(0.5)
+    check(gold == 900 - 36 and S.result.kind == "won", "the first click after the price is in buys")
+    AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test")
+
+    -- the game refuses a price request without a click: one-click turns itself off
+    reset(); cfg.prearm = nil; S.armFails = 0
+    S.armSentAt = GetTime()
+    fire("ADDON_ACTION_FORBIDDEN", "AuctionMesh", "C_AuctionHouse.StartCommoditiesPurchase()")
+    check(cfg.prearm == false, "if the game blocks asking without a click, one-click buying switches itself off and the first click asks instead")
+    cfg.prearm = false; S.hold = 0; reset()
+    LIST[2770] = nil
 end
 
 print(("\n%d passed, %d failed"):format(pass, fail))

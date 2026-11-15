@@ -419,7 +419,12 @@ function Scout:Report(o)
         " | gold ", tostring(budget), "c")
     add("All money is in copper (100 = 1 silver, 10000 = 1 gold).")
     add("settings: minProfit=", tostring(cfg.minProfit), " margin=", tostring(cfg.margin), "% flips=", tostring(cfg.flips ~= false),
-        " scope=", tostring(cfg.scope), " focus=", tostring(cfg.focusMode or "off"), " tune=", tostring(cfg.tune ~= false))
+        " scope=", tostring(cfg.scope), " focus=", tostring(cfg.focusMode or "off"), " tune=", tostring(cfg.tune ~= false),
+        " oneClickBuy=", tostring(cfg.prearm ~= false))
+    if ns.Sniper and ns.Sniper.tally then
+        local t = ns.Sniper.tally
+        add("snipes this session: ", t.won, " got, ", t.lost, " missed after a click, ", t.gone, " gone before a click")
+    end
     do
         local _, list, text = self:Focus(budget, o.vendorSold, o.classOf)
         local names = {}

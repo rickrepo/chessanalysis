@@ -208,6 +208,8 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         ns.OnAHReady = function()
             if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
             local before = ns.Gate.usedAt
+            -- a locked-in price becomes BUY NOW the instant the lock opens
+            if Sniper.buying and Sniper.buying.phase == "confirm" then UI:Now() end
             Sniper:Tick()
             if ns.Gate.usedAt ~= before and ns.Gate.usedAt == GetTime() then return end -- the slot is taken
             Swarm:Step()

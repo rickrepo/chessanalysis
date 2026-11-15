@@ -55,6 +55,11 @@ local function merchantOpen() return MerchantFrame and MerchantFrame:IsShown() e
 local function mailOpen() return MailFrame and MailFrame:IsShown() end
 
 function UI:Dirty() self.dirty = true end
+-- Draw right now (a deal appeared, a purchase changed state): the usual
+-- redraw runs at most 5 times a second, which is too slow for sniping.
+function UI:Now()
+    if frame and frame:IsShown() then self:Render() else self.dirty = true end
+end
 
 -- Shows the latest message at the top of the window for 10 seconds.
 function UI:Notice(text, transient)
@@ -113,14 +118,10 @@ local function fillBuy(r, d, short)
         r.profit:SetText(GREEN .. "+" .. short(d.profit) .. "|r")
     end
     local b = S.buying
-    if S.queued and S.queued.key == d.key then
-        r.btn:SetText("..."); r.btn:Disable()
-    elseif b and b.key == d.key then
-        if b.phase == "confirm" then
-            r.btn:SetText("Confirm"); r.btn:Enable()
-        else
-            r.btn:SetText("..."); r.btn:Disable()
-        end
+    if S:OneClick(d.key) then
+        r.btn:SetText("BUY NOW"); r.btn:Enable()
+    elseif (b and b.key == d.key) or (S.queued and S.queued.key == d.key) or (S.arming and S.arming.key == d.key) then
+        r.btn:SetText("..."); r.btn:Enable() -- keep clicking: the click that lands after the price is in buys
     else
         r.btn:SetText("Buy")
         r.btn:SetEnabled(not b)
@@ -241,7 +242,7 @@ local function nextStep(deals, entries, short)
     local S, Se = ns.Sniper, ns.Seller
     local b = S.buying
     if b and b.phase == "confirm" then
-        return ("Press |cffffd100Confirm|r to pay %s for %d x %s."):format(short(b.total or 0), b.units, S.nameOf(b.key))
+        return ("Press |cffffd100BUY NOW|r to pay %s for %d x %s."):format(short(b.total or 0), b.units, S.nameOf(b.key))
     end
     if #deals > 0 and ahOpen() then
         local d = deals[1]
@@ -374,12 +375,68 @@ function UI:RenderMoney(entries, short)
         or "Sale amounts are after the 5% auction house cut. Sold amounts are read from the mailbox.")
 end
 
+-- THE BIG BUY BUTTON (Trades tab). It never moves and always acts on the best
+-- deal, so it can be clicked without looking for a row, and clicked repeatedly.
+--   teal    a deal: the first click asks for the price, the next one buys
+--   green   BUY NOW: the price is locked in, this click buys
+--   grey    nothing to buy; shows what happened to the last deal for 6 seconds
+function UI:RenderSnipe(short)
+    local sn = frame.snipe
+    local S = ns.Sniper
+    local show = self.tab == "BUY"
+    sn:SetShown(show)
+    frame.next:SetShown(self.tab == "SELL")
+    if not show then return end
+    local key = S:Target()
+    local d = key and S.verified[key]
+    local last = S.result -- stays on the panel until the next outcome
+    local res = last
+    if res and GetTime() - res.at > 6 then res = nil end
+    local b = S.buying
+    local text, colour, fill = nil, LINE, { 0.09, 0.10, 0.12 }
+    if d then
+        local units, total = S.NextBuy(d)
+        local what = ("%s x%d    pay %s    make + %s%s"):format(S.nameOf(d.key), units, short(total), short(d.profit),
+            d.kind == "VENDOR" and " (guaranteed, vendor)" or "")
+        if S:OneClick(key) then
+            text, colour, fill = GREEN .. "BUY NOW|r    " .. what, { 0.2, 1, 0.4 }, { 0.05, 0.22, 0.10 }
+        elseif b and b.key == key and b.phase == "wait" then
+            text, colour = GOLD .. "BUYING...|r    " .. what, ACCENT
+        elseif (b and b.key == key) or (S.queued and S.queued.key == key) or (S.arming and S.arming.key == key) then
+            text, colour = TEAL .. "LOCKING THE PRICE (keep clicking)|r    " .. what, ACCENT
+        else
+            text, colour = TEAL .. "BUY|r    " .. what, ACCENT
+        end
+    elseif res then
+        local c = res.kind == "won" and GREEN or res.kind == "lost" and RED or ORANGE
+        text = c .. res.text .. "|r"
+        colour = res.kind == "won" and { 0.2, 1, 0.4 } or res.kind == "lost" and { 1, 0.25, 0.25 } or { 1, 0.5, 0.25 }
+    else
+        text = TEAL .. "NEXT|r  " .. nextStep(self.lastDeals or {}, self.lastEntries or {}, short)
+    end
+    sn.label:SetText(text)
+    sn.fill:SetColorTexture(fill[1], fill[2], fill[3], 1)
+    UI.outline(sn, colour)
+    -- The line under the button never leaves you guessing: the last outcome
+    -- stays there with its age, next to the count for this session.
+    local t = S.tally
+    local tally = ("%sThis session:|r %s%d got|r, %s%d missed|r, %s%d gone before a click|r"):format(GREY, GREEN, t.won, RED, t.lost, ORANGE, t.gone)
+    if last and not (res and not d) then
+        local age = GetTime() - last.at
+        sn.result:SetText(("%sLast:|r %s%s|r %s(%s ago)|r    %s"):format(GREY, last.kind == "won" and GREEN or last.kind == "lost" and RED or ORANGE,
+            last.text, GREY, age < 90 and (floor(age) .. "s") or (floor(age / 60) .. " min"), tally))
+    else
+        sn.result:SetText((t.won + t.lost + t.gone > 0) and tally or "")
+    end
+end
+
 -- The bar at the top: what the request engine is doing right now.
 --   orange = measuring or trying something (the bar is its progress)
 --   teal   = tuned (the bar is how much of the request budget is in use)
 function UI:RenderBar()
     local paused
     if not ahOpen() then paused = "Idle: the auction house is closed"
+    elseif GetTime() < (ns.Gate.holdUntil or 0) then paused = "Holding fire: the auction house is free for your click"
     elseif ns.Gate:UserBusy() then paused = "Paused while you click"
     elseif not ns.Sniper.active then paused = "Idle" end
     local st = ns.Tuner:State(paused)
@@ -428,6 +485,7 @@ function UI:Render()
     if not frame or not frame:IsShown() then return end
     local Se, short = ns.Seller, ns.Seller.short
     local deals, entries = buyRows(), Se:Entries()
+    self.lastDeals, self.lastEntries = deals, entries
     local tab = self.tab
     self:Layout()
     self:RenderBar()
@@ -443,6 +501,7 @@ function UI:Render()
     UI.selectTab(frame.tabHist, tab == "HISTORY")
 
     frame.next:SetText(TEAL .. "NEXT|r  " .. nextStep(deals, entries, short))
+    self:RenderSnipe(short)
     local status = tab == "BUY" and buyStatus(#deals) or tab == "SELL" and Se:Instructions(entries) or ""
     local n = self.notice
     if n and GetTime() < n.till then
@@ -549,9 +608,7 @@ local function rowButton(self)
     local item = self:GetParent().item
     if not item then return end
     if not item.action then
-        local S = ns.Sniper
-        local b = S.buying
-        if b and b.key == item.key and b.phase == "confirm" then S:Confirm() else S:Buy(item.key) end
+        ns.Sniper:Press(item.key)
     else
         local Se = ns.Seller
         if item.action == "AH" then Se:Post(item.key)
@@ -672,6 +729,7 @@ local function selectTab(t, on)
     end
 end
 UI.selectTab = selectTab
+UI.outline = outline
 
 -- a "label ........ amount" line
 local function ledgerRow(parent, y, font)
@@ -753,6 +811,22 @@ function UI:Create()
     -- NEXT STEP: one plain instruction, always the most profitable thing to do now
     frame.next = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.next:SetJustifyH("LEFT"); frame.next:SetWordWrap(false)
+
+    -- THE BIG BUY BUTTON: fixed place, always the best deal, safe to spam
+    local sn = button(frame, 100, "", function() ns.Sniper:Press() end, "AuctionMeshSnipeButton")
+    sn:SetHeight(28)
+    sn:SetPoint("TOPLEFT", 12, -178); sn:SetPoint("TOPRIGHT", -12, -178)
+    sn.label = sn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    sn.label:SetPoint("LEFT", 10, 0); sn.label:SetPoint("RIGHT", -10, 0)
+    sn.label:SetJustifyH("LEFT"); sn.label:SetWordWrap(false)
+    sn.result = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    sn.result:SetPoint("TOPLEFT", sn, "BOTTOMLEFT", 2, -4); sn.result:SetPoint("TOPRIGHT", sn, "BOTTOMRIGHT", -2, -4)
+    sn.result:SetJustifyH("LEFT"); sn.result:SetWordWrap(false)
+    -- the mouse on it means a click is coming: nothing else is sent meanwhile
+    sn:SetScript("OnEnter", function(self) UI.hoverBtn = self end)
+    sn:SetScript("OnLeave", function(self) if UI.hoverBtn == self then UI.hoverBtn = nil end end)
+    sn:Hide()
+    frame.snipe = sn
     frame.status = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
 
@@ -988,6 +1062,9 @@ function UI:Create()
         -- Timers and the engine bar tick twice a second while the auction house is open.
         UI.tick = (UI.tick or 0) + 1
         if ahOpen() and UI.tick % 3 == 0 then UI.dirty = true end
+        -- a locked price turns into BUY NOW the moment the auction house is ready: don't wait for the slow redraw
+        local sb = ns.Sniper.buying
+        if sb and sb.phase == "confirm" and ns.Sniper:OneClick(sb.key) ~= UI.wasOneClick then UI.wasOneClick = ns.Sniper:OneClick(sb.key); UI.dirty = true end
         if UI.dirty then UI:Render() end
     end)
     self:CreateDrawer()
@@ -999,7 +1076,7 @@ end
 --   Bags:   the NEXT line, what to do, the list
 --   Setup:  settings and the request engine, then recent activity
 local LAYOUT = {
-    BUY = { next = -182, status = -200, statusH = 38, top = 246 },
+    BUY = { next = -182, status = -226, statusH = 38, top = 270 },
     SELL = { next = -40, status = -58, statusH = 38, top = 104 },
     HISTORY = { status = -304, statusH = 14, top = 480 },
 }

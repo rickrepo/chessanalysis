@@ -211,6 +211,29 @@ From that, Claude can send back a **focus code**, for example `AMF1:2589,2592,c7
 
 The report itself (now v2) adds: your auctions with the cheapest listing now, requests used and radar interval, churn next to real sales, gold at the day's start, and how close failed checks were to being deals.
 
+### Sniping: from "a deal appeared" to "it's yours"
+
+The first real report showed deals lasting 7 to 36 seconds, so everything between a deal appearing and your purchase landing is built for speed.
+
+| Step | What the addon does |
+|---|---|
+| A deal is confirmed | If the first page of the listing already proves the deal, it acts on it at once instead of fetching the rest (each further page costs 0.6s and can only add dearer units) |
+| The same instant | The panel redraws immediately, a sound plays, and the radar goes **silent for 6 seconds** so the auction house is free for your click instead of busy with a background request |
+| About half a second later | The addon asks the server what the deal's units cost right now. Asking is not buying: nothing is spent. When the answer is in, the button turns green and says **BUY NOW** |
+| Your click | **One click buys.** Before, the first click asked for the price and a second click bought |
+
+**The big Buy button** on the Trades tab never moves and always acts on the best deal, so you don't have to find a row. It is safe to click repeatedly: a click that has nothing to do yet (the price is on its way, the purchase is being confirmed) is ignored, and the first click that can buy, buys. It never buys twice.
+
+**You always know how it ended.** Every deal you went for, or that left before you could, ends in one of three messages:
+
+* **GOT IT** 12 x Copper Ore for 36c (green, with a coin sound). Shown only when the server confirmed the purchase or the gold left your bags.
+* **MISSED** someone was faster, nothing spent (red, with a different sound). You clicked, but it was gone.
+* **GONE** someone else bought it N seconds after it appeared (orange). It left before you clicked.
+
+The message is on the big button for 6 seconds, flashes in large text in the middle of your screen, and then stays on the line under the button with its age until the next outcome. That line also keeps a count for the session: "3 got, 1 missed, 2 gone before a click".
+
+If the game does not allow an addon to ask for a price without a click, one-click buying switches itself off permanently and the first click asks instead; everything else stays the same.
+
 ### The columns
 
 ```
@@ -250,7 +273,7 @@ Only deals that were just checked against the live listings appear here, with th
   9. Never goods that NPC vendors sell in unlimited supply (food, drink, thread, dyes, vials…), because their price can't hold above the vendor's.
   7. If there's market-price history (readings at least 30 minutes apart), the resale price can't exceed its average.
   8. If real sales are on record, the resale price can't exceed what buyers actually paid.
-* **Buy** asks the server for the real total; then you press **Confirm**. If the total is even 1c above what was checked, the purchase is cancelled and the deal is re-checked.
+* **Buy** is one click when the price could be locked in ahead (see Sniping below), otherwise two. If the server's total is even 1c above what was checked, nothing is bought and the deal is removed.
 * A purchase is recorded only after the server confirms it or the gold has left your bags. Chat says **Purchase confirmed** or **Purchase NOT completed**.
 * The **What to look for** button on the Setup tab switches between **Vendor only** (every deal is guaranteed) and **Vendor + Flips**. In vendor-only mode no flip checks are made, so more of the search budget goes to vendor deals.
 
