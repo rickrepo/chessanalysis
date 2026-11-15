@@ -441,7 +441,10 @@ function UI.WheelPress(inBox)
             local now = GetTime()
             local was = UI.wheelSeen
             UI.wheelSeen = now
-            if not was or now - was > 1 then UI:Dirty() end -- show ARMED; no redraw per notch
+            if not was or now - was > 0.7 then
+                ns.Log("ARMED: the wheel is rolling in the snipe box (snipe mode: radar and alerts only)")
+                UI:Dirty() -- show ARMED; no redraw per notch
+            end
             return true
         end
         return false
@@ -452,9 +455,11 @@ function UI.WheelPress(inBox)
     return true
 end
 
--- True while the wheel is being rolled in the snipe box (a notch in the last 1.5s).
+-- True while the wheel is being rolled in the snipe box: a notch in the last
+-- 0.7 seconds. (It was 1.5 seconds, and with the redraw on top the box went
+-- on saying the wheel was seen for two seconds after it had stopped.)
 function UI.Armed()
-    return UI.wheelSeen ~= nil and GetTime() - UI.wheelSeen < 1.5
+    return UI.wheelSeen ~= nil and GetTime() - UI.wheelSeen < 0.7
 end
 
 -- While a deal is on the big button, the wheel buys wherever the mouse is
@@ -533,13 +538,13 @@ function UI:RenderSnipe(short)
     if armed and not d then
         -- rolling with nothing to buy yet: say that it is working
         colour, fill = { 0.2, 1, 0.4 }, { 0.04, 0.14, 0.07 }
-        if not res then text = GREEN .. "ARMED|r    the next deal is bought the moment it appears" end
+        if not res then text = GREEN .. "ARMED|r    the next deal is bought the moment it appears    " .. GREY .. "radar only: nothing else is being sent|r" end
     end
     sn.label:SetText(text)
     sn.hint:SetText(not wheel and (GREY .. "Click here to buy the deal shown. (Mouse wheel buying is off: Setup tab.)|r")
-        or armed and (GREEN .. "Wheel detected. Keep rolling in this box.|r")
+        or armed and (GREEN .. "Rolling. Keep going: it stops being armed when the wheel stops.|r")
         or d and (GREY .. "Roll the mouse wheel here (or anywhere), or click: it buys.|r")
-        or (GREY .. "SNIPE BOX: keep the mouse here and keep rolling the wheel. A deal is bought the moment it appears.|r"))
+        or (GREY .. "SNIPE BOX, not armed: put the mouse here and keep rolling the wheel. A deal is bought the moment it appears.|r"))
     sn.fill:SetColorTexture(fill[1], fill[2], fill[3], 1)
     UI.outline(sn, colour)
     -- The line under the button never leaves you guessing: the last outcome

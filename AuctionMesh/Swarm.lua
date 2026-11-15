@@ -181,7 +181,7 @@ function Swarm:PickUnit()
     local now, clock = self.serverTime(), self.clock()
     local best, bestScore
     -- a side class that is due and that no friend is already reading
-    if self.side and #self.side > 0 then
+    if self.side and #self.side > 0 and not (ns.Sniper and ns.Sniper.SnipeMode and ns.Sniper:SnipeMode()) then
         local team, gap = self:Team(), self:SideGap()
         for _, u in ipairs(self.side) do
             local c = self.claims[u]

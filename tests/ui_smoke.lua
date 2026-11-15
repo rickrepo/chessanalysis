@@ -1349,14 +1349,15 @@ do
     local flipsWere = ns.Deals.cfg.flips
     ns.Deals.cfg.flips = false -- vendor deals only, so that nothing else in the test market is a deal
     LIST[2770] = nil; advance(2); S.verified = {}; UI:Render()
-    check(strip(btn.hint._text):find("^SNIPE BOX: keep the mouse here and keep rolling the wheel"), "with no deal the box says what to do")
+    check(strip(btn.hint._text):find("^SNIPE BOX, not armed: put the mouse here and keep rolling the wheel"), "with no deal the box says what to do")
     check(btn._scripts.OnEnter == nil and not G:UserBusy(), "the mouse resting in the box pauses nothing (it used to stop the radar)")
     local wheel = btn._scripts.OnMouseWheel
     local before = ns.Swarm.stats.queries
     for _ = 1, 10 do wheel(btn, 1); advance(0.2) end
     UI:Render()
     print("     " .. label() .. "  |  " .. strip(btn.hint._text))
-    check(label():find("^ARMED") and strip(btn.hint._text):find("Wheel detected", 1, true), "rolling in the box with no deal: ARMED, and it says the wheel is seen")
+    check(label():find("^ARMED") and label():find("radar only", 1, true) and strip(btn.hint._text):find("^Rolling%."), "rolling in the box with no deal: ARMED, radar only")
+    check(S:SnipeMode(), "snipe mode is on while you roll: routine item checks and side classes wait")
     check(gold == 900 and S.buying == nil, "nothing is bought while there is no deal")
     check(ns.Swarm.stats.queries > before, "the radar keeps reading while you roll")
     LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
@@ -1370,7 +1371,9 @@ do
     check(got and gold == 900 - 36, "a deal appears while you roll: it is bought by the wheel alone, without a click")
     AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test")
     advance(2); UI:Render()
-    check(not UI.Armed(), "the box stops being armed 1.5s after the last notch")
+    check(not UI.Armed() and strip(btn.hint._text):find("^SNIPE BOX, not armed"), "the box stops saying armed within a second of the wheel stopping")
+    advance(2)
+    check(not S:SnipeMode(), "and snipe mode ends 3 seconds after the last notch")
     -- outside the box, with no deal, the wheel scrolls the list as before
     check(UI.WheelPress() == false and UI.WheelPress(true) == true, "outside the box the wheel still scrolls; inside it never does")
     UI.wheelSeen = nil
@@ -1420,6 +1423,7 @@ do
     check(left == 6 and cost == 600, "quote for 16 came back as 6 at 1s00c + 10 at 1s48c: 6 are still there")
     check(S.Remaining(dl, 16, 2464) == nil, "quote entirely at the next prices: nothing is left, that is a real miss")
     reset(); gold = 5000; cfg.autoConfirm = false
+    local leatherWas = LIST[2319]; LIST[2319] = nil -- keep the big button on the item under test
     ITEMS[2592] = { "Wool Cloth", 33 }
     LIST[2592] = { { 100, 16 }, { 148, 33 }, { 154, 93 }, { 155, 138 }, { 160, 159 } }
     ns.Deals.cfg.requireTurnover = false
@@ -1435,6 +1439,7 @@ do
     btn._scripts.OnClick(btn); advance(0.4); btn._scripts.OnClick(btn); advance(0.6)
     check(gold == 5000 - 600 and AuctionMeshDB.flips[2592] and AuctionMeshDB.flips[2592].units == 6, "two more inputs and the 6 are bought")
     AuctionMeshDB.flips[2592] = nil; ns.Journal:Dropped(2592, nil, "test"); LIST[2592] = nil
+    LIST[2319] = leatherWas
 
     -- the listing changed in other ways too, so no exact count fits: the quote still says about how many are left
     do
@@ -1469,6 +1474,42 @@ do
         check(got >= 1 and got <= 9 and 9000 - gold == got * 107, "the retries end in a purchase of cheap units only, at 1s07c each, never a dear one")
         AuctionMeshDB.flips[4306] = nil; ns.Journal:Dropped(4306, nil, "test"); LIST[4306] = nil
         cfg.autoConfirm = false
+    end
+
+    -- A FLIP STRAIGHT FROM THE RADAR: no item check between the radar read and the deal
+    do
+        reset(); gold = 5000; cfg.autoConfirm = nil
+        local leather = LIST[2319]; LIST[2319] = nil
+        ITEMS[2592] = { "Wool Cloth", 33 }
+        LIST[2592] = { { 166, 480 }, { 168, 4338 }, { 169, 1018 }, { 170, 1080 } }
+        S.priority = 2592; advance(1) -- one full look: no deal, the listing is remembered
+        check(S.verified[2592] == nil and S.lastRows[2592] and S.lastRows[2592].rows[1].price == 166, "a full look at Wool Cloth: no deal, listing remembered")
+        advance(20)
+        local searches = 0
+        for i = 1, #sent do if sent[i] == "search2592" then searches = searches + 1 end end
+        -- 5 units appear at 33c between two radar reads
+        S.ownSweep[2592] = { q = 6916, p = 166, at = GetTime() - 0.7 }
+        S.sweep[2592] = { q = 6916, p = 166, at = GetTime() - 0.7 }
+        LIST[2592] = { { 33, 5 }, { 166, 480 }, { 168, 4338 }, { 169, 1018 }, { 170, 1080 } }
+        S:OnSweep(2592, 33, 6921)
+        local d = S.verified[2592]
+        local after = 0
+        for i = 1, #sent do if sent[i] == "search2592" then after = after + 1 end end
+        print("     " .. tostring(d and ("FLIP from the radar: " .. d.units .. " for " .. d.cost .. ", sell " .. d.sell .. ", profit " .. d.profit) or "no deal"))
+        check(d and d.instant and d.kind == "FLIP" and d.units == 5 and d.cost == 165 and after == searches,
+            "5 Wool Cloth at 33c under a 1s66c market: shown as a deal at once, without an item check")
+        S:Press(2592); advance(1.2)
+        check(gold == 5000 - 165 and S.result and S.result.kind == "won", "one press: the server's price is 5 x 33c, bought")
+        AuctionMeshDB.flips[2592] = nil; ns.Journal:Dropped(2592, nil, "test")
+        -- not when the full listing is old, and not when no units appeared
+        reset()
+        S.lastRows[2592].at = GetTime() - 300
+        S.ownSweep[2592] = { q = 6916, p = 166, at = GetTime() - 0.7 }
+        check(S:InstantFlip(2592, 33, 6921, S.ownSweep[2592]) == false, "a listing read 5 minutes ago is too old: the item gets its normal check instead")
+        S.lastRows[2592].at = GetTime()
+        check(S:InstantFlip(2592, 33, 6916, S.ownSweep[2592]) == false, "no new units since the last radar read: normal check")
+        check(S:InstantFlip(2592, 150, 6921, S.ownSweep[2592]) == false, "a price that is not a deal is not shown")
+        LIST[2592] = nil; LIST[2319] = leather; cfg.autoConfirm = false
     end
 
     -- five misses in a row: the item is left alone for 3 minutes

@@ -218,8 +218,8 @@ Real reports show deals on this realm lasting 1 to 3 seconds, a few lasting 10 t
 
 | The box shows | Meaning |
 |---|---|
-| grey `SNIPE BOX: keep the mouse here and keep rolling the wheel` | No deal. Nothing happens yet |
-| green `ARMED  the next deal is bought the moment it appears` / `Wheel detected` | The addon sees your wheel. Keep rolling |
+| grey `SNIPE BOX, not armed: put the mouse here and keep rolling the wheel` | No deal, and the wheel is not rolling |
+| green `ARMED  the next deal is bought the moment it appears  radar only: nothing else is being sent` | The addon sees your wheel (a notch in the last 0.7 seconds). Keep rolling; it goes back to "not armed" when the wheel stops |
 | the deal, then `BUYING...`, then `GOT IT` or `MISSED` | The first notch after a deal appeared asked the price; the purchase followed by itself (or with the next notch) |
 | grey `Watching. No deal right now.` | Idle. The box shows nothing but sniping; chores such as "visit a mailbox" are on the Bags tab, whose label counts them |
 | orange `4 deals hidden by your 90s 00c minimum profit (best: + 11s 22c)` | Deals exist but your own minimum is hiding them. Lower it on the Setup tab |
@@ -227,6 +227,17 @@ Real reports show deals on this realm lasting 1 to 3 seconds, a few lasting 10 t
 Because you are already rolling when the deal appears, there is no reaction time: the purchase starts within a few hundredths of a second of the deal being found. Nothing is bought while there is no deal, the box never buys the same deal twice, and the price check still applies (a deal that got dearer is not bought). Rolling inside the box never scrolls the list.
 
 The mouse resting in the box pauses nothing. It used to: the radar stood still whenever the mouse was on the Buy button, so parking the mouse there while waiting for a deal meant no deal could appear. A row's Buy or Post button still gives a short quiet moment, for at most 3 seconds.
+
+**Snipe mode: every request goes to the radar.** While you are rolling in the box (and for 3 seconds after), the addon sends nothing but radar reads and the checks its alerts ask for: no routine item checks, no side classes, no housekeeping. A routine check costs one request, and a deal that appears during it is seen 0.65 seconds late.
+
+**Flips straight from the radar.** Vendor deals were already shown without an item check. Flips now are too: when an item's cheapest price falls and N units appeared since the radar's last read, and that item's full listing was read in the last two minutes, the deal rules run on "N units at the new price, on top of that listing" and the deal is shown at once. That removes the item check that used to sit between the radar and the deal (0.65 seconds, plus half a second before your click's own request may go). Your click asks the server what N units cost and buys only if that is N x the price seen. Only the new units are offered this way; anything else gets the normal check.
+
+| From the radar seeing a listing to the purchase being sent | Before | Now, rolling in the box |
+|---|---|---|
+| Item check | about 0.65s | none (vendor deals and flips on recently read items) |
+| Wait before your request may be sent | about 0.5s | none (nothing was sent in between) |
+| Your reaction | 1 to 10 seconds in the logs | the next wheel notch |
+| Price request, then purchase | about 0.15s + 0.5s | the same: the game's own two steps |
 
 **No key binding is needed** for the wheel; the addon handles it. If you would rather use a key, the game's own Key Bindings screen (Options, Keybindings, AddOns) lists **AuctionMesh: Buy the best deal**; any key bound there presses the box.
 
