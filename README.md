@@ -224,6 +224,18 @@ Real reports show deals on this realm lasting 1 to 3 seconds, a few lasting 10 t
 
 **The big Buy button** on the Trades tab never moves and always acts on the best deal. Click it repeatedly: the first click asks for the price, clicks while the price is on its way are ignored, and the first click after it arrives buys. It never buys twice.
 
+What the third real log changed (version 3.17), all aimed at the seconds before your click:
+
+| The log showed | Change |
+|---|---|
+| The radar read every 3 seconds, so a deal was 1.5 seconds old on average before it was seen | One request reads everything, so the radar now reads back to back, about every 0.65 seconds |
+| Alerts waited 3 to 5 seconds behind a radar read, a housekeeping query and a re-check | An alert is always checked next; nothing else gets a turn while one is waiting |
+| Every vendor deal cost a 0.65 second item check before it was shown | When a price falls under vendor price and N units appeared since the last radar read, the deal is shown for N units at once. Your first click asks the server what N units cost; Buy is only offered if that is exactly N x the price seen |
+| "Not buyable" appeared again, for units another buyer was taking | That guess is gone. Your own auctions are known from the server's list. After a miss the same units are ignored for 4 seconds (the listing goes on showing sold units for a moment); a repeat miss at the same price waits four times longer each time, up to 10 minutes |
+| The game's list of sold auctions gives the amount paid and the time until pay-out | "Sold: still on its way" uses those figures directly, so the total matches the game's Auctions tab |
+
+**Who spotted it.** Every deal says `spotted by you` (your own radar) or `spotted by a friend` (it arrived over the channel from a friend's radar). A friend's deal is one they saw first and can click first; the label is on the big button, on the row, in the tooltip, and in the daily report.
+
 What the second real report corrected:
 
 * **Clicks were being lost.** When the auction house was busy the addon held your click and sent it a moment later. The game blocks that, so the click did nothing. Clicks now always go out at once.

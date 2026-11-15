@@ -20,6 +20,7 @@ ns.Sniper = Sniper
 
 local floor, min = math.floor, math.min
 local VERIFIED_TTL = 45           -- a verified deal is trusted this long, then re-checked
+local MISS_COOL = 4               -- after a miss, units at that price are ignored this long (the listing lags behind sales)
 local HOLD = 6                    -- seconds the radar stays silent when a deal appears, so your click is never queued behind it
 Sniper.hold = HOLD
 local CHECK_AGAIN = 30            -- don't re-check the same candidate sooner
@@ -158,7 +159,7 @@ function Sniper:Budget() return math.max(0, GetMoney()) end
 ---------------------------------------------------------------- live checks
 
 local SORTS
-function Sniper:Search(key, src, waited)
+function Sniper:Search(key, src, waited, from)
     SORTS = SORTS or { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } }
     -- The client silently refuses to send a search for an item whose details it
     -- has not loaded yet (seen in real logs: the request never leaves, and the
@@ -174,7 +175,7 @@ function Sniper:Search(key, src, waited)
     ns.Gate:Use("search " .. tostring(key), "search")
     C_AuctionHouse.SendSearchQuery(C_AuctionHouse.MakeItemKey(key), SORTS, true)
     -- src: what asked for this check (scored by the Tuner when the answer is in)
-    self.searching = { key = key, at = GetTime(), sent = ns.Gate.sentCount, src = src, waited = waited }
+    self.searching = { key = key, at = GetTime(), sent = ns.Gate.sentCount, src = src, waited = waited, from = from }
     self.checkedAt[key] = GetTime()
     self.stats.checks = self.stats.checks + 1
     ns.lastQuery = "sniper"
@@ -225,6 +226,11 @@ function Sniper:Evaluate(key, rows, commodity)
         -- never replace a deal while its purchase is in flight
     elseif deal then
         deal.at, deal.commodity, deal.key = GetTime(), commodity, key
+        do  -- who spotted it. A deal already on screen keeps its label.
+            local sr = self.searching
+            local had = self.verified[key]
+            deal.from = (had and had.from) or (sr and sr.key == key and sr.from) or "me"
+        end
         deal.rowsText = self.RowsText(rows)
         deal.rows = rows
         if not self.verified[key] then
@@ -292,6 +298,47 @@ end
 --   * lowest price fell 15% or more since the previous sweep.
 -- The same sweep also measures volume: a drop in the listed quantity between
 -- two sweeps means units were bought.
+-- A VENDOR DEAL STRAIGHT FROM THE RADAR, without the usual full look at the
+-- item first. That look costs 0.65 seconds, which is most of a deal's life
+-- here. The radar reads every item's cheapest price and total quantity about
+-- once a second, so when a price drops under what a vendor pays and the total
+-- quantity went up by N since the last read, N units were just listed at that
+-- price. The deal is shown at once for N units. It is still the server's
+-- quote that decides: your first click asks what N units cost, and the Buy is
+-- only offered if that is exactly N x the price seen. Nothing is bought on an
+-- estimate.
+function Sniper:InstantVendor(key, price, qty, v, prev)
+    if self.verified[key] or self.buying or not prev then return false end
+    local now = GetTime()
+    if now - prev.at > 2.5 or not prev.p or prev.p <= price then return false end
+    local cl = self.cool and self.cool[key]
+    if cl and now < cl.till and price <= cl.price then return false end
+    local n = qty - prev.q
+    if n <= 0 then return false end
+    n = min(n, floor(self:Budget() / price))
+    if n <= 0 then return false end
+    local profit = n * (v - price)
+    local need = Deals.cfg.minProfit
+    local gold = GetMoney()
+    if gold < 500 then need = min(need, max(10, floor(gold * 0.10))) end
+    if profit < need then return false end
+    local deal = { kind = "VENDOR", units = n, cost = n * price, deposit = 0, profit = profit, sell = v, buys = {}, counts = {},
+                   commodity = true, key = key, instant = true, from = "me", rowsText = ("radar: %d new at %d"):format(n, price),
+                   -- trusted for 8 seconds only; then the item gets its full look like any other
+                   at = now - VERIFIED_TTL + 8 }
+    self.verified[key] = deal
+    self.dealSeen = self.dealSeen or {}
+    self.dealSeen[key] = now
+    self.stats.deals = self.stats.deals + 1
+    if ns.Scout then ns.Scout:Deal(key, deal) end
+    if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
+    ns.Log("DEAL VENDOR %s straight from the radar: %d new units at %d, vendor pays %d, profit %d (no item check; the quote decides)",
+        tostring(key), n, price, v, profit)
+    if Sniper.hold > 0 then ns.Gate.holdUntil = now + Sniper.hold end
+    if ns.UI and ns.UI.Now then ns.UI:Now() end
+    return true
+end
+
 -- How far under the market the cheapest listing must be before a full check
 -- is worth a request: the same bar a flip has to clear (profit margin after
 -- the cut), with 3% to spare. At 20% margin that is 77% of market. The old
@@ -328,10 +375,12 @@ function Sniper:OnSweep(key, price, qty, shared)
     -- measured on our own reads only: a friend's read arrives late and out of
     -- order, which made every new posting look like a sale. Real sales are
     -- measured from full listings (Turnover below).
+    local prevOwn
     if not shared then
         local own = self.ownSweep and self.ownSweep[key]
+        prevOwn = own
         self.ownSweep = self.ownSweep or {}
-        self.ownSweep[key] = { q = qty, at = now }
+        self.ownSweep[key] = { q = qty, p = price, at = now }
         if own and now - own.at >= 1 and now - own.at <= 900 then
             local gone = own.q - qty
             Store:AddChurn(key, gone > 0 and gone or 0, now - own.at)
@@ -343,18 +392,23 @@ function Sniper:OnSweep(key, price, qty, shared)
     if price > self:Budget() then return end
     local why
     local v = self.vendorOf(key)
-    if v and price <= floor(v / (1 + Deals.cfg.vendorMargin)) then why = "at or under vendor price"
+    if v and price <= floor(v / (1 + Deals.cfg.vendorMargin)) then
+        why = "at or under vendor price"
+        if not shared and self:InstantVendor(key, price, qty, v, prevOwn) then return end
     elseif VENDOR_SOLD[key] or not Deals.cfg.flips then return
     elseif not self:InFocus(key) then return -- laser focus: flips only on the focus items
     elseif market and price <= market * self.TriggerRatio() then why = "under market"
     elseif prev and price <= prev.p * 0.85 then why = "price just dropped"
     end
     if not why then return end
-    self:AddTrigger(key, why, price, market)
+    self:AddTrigger(key, why, price, market, shared and "friend" or "me")
 end
 
 -- Queues one full look at an item (from our sweep, a friend's sweep or a friend's hint).
-function Sniper:AddTrigger(key, why, price, market)
+-- from = "friend" when the price came over the channel (a friend's radar or
+-- hint) rather than from your own radar. Shown on the deal, because a deal a
+-- friend saw first is one they can also click first.
+function Sniper:AddTrigger(key, why, price, market, from)
     if not self.active or key <= 0 or self.isItem[key] or self.verified[key] or self:Since(key) < TRIGGER_MIN then return end
     self.triggers = self.triggers or {}
     if not self.triggers[key] then
@@ -373,7 +427,8 @@ function Sniper:AddTrigger(key, why, price, market)
         if src == "vendor" then score = score + 10 end
         if src == "friend" then score = score + 1 end
         self.trigInfo = self.trigInfo or {}
-        self.trigInfo[key] = { src = src, at = GetTime() }
+        if src == "friend" then from = "friend" end
+        self.trigInfo[key] = { src = src, at = GetTime(), from = from or "me" }
         self.triggers[key] = score
         self.triggers[#self.triggers + 1] = key
         ns.Log("TRIGGER %s: %s (lowest %s, market %s, score %.2f)", tostring(key), tostring(why), tostring(price), tostring(market), score)
@@ -477,19 +532,12 @@ function Sniper:OnCommodityResults(itemID)
             -- The server itself quoted a higher price than this row: it is not buyable by you.
             local fl = self.floor[itemID]
             if fl and GetTime() - fl.at < 600 and r.unitPrice < fl.price then q = 0 end
-            -- The server just refused to sell us units under this price and they
-            -- are still listed: they really are not buyable by us (our own).
-            local ms = self.missed and self.missed[itemID]
-            if ms and GetTime() - ms.at < 10 and q > 0 and r.unitPrice < ms.floor then
-                self.floor[itemID] = { price = ms.floor, at = GetTime() }
-                ns.Log("NOT BUYABLE %s: %d listed at %d after the server refused to sell them", tostring(itemID), q, r.unitPrice)
-                self:Result("gone", itemID, ("NOT BUYABLE  %s: the cheap units are still listed but the server will not sell them to you (they are your own). Ignored for 10 minutes."):format(nameOf(itemID)))
-                q = 0
-            end
+            -- just missed at this price: the listing may still show units that are gone
+            local cl = self.cool and self.cool[itemID]
+            if cl and GetTime() < cl.till and r.unitPrice <= cl.price then q = 0 end
             if q > 0 then rows[#rows + 1] = { price = r.unitPrice, qty = q } end
         end
     end
-    if self.missed then self.missed[itemID] = nil end -- judged on this reading; not again
     if partial then
         -- The server sent the cheapest part of the listing first. If that part
         -- already proves a deal, act on it now: every further page costs 0.6s
@@ -554,7 +602,7 @@ function Sniper:NextCheck()
         local info = self.trigInfo and self.trigInfo[k]
         if self.trigInfo then self.trigInfo[k] = nil end
         if not self.verified[k] and self:Since(k) >= TRIGGER_MIN then
-            return k, info and info.src or "drop", info and (GetTime() - info.at) or 0
+            return k, info and info.src or "drop", info and (GetTime() - info.at) or 0, info and info.from or "me"
         end
     end
     for _, c in ipairs(self.candidates or {}) do
@@ -663,6 +711,7 @@ function Sniper:YieldTo() -- called by the scanner before each of its queries
     if self:Busy() then return false end
     if ns.Seller and ns.Seller:Busy() then return false end
     if self.priority then return false end
+    if self.triggers and #self.triggers > 0 then return false end -- an alert is waiting: the radar waits
     if self.active and ns.lastQuery == "swarm" and self:HasWork() then return false end -- take turns
     return true
 end
@@ -706,7 +755,11 @@ function Sniper:Tick()
     end
     if self:Busy() or not ns.Gate:Ready() then return end
     if ns.Seller and ns.Seller:Busy() then return end
-    if self.needOwned and C_AuctionHouse.QueryOwnedAuctions then
+    -- AN ALERT NEVER WAITS. A real log showed alerts sitting 3 to 5 seconds
+    -- behind a radar read, a housekeeping query and a re-check, on a realm
+    -- where deals last 2. With an alert pending, nothing else gets a turn.
+    local urgent = self.priority ~= nil or (self.triggers and #self.triggers > 0)
+    if self.needOwned and C_AuctionHouse.QueryOwnedAuctions and not urgent and next(self.verified) == nil then
         self.needOwned = false
         ns.Gate:Use("list my own auctions")
         C_AuctionHouse.QueryOwnedAuctions({})
@@ -714,13 +767,13 @@ function Sniper:Tick()
     end
     local S = ns.Swarm
     if S and S.active and S.current and S.current.phase == "query" then return end
-    if not self.priority and S and S.active and not S.idle and ns.lastQuery == "sniper" then return end
+    if not urgent and S and S.active and not S.idle and ns.lastQuery == "sniper" then return end
     -- an item whose details aren't loaded is skipped at no cost; try the next one
     if ns.Tuner then ns.Tuner:Balance(self.triggers and #self.triggers or 0) end
     for _ = 1, 3 do
-        local key, src, waited = self:NextCheck()
+        local key, src, waited, from = self:NextCheck()
         if not key then return end
-        if self:Search(key, src, waited) ~= false then return end
+        if self:Search(key, src, waited, from) ~= false then return end
     end
 end
 
@@ -921,27 +974,32 @@ function Sniper:OnPriceQuote(unitPrice, total)
         self:ArmPurchaseTimeout(25) -- time to press Buy again before the price is dropped
     else
         ns.Log("QUOTE MISMATCH %s: wanted %d units; deal was built at %s", tostring(b.key), b.units, tostring(b.deal.rowsText))
-        -- The quote is higher than the listing showed. Almost always that means
-        -- someone else bought the cheap units first (on this realm deals go in
-        -- 1 to 3 seconds). It can also mean the cheap units are your own
-        -- auctions, which you cannot buy. The two look the same in the quote, so
-        -- nothing is concluded here: the item is read again at once, and only
-        -- if the cheap units are STILL listed after the server refused to sell
-        -- them is the item marked "not buyable" (see OnCommodityResults).
-        local phantom = Sniper.PhantomFloor(b.deal.rows, b.units, total)
-        self.missed = self.missed or {}
-        self.missed[b.key] = phantom and { floor = phantom, at = GetTime() } or nil
-        ns.Log("QUOTE says real total %d; cheapest price still buyable %s", total, tostring(phantom))
+        -- The quote is higher than the listing showed: someone else bought the
+        -- cheap units first. The listing itself can go on showing them for a
+        -- moment after they are gone (a real log showed 26, then 6, units
+        -- "listed" at a price the server would no longer sell at), so the same
+        -- deal must not pop up again straight away, and nothing is concluded
+        -- about your own auctions: those are known from the server's own list.
+        local low = b.deal.rows and b.deal.rows[1] and b.deal.rows[1].price or (b.deal.units > 0 and floor(b.deal.cost / b.deal.units)) or 0
+        self.cool = self.cool or {}
+        -- Missing the same units again and again means they really cannot be
+        -- bought by you: each repeat waits four times longer (4s, 16s, 64s, ... 10 min).
+        local was = self.cool[b.key]
+        local n = (was and was.price == low and GetTime() - was.at < 900) and (was.n + 1) or 1
+        local wait = min(600, MISS_COOL * 4 ^ (n - 1))
+        self.cool[b.key] = { price = low, till = GetTime() + wait, at = GetTime(), n = n }
+        ns.Log("QUOTE says real total %d; units at %d or less are ignored for %ds (miss %d at this price)", total, low, wait, n)
         ns.Gate.ignoreErrorUntil = GetTime() + 2 -- our own cancel is not a server problem
         -- Cancel a moment later: cancelling inside the quote event makes the game show "Internal Auction Error".
         C_Timer.After(0.4, function() if not Sniper.buying then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end end)
         say(("|cffff8040Nothing bought, nothing spent.|r Someone was faster: %d x %s now costs %s (the listing showed %s).")
             :format(b.units, nameOf(b.key), plain(total), plain(b.deal.cost)))
         self.verified[b.key] = nil
-        self.priority = b.key
+        self.checkedAt[b.key] = GetTime() - TRIGGER_MIN + min(TRIGGER_MIN, self.cool[b.key].till - GetTime()) -- the radar may raise it again once the cooldown is over
         self.buying = nil
         if self.dealSeen then self.dealSeen[b.key] = nil end
-        self:Result("lost", b.key, ("MISSED  %s: someone was faster. It now costs %s for %d. Nothing spent."):format(nameOf(b.key), plain(total), b.units))
+        self:Result("lost", b.key, ("MISSED  %s: someone was faster. It now costs %s for %d. Nothing spent.%s"):format(nameOf(b.key), plain(total), b.units,
+            b.deal.from == "friend" and " (A friend's radar saw this one first.)" or ""))
     end
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
 end
@@ -991,6 +1049,7 @@ function Sniper:ReadOwned()
     local AH, own, n = C_AuctionHouse, {}, 0
     local total = AH.GetNumOwnedAuctions and AH.GetNumOwnedAuctions() or 0
     local soldRows, soldQty, rowsLog = 0, {}, {}
+    local soldPay = {}
     for i = 1, total do
         local a = AH.GetOwnedAuctionInfo(i)
         if a and #rowsLog < 8 then
@@ -1003,7 +1062,11 @@ function Sniper:ReadOwned()
             -- SOLD, WAITING TO BE PAID: the game lists these itself (its Auctions
             -- tab shows them as gold coming in). Read here so the panel's total
             -- agrees with the game without a trip to the mailbox.
+            -- For a sold row the server gives the whole amount paid (seen in a
+            -- real log: 10 sold at 172 each is listed as 1720) and the seconds
+            -- until it is paid out.
             if a.itemKey then soldQty[a.itemKey.itemID] = (soldQty[a.itemKey.itemID] or 0) + (a.quantity or 1) end
+            soldPay[#soldPay + 1] = { amount = floor((a.buyoutAmount or 0) * (1 - Deals.cfg.cut)), due = GetTime() + (a.timeLeftSeconds or 3600) }
         end
         if a and a.itemKey and not sold then
             local id = a.itemKey.itemID
@@ -1014,6 +1077,7 @@ function Sniper:ReadOwned()
         end
     end
     self.ownSold, self.ownSoldQty = soldRows, soldQty
+    self.ownSoldPay = soldPay -- { amount after the cut, due = when it is paid out }
     ns.Log("OWNED: the server lists %d of your auctions (%d active, %d sold and waiting to be paid) %s", total, n, soldRows, table.concat(rowsLog, " "))
     self.own, self.ownRead = own, true
     -- Deals built before we knew about them are re-checked.

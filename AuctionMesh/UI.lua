@@ -94,7 +94,8 @@ end
 local function fillBuy(r, d, short)
     local S = ns.Sniper
     local units, total = S.NextBuy(d)
-    r.name:SetText(S.nameOf(d.key))
+    -- who spotted it: your own radar, or a friend's (who can then also click first)
+    r.name:SetText(S.nameOf(d.key) .. (d.from == "friend" and (ORANGE .. "  friend|r") or (TEAL .. "  you|r")))
     r.state:SetText("")
     local each = d.units > 0 and d.profit / d.units or 0
     local unit = units > 0 and floor(total / units + 0.5) or 0
@@ -408,8 +409,9 @@ function UI:RenderSnipe(short)
     local text, colour, fill = nil, LINE, { 0.09, 0.10, 0.12 }
     if d then
         local units, total = S.NextBuy(d)
-        local what = ("%s x%d    pay %s    make + %s%s"):format(S.nameOf(d.key), units, short(total), short(d.profit),
-            d.kind == "VENDOR" and " (guaranteed, vendor)" or "")
+        local what = ("%s x%d    pay %s    make + %s%s    %s"):format(S.nameOf(d.key), units, short(total), short(d.profit),
+            d.kind == "VENDOR" and " (guaranteed, vendor)" or "",
+            d.from == "friend" and (ORANGE .. "spotted by a friend|r") or (TEAL .. "spotted by you|r"))
         if S:OneClick(key) then
             text, colour, fill = GREEN .. "BUY NOW|r    " .. what, { 0.2, 1, 0.4 }, { 0.05, 0.22, 0.10 }
         elseif b and b.key == key and b.phase == "wait" then
@@ -641,6 +643,11 @@ local function rowEnter(self)
     if not item then return end
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:SetItemByID(item.key)
+    if not item.action then
+        GameTooltip:AddLine(item.from == "friend"
+            and (ORANGE .. "Spotted by a friend's radar and passed on over the channel. They saw it before you, so they can also click before you.|r")
+            or (TEAL .. "Spotted by your own radar" .. (item.instant and ", shown without an item check" or "") .. ".|r"), 1, 1, 1, true)
+    end
     local st, dt = self.state:GetText(), self.detail:GetText()
     if st and st ~= "" then GameTooltip:AddLine(st, 1, 1, 1, true) end
     if dt and dt ~= "" then GameTooltip:AddLine(dt, 0.8, 0.8, 0.8, true) end

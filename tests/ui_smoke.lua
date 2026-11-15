@@ -316,13 +316,16 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
     -- the auction house itself reports the auction as sold and waiting to be paid
     Enum.AuctionStatus = { Active = 0, Sold = 1 }
     C_AuctionHouse.GetNumOwnedAuctions = function() return 1 end
-    C_AuctionHouse.GetOwnedAuctionInfo = function() return { itemKey = { itemID = 2589 }, status = 1, quantity = 6, buyoutAmount = 77 } end
+    -- as in the real log: a sold row carries the whole amount paid and the seconds until it is paid out
+    C_AuctionHouse.GetOwnedAuctionInfo = function() return { itemKey = { itemID = 2589 }, status = 1, quantity = 6, buyoutAmount = 462, timeLeftSeconds = 960 } end
     S:ReadOwned(); UI:Render()
     print("     " .. lg.rows[3].label._text .. " | " .. val(lg.rows[3]))
-    check(val(lg.rows[3]) == "+ 4s38c" and val(lg.rows[4]) == "-" and val(lg.total) == strip(ns.Seller.short(GetMoney() + 438)),
-        "an auction the game lists as sold moves to 'Sold: still on its way' without a mailbox visit; the total stays the same")
+    check(val(lg.rows[3]) == "+ 4s38c  next 16 min" and val(lg.rows[4]) == "-" and val(lg.total) == strip(ns.Seller.short(GetMoney() + 438)),
+        "an auction the game lists as sold moves to 'Sold: still on its way', with the game's own amount and pay-out time, without a mailbox visit")
+    advance(970); UI:Render()
+    check(val(lg.rows[2]) == "+ 4s38c" and val(lg.rows[3]) == "-", "once its pay-out time has passed it counts as waiting in the mailbox")
     C_AuctionHouse.GetNumOwnedAuctions = function() return 0 end
-    S.ownSoldQty = {}
+    S.ownSoldQty, S.ownSoldPay = {}, {}
     S.own, S.ownRead = ownWas, readWas
     UI.tab = "SELL"; UI:Render()
     check(not lg:IsShown(), "the Bags tab has no MONEY section")
@@ -351,8 +354,14 @@ local before = gold
 click(1); advance(1)
 check(gold == before and S.buying == nil, "server quoted 5s each: nothing bought, nothing spent")
 check(strip(AuctionMeshFrame.status._text):find("Nothing bought, nothing spent"), "the window itself says what happened")
-advance(15)
-check(#dealRows() == 0 and S.verified[500] == nil, "the fake deal does not come back")
+advance(2)
+check(S.verified[500] == nil, "for a few seconds the same units are not offered again")
+advance(13)
+check(S.verified[500] ~= nil, "after the short cooldown it is offered again (the listing still shows it)")
+click(1); advance(1)
+advance(12)
+check(S.verified[500] == nil and S.cool[500].n == 2, "missed a second time at the same price: now ignored four times longer, and so on up to 10 minutes")
+LIST[500] = nil; S.verified[500] = nil
 
 print("vendor-only mode")
 UI:SetVendorOnly(true)
@@ -579,7 +588,7 @@ do
     Sw.cfg.sweepShare, Sw.cfg.perRequest = 0.30, 0.65 -- the figures the Tuner starts from
     Sw:Tune(Sw.units[1], 1); local f1 = Sw.cfg.fresh
     Sw:Tune(Sw.units[1], 6); local f6 = Sw.cfg.fresh
-    check(f1 == 3 and f6 == 13, ("radar interval follows the sweep's real cost: 1 request -> every %ds, 6 requests -> every %ds"):format(f1, f6))
+    check(f1 == 1 and f6 == 13, ("radar interval: a 1-request read runs back to back (shown as every %ds); a 6-request read every %ds"):format(f1, f6))
     Sw:Tune(Sw.units[1], 1)
     -- the addon measures what one request returns and how fast requests go, instead of assuming
     local function page(n, first)
@@ -909,28 +918,79 @@ do
     check(gold == 900 and S.result and S.result.kind == "lost" and label():find("^MISSED  Copper Ore: someone was faster. It now costs 1s08c for 12. Nothing spent."),
         "the listing was bought by someone else: the panel says MISSED with the real price, nothing spent")
     check(flashes[#flashes][1]:find("^AuctionMesh: MISSED  Copper Ore") and flashes[#flashes][2] == 1, "MISSED flashes in red in the middle of the screen")
-    advance(1.5)
-    check(S.floor[2770] == nil and not (S.result.text or ""):find("NOT BUYABLE"), "it is NOT called 'not buyable' and the item is not ignored afterwards (it used to be, for 30 minutes)")
+    check(not (S.result.text or ""):find("NOT BUYABLE"), "it is never called 'not buyable' on the strength of a quote")
+    -- the listing goes on showing the units for a moment after they are gone (seen in a real log)
     LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
     S.checkedAt = {}; S.priority = 2770; G.holdUntil = nil; advance(1)
-    check(S.verified[2770] ~= nil, "a new cheap listing of the same item is offered again straight away")
+    check(S.verified[2770] == nil, "for 4 seconds after a miss the same cheap units are not offered again (the listing lags behind sales)")
+    advance(4); S.checkedAt = {}; S.priority = 2770; G.holdUntil = nil; advance(1)
+    check(S.verified[2770] ~= nil, "after that, if they are really still there, the deal is offered again")
 
-    -- your own auction really is in the way: the cheap units are still listed after the server refused to sell them
+    -- an alert never waits behind the radar or housekeeping
+    reset()
+    S.needOwned = true
+    S:AddTrigger(2770, "at or under vendor price", 3, 9)
+    check(S:YieldTo("swarm") == false, "an alert is waiting: the radar gives up its turn")
+    local n5 = #sent
+    ns.lastQuery = "sniper"; ns.Swarm.idle = false
+    S:Tick()
+    check(sent[#sent] == "search2770" and #sent == n5 + 1 and S.needOwned == true, "the alert is checked at once; reading my own auctions waits")
+    advance(1); S.needOwned = false
+
+    -- the radar reads back to back when one request covers everything
+    local Sw = ns.Swarm
+    Sw.unitReq = { [Sw.units[1]] = 1 }; Sw.claims = {}
+    Sw.myDoneClock = { [Sw.units[1]] = Sw.clock() - 0.2 }
+    check(Sw:Solo() and Sw:PickUnit() == nil, "0.2s after a radar read: not yet")
+    Sw.myDoneClock[Sw.units[1]] = Sw.clock() - 0.5
+    check(Sw:PickUnit() == Sw.units[1], "0.5s after a radar read: the next one is due (was 3 seconds)")
+
+    -- a vendor deal straight from the radar, with no item check in between
     reset(); gold = 900
-    ITEMS[500] = { "Zesty Clam Meat", 500 }
-    LIST[500] = { { 450, 2 }, { 500, 913 }, { 750, 6 } }
-    local startWas = C_AuctionHouse.StartCommoditiesPurchase
-    C_AuctionHouse.StartCommoditiesPurchase = function(id, q) C_Timer.After(0.2, function() fire("COMMODITY_PRICE_UPDATED", 500, 500 * q) end) end
-    S.priority = 500; advance(1)
-    check(S.verified[500] ~= nil, "a deal whose cheap units are your own auctions")
+    ITEMS[5555] = { "Flax Cloth", 13 }
+    LIST[5555] = { { 22, 138 }, { 23, 1095 } }
+    ns.Store.fp[5555], ns.Store.ft[5555] = 23, GetServerTime()
+    S.ownSweep, S.cool = {}, {}
+    local n6 = #sent
+    S:OnSweep(5555, 22, 1233)          -- radar read: cheapest 22c
+    advance(0.7)
+    LIST[5555] = { { 2, 21 }, { 22, 138 }, { 23, 1095 } }
+    S:OnSweep(5555, 2, 1254)           -- next read: cheapest 2c, 21 more units than before
+    local d = S.verified[5555]
+    check(d and d.instant and d.units == 21 and d.cost == 42 and d.profit == 231, "price fell under vendor price and 21 units appeared: a deal for 21 at 2c is shown at once")
+    local searched = false
+    for i = n6 + 1, #sent do if sent[i] == "search5555" then searched = true end end
+    check(not searched, "no item check was spent on it first (0.65s saved)")
+    print("     " .. label())
     press(); advance(0.3)
-    check(S.result.kind == "lost", "the server quotes the dearer price: first reported as missed")
+    check(S.buying and S.buying.phase == "confirm" and S.buying.total == 42, "first click: the server quotes exactly 21 x 2c, so Buy is offered")
+    press(); advance(0.5)
+    check(gold == 900 - 42 and AuctionMeshDB.flips[5555] and AuctionMeshDB.flips[5555].units == 21, "second click: bought 21 for 42c")
+    AuctionMeshDB.flips[5555] = nil; ns.Journal:Dropped(5555, nil, "test")
+    -- the estimate was wrong (some were already gone): the quote says so and nothing is bought
+    reset(); gold = 900
+    LIST[5555] = { { 2, 5 }, { 22, 138 }, { 23, 1095 } }
+    S.ownSweep = { [5555] = { q = 1233, p = 22, at = GetTime() - 0.7 } }
+    S:OnSweep(5555, 2, 1254)
+    check(S.verified[5555] and S.verified[5555].instant, "second instant deal on screen")
+    press(); advance(0.3)
+    check(gold == 900 and S.result and S.result.kind == "lost" and S.verified[5555] == nil, "radar said 21 but only 5 were left: the quote is higher, nothing is bought, reported as MISSED")
+    -- who spotted it
+    reset(); gold = 900; S.cool = {}
+    LIST[5555] = { { 2, 21 }, { 22, 138 }, { 23, 1095 } }
+    S:OnSweep(5555, 2, 1254, true)     -- this price arrived over the channel, from a friend's radar
     G.holdUntil = nil; advance(1.5)
-    C_AuctionHouse.StartCommoditiesPurchase = startWas
-    print("     " .. strip(S.result.text))
-    check(S.floor[500] and S.floor[500].price == 500 and S.result.text:find("^NOT BUYABLE"), "the re-read still shows the cheap units: only now is it called NOT BUYABLE")
-    check(S.verified[500] == nil, "and that deal is not offered again")
-    LIST[500] = nil
+    check(S.verified[5555] and S.verified[5555].from == "friend", "a deal that came from a friend's radar is marked as such")
+    UI:Render()
+    print("     " .. label())
+    check(label():find("spotted by a friend", 1, true) and rowsText()[1]:find("Flax Cloth  friend", 1, true), "the big button and the row say 'spotted by a friend'")
+    S.verified[5555] = nil; S.dealSeen = {}
+    S.ownSweep = { [5555] = { q = 1233, p = 22, at = GetTime() - 0.7 } }
+    S:OnSweep(5555, 2, 1254)           -- the same thing seen by your own radar
+    UI:Render()
+    check(S.verified[5555].from == "me" and label():find("spotted by you", 1, true) and rowsText()[1]:find("Flax Cloth  you", 1, true), "a deal your own radar saw says 'spotted by you'")
+    S.verified[5555] = nil; S.dealSeen = {}; G.holdUntil = nil
+    LIST[5555] = nil
 
     -- it disappears before you click at all
     reset(); gold = 900

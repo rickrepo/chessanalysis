@@ -30,6 +30,7 @@ local floor, random = math.floor, math.random
 
 Swarm.cfg = {
     fresh = 20,           -- seconds between sweeps of a category; re-tuned from the sweep's measured cost
+    soloEvery = 0.4,      -- a one-request radar reads again this soon after its last read (back to back)
     adaptive = true,      -- keep sweeps at about `sweepShare` of the request budget
     sweepShare = 0.30,    -- the rest goes to confirming triggers and routine readings
     perRequest = 0.65,    -- measured seconds per auction house request on this client
@@ -116,11 +117,17 @@ function Swarm:PickUnit()
     local best, bestScore
     local solo = self:Solo()
     self.myDone = self.myDone or {}
+    self.myDoneClock = self.myDoneClock or {}
     for _, u in ipairs(self.units) do
-        local age = now - ((solo and self.myDone[u]) or (not solo and self.doneAt[u]) or 0)
+        -- SOLO: the radar reads again as soon as the last read is `soloEvery`
+        -- old, i.e. back to back (one read every 0.65s), giving way only to
+        -- alerts and routine checks. A read every 3 seconds meant a deal was
+        -- 1.5 seconds old on average before it was even seen.
+        local age = solo and (clock - (self.myDoneClock[u] or -1e9)) or (now - (self.doneAt[u] or 0))
+        local due = solo and self.cfg.soloEvery or self.cfg.fresh
         local c = self.claims[u]
         local claimed = not solo and c and (clock - c.at) < self.cfg.claimTTL and c.by ~= Comm.me
-        if age >= self.cfg.fresh and not claimed then
+        if age >= due and not claimed then
             -- Focus wins outright; otherwise stalest first; jitter splits ties.
             local score = (focused(u) and 1e12 or 0) + age + random()
             if not bestScore or score > bestScore then best, bestScore = u, score end
@@ -218,6 +225,8 @@ function Swarm:Step()
             self.doneAt[cur.unit] = self.serverTime()
             self.myDone = self.myDone or {}
             self.myDone[cur.unit] = self.serverTime()
+            self.myDoneClock = self.myDoneClock or {}
+            self.myDoneClock[cur.unit] = clock
             self.claims[cur.unit] = nil
             if ns.Scout then ns.Scout:Sweep() end
             if not self:Solo() then note(2, cur.unit) end
@@ -293,6 +302,7 @@ function Swarm:Tune(unit, requests)
         end
         M.pages, M.items = 0, 0
     end
+    if self:Solo() then fresh = 1 end -- shown as "about every second"
     self.cfg.fresh = fresh
 end
 
@@ -302,7 +312,7 @@ function Swarm:Retune()
     if not self.cfg.adaptive or not self.unitReq or #self.units == 0 then return end
     local total = 0
     for _, u in ipairs(self.units) do total = total + (self.unitReq[u] or 1) end
-    self.cfg.fresh = math.max(3, math.min(90, floor(total * self.cfg.perRequest / self.cfg.sweepShare + 0.5)))
+    self.cfg.fresh = self:Solo() and 1 or math.max(3, math.min(90, floor(total * self.cfg.perRequest / self.cfg.sweepShare + 0.5)))
 end
 
 function Swarm:NextRescan()

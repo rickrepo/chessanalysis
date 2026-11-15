@@ -362,16 +362,28 @@ function Seller:SalesMoney()
     -- for which no invoice has been seen at the mailbox yet: counted at your
     -- own listed price, after the cut.
     local S = ns.Sniper
-    for key, qty in pairs(S and S.ownSoldQty or {}) do
-        local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
-        if L and not keys[key] then
-            local n = min(qty, L.qty or qty)
-            onway = onway + floor((L.price or 0) * (1 - Deals.cfg.cut)) * n
-            -- everything of it sold: nothing of it is "listed" any more
-            local live = 0
-            for _, q in pairs(S.own and S.own[key] or {}) do live = live + q end
-            if live == 0 then keys[key] = true end
+    local pay = S and S.ownSoldPay
+    if pay and #pay > 0 then
+        -- The auction house's own list of sold auctions is newer and more exact
+        -- than what was seen at the last mailbox visit: it replaces the
+        -- invoice figures for sales that have not been paid out yet.
+        onway, nextAt = 0, nil
+        local t = GetTime()
+        for _, r in ipairs(pay) do
+            if r.due > t then
+                onway = onway + r.amount
+                local at = now + (r.due - t)
+                if not nextAt or at < nextAt then nextAt = at end
+            else
+                waiting = waiting + r.amount -- its time has passed: it is in the mailbox
+            end
         end
+    end
+    for key in pairs(S and S.ownSoldQty or {}) do
+        -- everything of it sold: nothing of it is "listed" any more
+        local live = 0
+        for _, q in pairs(S.own and S.own[key] or {}) do live = live + q end
+        if live == 0 then keys[key] = true end
     end
     return waiting, onway, nextAt and (nextAt - now) or nil, keys
 end
@@ -411,6 +423,14 @@ function Seller:ScanMail()
             end
         end
         AuctionMeshDB.sales = sales
+        -- sales read from the auction house whose pay-out time has passed are
+        -- now in this mailbox reading (or already collected): not counted twice
+        local S = ns.Sniper
+        if S and S.ownSoldPay then
+            local keep, t = {}, GetTime()
+            for _, r in ipairs(S.ownSoldPay) do if r.due > t then keep[#keep + 1] = r end end
+            S.ownSoldPay = keep
+        end
     end
     -- More than ~50 mails: the client only shows part of the inbox, so we can't be sure.
     self.mailComplete = (total or shown or 0) <= (shown or 0)

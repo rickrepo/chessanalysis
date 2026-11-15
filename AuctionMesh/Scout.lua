@@ -159,7 +159,8 @@ function Scout:Deal(key, deal)
     h.n = h.n + 1
     local log = self.d.deals
     log[#log + 1] = { t = self.now(), k = key, kind = deal.kind, u = deal.units, c = deal.cost, s = deal.sell,
-                      p = deal.profit, r = deal.rate and floor(deal.rate) or nil, o = "seen" }
+                      p = deal.profit, r = deal.rate and floor(deal.rate) or nil, o = "seen",
+                      f = deal.from == "friend" and "friend" or (deal.instant and "radar" or "me") }
     while #log > 80 do table.remove(log, 1) end
 end
 
@@ -489,11 +490,12 @@ function Scout:Report(o)
 
     add("")
     add("-- DEALS SEEN (newest first, up to 40): what was offered and what became of it")
-    add("ago | item(id) | kind | units | pay | sell each | profit | sells/h | outcome")
+    add("spotted by: me = my own radar then an item check; radar = straight from my radar, no item check; friend = a friend's radar saw it first")
+    add("ago | item(id) | kind | units | pay | sell each | profit | sells/h | spotted by | outcome")
     for i = #d.deals, max(1, #d.deals - 39), -1 do
         local e = d.deals[i]
         add(("%.1fh"):format((now - e.t) / 3600), " | ", plainName(e.k), "(", e.k, ") | ", tostring(e.kind), " | ", num(e.u), " | ", num(e.c), " | ", num(e.s),
-            " | ", num(e.p), " | ", num(e.r), " | ", tostring(e.o), e.life and (" after " .. e.life .. "s") or "", e.why and (" (" .. e.why .. ")") or "")
+            " | ", num(e.p), " | ", num(e.r), " | ", tostring(e.f or "-"), " | ", tostring(e.o), e.life and (" after " .. e.life .. "s") or "", e.why and (" (" .. e.why .. ")") or "")
     end
 
     add("")
