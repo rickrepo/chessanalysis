@@ -6,6 +6,16 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.31.0 (2026-11-15)
+
+- **Picks tab: which item is worth a stake-out.** A fourth tab, between Bags and Setup. From the deals the radar has already seen in the last 24 hours it lists, per item: deals, how many you got, how many you went for and missed (with their worth), how many were gone before any input, what a stake-out would buy at, and the cheapest price now.
+  - The line at the top says `Try a stake-out on <item>` when what you missed on it is worth more than everything the radar caught on other items in the same time (what a stake-out gives up, since the radar is off while it runs). Otherwise `Keep the radar`, with both figures.
+  - **Stake out** on a row sets it in one click and takes you to the snipe box; the button then reads **Stop**. The tab's label reads `Picks (1)` when there is a recommendation.
+  - With a stake-out set, the tab shows what it buys at and what it has done on that item so far (price asked N times, M bought), kept across sessions.
+- **No cost to sniping.** The tab sends no request to the auction house. It is recalculated at most every 30 seconds and never while inputs arrive in the snipe box, a deal is on screen or a purchase is in progress.
+- The record of deals holds the last 400 (was 80), so there is enough to compare items.
+- The Snapshot has a PICKS block and the stake-outs so far.
+
 ## 3.30.0 (2026-11-15)
 
 - **Cancel an undercut auction from the panel.** A row under STUCK LISTINGS has a **Cancel** button while the auction house is open. The first click says what it costs (the posting fee is not returned) and the button asks **Sure?**; the second click cancels. The units go back to the Bags tab as "In your mailbox", the addon takes them out at a mailbox, and at the auction house **Post** lists them again one step under the cheapest seller.

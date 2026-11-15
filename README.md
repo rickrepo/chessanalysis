@@ -4,10 +4,10 @@ AuctionMesh is a WoW Forever addon (Midnight retail client, interface 16001) for
 
 ## How to use it
 
-Open the auction house. The panel opens inside the auction house window and price reading starts by itself. It has three tabs and a bar at the top right.
+Open the auction house. The panel opens inside the auction house window and price reading starts by itself. It has four tabs and a bar at the top right.
 
 ```
- [ Trades ] [ Bags ] [ Setup ]              [#########------]
+ [ Trades ] [ Bags ] [ Picks ] [ Setup ]           [#########------]
                                     Tuned: 1.6 requests a second, 94% in use
  MONEY
  Gold on this character now                               42g 58s 88c
@@ -30,6 +30,7 @@ Open the auction house. The panel opens inside the auction house window and pric
 
 * **Trades** is the money and the market: what you have, deals you can buy right now, and your own auctions.
 * **Bags** is what you hold and the one thing to do with each item: post it or sell it to a vendor (whichever pays more), collect it from the mailbox, or wait.
+* **Picks** says which item, if any, is worth a stake-out, from deals the radar has already seen.
 * **Setup** has a control for every setting, in five short groups. No chat commands are needed.
 * The mouse wheel scrolls a list that is longer than the panel.
 
@@ -136,7 +137,7 @@ Nothing has to be typed in chat. The Setup tab has a control for everything that
 | ADDON | The panel | Inside the auction house window or a window of its own; opens by itself on or off |
 | | Auto-adjust | One switch for the pace, the split of requests, the profit bar, the smallest profit and the radar's quiet time. **Forget what was learned** needs a second click |
 
-Under the controls are three lines: the last thing auto-adjust changed (and when), the server's measured request limit, and what one radar read costs. The heading shows the installed version, e.g. `SETTINGS (AuctionMesh version 3.30.0)`, and the line under it shows what your last click did. Hovering a button explains it.
+Under the controls are three lines: the last thing auto-adjust changed (and when), the server's measured request limit, and what one radar read costs. The heading shows the installed version, e.g. `SETTINGS (AuctionMesh version 3.31.0)`, and the line under it shows what your last click did. Hovering a button explains it.
 
 To track an item you bought some other way, drag it from your bags onto the panel.
 
@@ -312,6 +313,27 @@ The mouse resting in the box pauses nothing. It used to: the radar stood still w
 | When it will not run | `STAKE-OUT WAITING` with the reason: the listing has not been read yet, or no price would be a deal right now (for example your money is in unsold auctions) |
 
 This has not run in the real game yet. What it saves is the radar read and the item check: about half a second against a deal shown straight from the radar, about a second and a half against one that needed an item check.
+
+**Picks: which item is worth a stake-out.** The **Picks** tab answers that, so no item has to be chosen by feel. It reads the record of deals the radar has already seen (the last 400, with what became of each) and shows:
+
+| Column | Meaning |
+|---|---|
+| DEALS | Deals seen on the item in the last 24 hours |
+| YOU GOT | How many you bought |
+| MISSED | How many you went for and lost to someone faster, and what they were worth. Only these count for the recommendation: speed is what a stake-out adds |
+| GONE | How many left before any input, and how long they lasted. Being at the snipe box wins these, not a stake-out |
+| BUYS AT | The most a stake-out would pay per unit now, from the item's listing as last read |
+| CHEAPEST | The radar's last read of the item |
+
+The line at the top says what to do with your inputs right now:
+
+* `Try a stake-out on Silk Cloth.` when what you missed on that item is worth more than everything the radar caught for you on all other items in the same time. That second figure is what a stake-out gives up, because the radar is off while it runs. Both figures are shown.
+* `Keep the radar. No single item is worth a stake-out.` otherwise, with the item you lost most on and the two figures.
+* `Not enough has been seen yet` with fewer than five deals on record.
+
+**Stake out** on a row sets the stake-out in one click and takes you to the snipe box; the same button then reads **Stop**. The tab's label reads `Picks (1)` when there is a recommendation and no stake-out is set. With a stake-out set, the tab shows what it buys at, how often the price has been asked and how many units it has bought on that item so far (kept across sessions), and says so when the record no longer favours it.
+
+It costs nothing in speed. Nothing on the tab sends a request to the auction house: it is arithmetic on what is already in memory. It is worked out again at most every 30 seconds, and never while inputs are arriving in the snipe box, while a deal is on screen or during a purchase; the last figures are shown until then. The one request a stake-out needs (reading the item's listing) is sent when you press **Stake out**, as before.
 
 **Four ways to buy** (Setup tab, **Buy with**; one click changes it). Clicking the box works in all of them.
 
@@ -697,7 +719,7 @@ python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 
 ## Known limits / to verify in game
 
-* **Confirmed in the real game so far** (from logs): one-click buying, buying with the mouse wheel, the radar reads, posting, the mailbox and the import code. **Not yet tried in the real game:** buying with a key (tap or hold), the stake-out, the vendor-or-auction-house recommendation, the Cancel button and the new recognition of returned auctions in the mailbox. Holding a key relies on the game repeating typed characters and accepting them as inputs for buying; if the game refuses, that mode switches itself off and says so.
+* **Confirmed in the real game so far** (from logs): one-click buying, buying with the mouse wheel, the radar reads, posting, the mailbox and the import code. **Not yet tried in the real game:** buying with a key (tap or hold), the stake-out, the vendor-or-auction-house recommendation, the Cancel button and the new recognition of returned auctions in the mailbox. The Picks tab is arithmetic on recorded deals; its advice is only as good as that record, and the stake-out it points to is itself still unproven in the real game. Holding a key relies on the game repeating typed characters and accepting them as inputs for buying; if the game refuses, that mode switches itself off and says so.
 * **The request engine's learning is tested with a fake clock only.** The rules (pause steps, trial lengths, split limits) are sensible starting values, not values proven on a live realm. The Setup tab shows what it actually measured; the log has a `TUNER` line for every change it makes.
 * **Prime items use starting thresholds** (30 sold an hour, 10 minutes of watching, top 12). They are meant to be adjusted from the daily reports.
 * **The two "Sold" lines** rely on the game's sale invoices (`seller_temp_invoice` with its arrival time). If this realm delivers sale gold with no delay, "still on its way" simply stays empty.

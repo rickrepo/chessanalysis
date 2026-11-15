@@ -703,6 +703,85 @@ function UI:RenderBar()
 end
 
 -- Setup tab: every control shows its current value; then what the engine has learned.
+-- THE PICKS TAB. One sentence that says what to do with your inputs right now,
+-- the figures behind it, and one button per item.
+function UI:RenderPicks(short)
+    local pk, S, P = frame.picks, ns.Sniper, ns.Picks
+    local r, waiting = P:Get()
+    local name = S.nameOf
+    local stake = S:StakeKey()
+    local hrs = (r.hours or 0) <= 1 and "the last hour" or ("the last %d hours"):format(r.hours)
+    local head, why
+    local best, top = r.best, r.top
+    if stake then
+        local st = S.stake or {}
+        local terms = S:TermsFor(stake)
+        local rec = S:StakeRecord(stake)
+        head = TEAL .. "Stake-out is on " .. name(stake) .. ".|r"
+        why = (terms.max and ("It buys at %s or less. "):format(short(terms.max)) or ("Waiting: " .. tostring(terms.why or "reading its market first") .. ". "))
+            .. ("Run it from the snipe box on the Trades tab. So far on this item: price asked %d time%s, %d bought%s.")
+                :format(rec.asked, rec.asked == 1 and "" or "s", rec.bought,
+                    (st.lastPrice and st.lastAt and GetTime() - st.lastAt < 600) and (", last price the server gave " .. short(st.lastPrice)) or "")
+        local it
+        for _, x in ipairs(r.list) do if x.key == stake then it = x end end
+        if r.enough and not (it and it.try) then
+            why = why .. ORANGE .. " The record does not favour it" .. (it and (": the deals you missed on it were worth %s, the radar's catches on other items made %s")
+                :format(short(it.missP), short(it.givenUp)) or ": no deal on it was missed in " .. hrs) .. ". Stop it to give the radar every request back.|r"
+        end
+    elseif not r.enough then
+        head = GREY .. "Keep sniping with the radar. Not enough has been seen yet to pick an item.|r"
+        why = ("%d deal%s recorded in %s; this needs at least %d. It fills in by itself while the radar runs.")
+            :format(r.all or 0, (r.all or 0) == 1 and "" or "s", hrs, P.cfg.minAll)
+    elseif best then
+        head = GREEN .. "Try a stake-out on " .. name(best.key) .. ".|r"
+        why = ("In %s you went for %d deal%s on it and someone was faster: they were worth %s. Everything the radar caught for you on other items in that time made %s, which is what a stake-out gives up while it runs.")
+            :format(hrs, best.miss, best.miss == 1 and "" or "s", short(best.missP), short(best.givenUp))
+    else
+        head = "Keep the radar. No single item is worth a stake-out."
+        if top and top.miss > 0 then
+            why = ("In %s the item you lost most on was %s: %d deal%s missed, worth %s. The radar's catches on other items made %s in the same time, and a stake-out would give those up.")
+                :format(hrs, name(top.key), top.miss, top.miss == 1 and "" or "s", short(top.missP), short(top.givenUp))
+        else
+            why = ("In %s you did not go for a deal and lose it: nothing a faster purchase would have won. Deals that were gone before any input are listed below; they are won by being at the snipe box, not by a stake-out.")
+                :format(hrs)
+        end
+    end
+    pk.head:SetText(head)
+    pk.why:SetText(why)
+    pk.sub:SetText(("STAKE-OUT CANDIDATES    %d deal%s seen in %s, you got %s of profit from them%s"):format(r.all or 0, (r.all or 0) == 1 and "" or "s", hrs,
+        short(r.gotAll or 0), waiting and "    (figures wait while you snipe)" or ""))
+    for i, row in ipairs(pk.rows) do
+        local it = r.list[i]
+        if it then
+            local on = stake == it.key
+            row.c[1]:SetText((it.try and GREEN or "") .. name(it.key) .. (it.try and "|r" or ""))
+            row.c[2]:SetText(tostring(it.n))
+            row.c[3]:SetText(it.got > 0 and tostring(it.got) or (GREY .. "0|r"))
+            row.c[4]:SetText(it.miss > 0 and (("%d  "):format(it.miss) .. short(it.missP)) or (GREY .. "0|r"))
+            row.c[5]:SetText(it.gone > 0 and (tostring(it.gone) .. (it.life and (GREY .. (" %.0fs|r"):format(it.life)) or "")) or (GREY .. "0|r"))
+            row.c[6]:SetText(it.max and short(it.max) or (GREY .. "-|r"))
+            row.c[7]:SetText(it.low and short(it.low) or (GREY .. "-|r"))
+            row.btn.key = it.key
+            row.btn:SetText(on and "Stop" or "Stake out")
+            row.btn.tipText = (on and "Ends the stake-out; the radar gets every request back."
+                or ("Sets the stake-out on this item and takes you to the snipe box. While you roll, tap or hold there, every input asks the server this item's price and buys at "
+                    .. (it.max and (short(it.max) .. " or less") or "a price worked out once its listing has been read") .. ". The radar is off meanwhile."))
+                .. ((it.record and it.record.asked > 0) and ("\nStake-outs on it so far: asked %d times, %d bought."):format(it.record.asked, it.record.bought) or "")
+                .. ((not it.max and it.why) and ("\nNo buying price yet: " .. tostring(it.why) .. ".") or "")
+            UI.outline(row.btn, (on or it.try) and ACCENT or LINE)
+            row.btn:Show()
+        else
+            for c = 1, 7 do row.c[c]:SetText("") end
+            row.btn.key = nil
+            row.btn:Hide()
+        end
+    end
+    pk.note:SetText("MISSED: you went for the deal and someone was faster. Only these count for the recommendation, because speed is what a stake-out adds."
+        .. "\nGONE: it left before any input, with how long those lasted. Being at the snipe box wins these, not a stake-out."
+        .. "\nBUYS AT: the most a stake-out would pay per unit now, from the item's listing as last read. CHEAPEST: the radar's last read."
+        .. "\nA stake-out watches one item by asking its price with every input. It is quicker than the radar, and the radar is off while it runs.")
+end
+
 -- Waiting for a key press (Setup, Key) ends when the Setup tab is left.
 function UI:StopKeyCapture()
     if not self.capturingKey then return end
@@ -771,6 +850,7 @@ function UI:Render()
     self:RenderBar()
     if tab == "BUY" then self:RenderMoney(entries, short) end
     if tab == "HISTORY" then self:RenderSetup() end
+    if tab == "PICKS" then self:RenderPicks(short) end
 
     local todo = 0
     for _, e in ipairs(entries) do if e.action ~= "LISTED" then todo = todo + 1 end end
@@ -779,6 +859,12 @@ function UI:Render()
     UI.selectTab(frame.tabBuy, tab == "BUY")
     UI.selectTab(frame.tabSell, tab == "SELL")
     UI.selectTab(frame.tabHist, tab == "HISTORY")
+    UI.selectTab(frame.tabPick, tab == "PICKS")
+    do  -- "Picks (1)" when a stake-out is worth a try and none is set
+        local P = ns.Picks
+        local r = P and P.result
+        frame.tabPick:SetText((r and r.best and not ns.Sniper:StakeKey()) and "Picks (1)" or "Picks")
+    end
 
     frame.next:SetText(TEAL .. "NEXT|r  " .. nextStep(deals, entries, short))
     self:RenderSnipe(short)
@@ -1109,9 +1195,11 @@ function UI:Create()
     -- tabs (positioned in Place(): next to the title when floating, at the left edge when docked)
     frame.tabBuy = makeTab(frame, "Trades", function() UI:StopKeyCapture(); UI.tab = "BUY"; UI:Render() end)
     frame.tabSell = makeTab(frame, "Bags", function() UI:StopKeyCapture(); UI.tab = "SELL"; UI:Render() end)
+    frame.tabPick = makeTab(frame, "Picks", function() UI:StopKeyCapture(); UI.tab = "PICKS"; UI:Render() end)
     frame.tabHist = makeTab(frame, "Setup", function() UI.tab = "HISTORY"; UI:Render() end)
     frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", 6, 0)
-    frame.tabHist:SetPoint("LEFT", frame.tabSell, "RIGHT", 6, 0)
+    frame.tabPick:SetPoint("LEFT", frame.tabSell, "RIGHT", 6, 0)
+    frame.tabHist:SetPoint("LEFT", frame.tabPick, "RIGHT", 6, 0)
 
     -- POP OUT / DOCK. Inside the auction house the panel is part of that window
     -- and cannot be dragged on its own; this button turns it into a separate
@@ -1434,6 +1522,73 @@ function UI:Create()
     sp:Hide()
     frame.setup = sp
 
+    -- THE PICKS TAB: which item, if any, is worth a stake-out. Everything on
+    -- it is worked out from deals the radar has already seen (see Picks.lua):
+    -- it sends nothing to the auction house and waits while you are sniping.
+    local pk = CreateFrame("Frame", nil, frame)
+    pk:SetPoint("TOPLEFT", 14, -40); pk:SetPoint("TOPRIGHT", -14, -40)
+    pk:SetHeight(430)
+    heading(pk, 0, "PICKS    worked out from deals the radar has already seen: no requests, and never while you are sniping")
+    pk.head = pk:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    pk.head:SetPoint("TOPLEFT", 0, -34); pk.head:SetPoint("TOPRIGHT", 0, -34)
+    pk.head:SetJustifyH("LEFT"); pk.head:SetWordWrap(false)
+    pk.why = pk:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    pk.why:SetPoint("TOPLEFT", 0, -54); pk.why:SetPoint("TOPRIGHT", 0, -54)
+    pk.why:SetJustifyH("LEFT"); pk.why:SetJustifyV("TOP"); pk.why:SetWordWrap(true)
+    pk.why:SetHeight(42)
+    pk.sub = heading(pk, -106, "")
+    -- columns: where each starts, how wide it is
+    local PCOL = { { 0, 150, "LEFT" }, { 156, 44, "RIGHT" }, { 206, 54, "RIGHT" }, { 266, 96, "RIGHT" }, { 368, 56, "RIGHT" },
+                   { 430, 76, "RIGHT" }, { 512, 72, "RIGHT" } }
+    local function cells(y, font)
+        local t = {}
+        for i, c in ipairs(PCOL) do
+            local fs = pk:CreateFontString(nil, "OVERLAY", font)
+            fs:SetPoint("TOPLEFT", c[1], y)
+            fs:SetWidth(c[2]); fs:SetJustifyH(c[3]); fs:SetWordWrap(false)
+            t[i] = fs
+        end
+        return t
+    end
+    pk.caps = cells(-124, "GameFontDisableSmall")
+    for i, text in ipairs({ "ITEM", "DEALS", "YOU GOT", "MISSED", "GONE", "BUYS AT", "CHEAPEST" }) do pk.caps[i]:SetText(text) end
+    pk.rows = {}
+    for i = 1, 6 do
+        local y = -124 - i * 24
+        local r = { c = cells(y - 5, "GameFontHighlightSmall") }
+        r.btn = button(pk, 92, "", function(self)
+            local key = self.key
+            if not key then return end
+            local S = ns.Sniper
+            if S:StakeKey() == key then
+                S:SetStake(nil)
+                UI:Notice("Stake-out ended. The radar has every request again.", true)
+            else
+                -- one click: the stake-out is set and you are at the snipe box
+                S:SetStake(key)
+                UI.tab = "BUY"
+                UI:Notice(("Stake-out set on %s. Roll, tap or hold in the snipe box to run it; the radar is off while you do. Stop it on the Picks tab.")
+                    :format(S.nameOf(key)), true)
+            end
+            UI:Render()
+        end)
+        r.btn:SetPoint("TOPRIGHT", 0, y)
+        r.btn:SetScript("OnEnter", function(self)
+            if not self.tipText then return end
+            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+            GameTooltip:AddLine(self.tipText, 0.9, 0.9, 0.9, true)
+            GameTooltip:Show()
+        end)
+        r.btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        pk.rows[i] = r
+    end
+    pk.note = pk:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    pk.note:SetPoint("TOPLEFT", 0, -124 - 7 * 24 - 4); pk.note:SetPoint("TOPRIGHT", 0, -124 - 7 * 24 - 4)
+    pk.note:SetJustifyH("LEFT"); pk.note:SetJustifyV("TOP"); pk.note:SetWordWrap(true)
+    pk.note:SetHeight(84)
+    pk:Hide()
+    frame.picks = pk
+
     for i = 1, MAXROWS do
         local r = CreateFrame("Frame", nil, frame)
         r:SetHeight(ROW_H - 2)
@@ -1538,6 +1693,7 @@ local LAYOUT = {
     BUY = { next = -182, status = -244, statusH = 38, top = 288 },
     SELL = { next = -40, status = -58, statusH = 38, top = 104 },
     HISTORY = { status = -55, statusH = 14, top = 480 },
+    PICKS = { status = -55, statusH = 14, top = 480 },
 }
 function UI:Layout()
     local tab = self.tab
@@ -1547,6 +1703,7 @@ function UI:Layout()
     self.layoutKey = tab
     frame.ledger:SetShown(tab == "BUY")
     frame.setup:SetShown(tab == "HISTORY")
+    frame.picks:SetShown(tab == "PICKS")
     frame.next:SetShown(L.next ~= nil)
     if L.next then
         frame.next:ClearAllPoints()

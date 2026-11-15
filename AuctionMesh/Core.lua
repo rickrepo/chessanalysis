@@ -141,6 +141,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         ns.Tuner:Attach(r.tune)
         db.auto = db.auto or {}
         ns.Auto:Attach(db.auto)
+        if ns.Picks then ns.Picks:Init() end
         if db.cfg.tune == false then ns.Tuner.cfg.enabled = false end
         if db.cfg.autoTune == false then ns.Learn.cfg.autoTune = false end
         local pruned = Store:Prune(GetServerTime() - Book.cfg.maxAge)

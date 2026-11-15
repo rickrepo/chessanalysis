@@ -2197,5 +2197,111 @@ do
     cfg.autoConfirm = false
 end
 
+print("picks: which item, if any, is worth a stake-out")
+do
+    local P, Sc, cfg = ns.Picks, ns.Scout, AuctionMeshDB.cfg
+    local dealsWas, logWas = Sc.d.deals, AuctionMeshDB.stakeLog
+    local now = GetServerTime()
+    S.verified, S.buying, S.result, UI.wheelSeen, UI.notice = {}, nil, nil, nil, nil
+    S:SetStake(nil); AuctionMeshDB.stakeLog = nil
+    ITEMS[4306] = { "Silk Cloth", 150 }; ITEMS[2592] = { "Wool Cloth", 33 }; ITEMS[2589] = { "Linen Cloth", 13 }
+    local function deal(key, minsAgo, profit, outcome, extra)
+        local e = { t = now - minsAgo * 60, k = key, kind = "FLIP", u = 8, c = 800, s = 198, p = profit, o = outcome, f = "radar" }
+        for a, b in pairs(extra or {}) do e[a] = b end
+        return e
+    end
+    -- Silk Cloth: 6 deals. 1 bought, 4 you went for and lost (3s each), 1 gone after 2s.
+    -- Wool Cloth: 3 deals. 2 bought, 1 gone. Linen: 1 bought. One Silk deal from two days ago.
+    Sc.d.deals = {
+        deal(4306, 3000, 300, "failed"),
+        deal(4306, 300, 400, "bought", { bu = 8, bc = 800 }), deal(4306, 280, 300, "failed"), deal(4306, 200, 300, "failed"),
+        deal(4306, 150, 300, "failed"), deal(4306, 90, 300, "failed"), deal(4306, 40, 250, "gone", { life = 2 }),
+        deal(2592, 270, 200, "bought", { bu = 8, bc = 800 }), deal(2592, 100, 200, "bought", { bu = 8, bc = 800 }), deal(2592, 30, 180, "gone", { life = 9 }),
+        deal(2589, 20, 100, "bought", { bu = 8, bc = 800 }),
+    }
+    local nSent = #sent
+    P.result = nil
+    local r = P:Compute()
+    local silk, wool = r.list[1], r.list[2]
+    check(r.all == 10 and r.gotAll == 900 and r.hours == 5 and r.enough, "counts the last 24 hours only: 10 deals, 9s of profit caught (the deal from two days ago is left out)")
+    check(silk and silk.key == 4306 and silk.n == 6 and silk.got == 1 and silk.miss == 4 and silk.missP == 1200 and silk.gone == 1 and silk.life == 2,
+        "Silk Cloth: 6 deals, 1 got, 4 missed worth 12s, 1 gone after 2s")
+    check(silk.givenUp == 500 and silk.try == true and r.best == silk, "what you missed on it (12s) is more than the radar made elsewhere (5s): worth a try")
+    check(wool and wool.key == 2592 and wool.miss == 0 and wool.gone == 1 and wool.try == false and #r.list == 2, "Wool Cloth is listed (a deal was gone) but not recommended: nothing was lost to speed; Linen with one deal is not listed")
+    check(#sent == nSent, "working it out sent nothing to the auction house")
+    -- the tab
+    S.lastRows = S.lastRows or {}
+    S.lastRows[4306] = { rows = { { price = 196, qty = 31 }, { price = 197, qty = 1967 } }, at = GetTime() }
+    ns.Store:Put(4306, 196, 1998, GetServerTime())
+    P.result = nil
+    UI.tab = "PICKS"; UI:Render()
+    local pk = AuctionMeshFrame.picks
+    local function cell(i, c) return strip(pk.rows[i].c[c]._text) end
+    print("     " .. strip(pk.head._text))
+    print("     " .. strip(pk.why._text))
+    print("     " .. strip(pk.sub._text))
+    for i = 1, 2 do print(("     %s | %s | %s | %s | %s | %s | %s | [%s]"):format(cell(i, 1), cell(i, 2), cell(i, 3), cell(i, 4), cell(i, 5), cell(i, 6), cell(i, 7), pk.rows[i].btn._text)) end
+    check(pk._shown and not AuctionMeshFrame.setup._shown and not AuctionMeshSnipeButton._shown, "the Picks tab shows its own panel")
+    check(strip(pk.head._text) == "Try a stake-out on Silk Cloth." and strip(pk.why._text):find("you went for 4 deals on it and someone was faster: they were worth 12s00c", 1, true)
+        and strip(pk.why._text):find("made 5s00c, which is what a stake-out gives up", 1, true), "one sentence says what to do, and the figures behind it")
+    check(cell(1, 1) == "Silk Cloth" and cell(1, 2) == "6" and cell(1, 3) == "1" and cell(1, 4) == "4  12s00c" and cell(1, 5) == "1 2s" and cell(1, 7) == "1s96c",
+        "the row: deals, got, missed with their worth, gone with how long they lasted, cheapest now")
+    check(cell(1, 6) ~= "-" and S:TermsFor(4306).max ~= nil and cell(1, 6) == strip(ns.Seller.short(S:TermsFor(4306).max)), "and what a stake-out would buy at (" .. cell(1, 6) .. "), from the listing as last read")
+    check(pk.rows[1].btn._shown and pk.rows[1].btn._text == "Stake out" and pk.rows[2].btn._text == "Stake out" and not pk.rows[3].btn._shown, "each candidate has a Stake out button")
+    check(AuctionMeshFrame.tabPick._text == "Picks (1)", "the tab's label says there is a pick")
+    check(#sent == nSent, "showing the tab sent nothing either")
+    -- one click
+    pk.rows[1].btn._scripts.OnClick(pk.rows[1].btn)
+    check(S:StakeKey() == 4306 and UI.tab == "BUY" and strip(UI.notice.text):find("^Stake%-out set on Silk Cloth. Roll, tap or hold in the snipe box"), "one click sets the stake-out and takes you to the snipe box")
+    check(AuctionMeshFrame.tabPick._text == "Picks", "with the stake-out set the label is plain again")
+    S:StakeRecord(4306, 10, 2)
+    UI.tab = "PICKS"; UI.notice = nil; UI:Render()
+    print("     " .. strip(pk.head._text) .. " " .. strip(pk.why._text))
+    check(strip(pk.head._text) == "Stake-out is on Silk Cloth." and strip(pk.why._text):find("price asked 10 times, 2 bought", 1, true) and strip(pk.why._text):find("^It buys at "),
+        "the tab then shows the stake-out, what it buys at and what it has done so far")
+    check(pk.rows[1].btn._text == "Stop", "its row has Stop")
+    pk.rows[1].btn._scripts.OnClick(pk.rows[1].btn)
+    check(S:StakeKey() == nil and UI.tab == "PICKS", "Stop ends it")
+    -- it never works anything out while you are sniping
+    local mark = P.result
+    mark.at = GetTime() - 100 -- long overdue
+    UI.wheelSeen = GetTime() -- inputs are arriving in the snipe box
+    local r2, waiting = P:Get()
+    check(r2 == mark and waiting == true, "while inputs arrive in the snipe box nothing is recalculated: the last figures are shown")
+    UI.wheelSeen = nil
+    S.verified[2589] = { key = 2589, units = 1, cost = 1, sell = 2, profit = 1, kind = "FLIP", buys = {}, counts = {}, at = GetTime() }
+    r2, waiting = P:Get()
+    check(r2 == mark and waiting == true, "nor while a deal is on screen")
+    S.verified = {}
+    r2, waiting = P:Get()
+    check(r2 ~= mark and waiting == false, "once nothing is being sniped the figures are worked out again")
+    -- the radar earns more elsewhere: keep the radar
+    Sc.d.deals = {
+        deal(4306, 280, 300, "failed"), deal(4306, 200, 400, "bought", { bu = 8, bc = 800 }),
+        deal(2592, 270, 500, "bought", { bu = 8, bc = 800 }), deal(2592, 100, 400, "bought", { bu = 4, bc = 400 }), deal(2592, 30, 180, "gone", { life = 9 }),
+    }
+    P.result = nil; UI:Render()
+    print("     " .. strip(pk.head._text) .. " " .. strip(pk.why._text))
+    check(P.result.best == nil and strip(pk.head._text) == "Keep the radar. No single item is worth a stake-out."
+        and strip(pk.why._text):find("the item you lost most on was Silk Cloth: 1 deal missed, worth 3s00c. The radar's catches on other items made 7s00c", 1, true),
+        "missed 3s on Silk, the radar made 7s elsewhere (half of a deal bought counts for half): keep the radar, with the figures")
+    check(AuctionMeshFrame.tabPick._text == "Picks", "and the tab's label stays plain")
+    -- too little seen
+    Sc.d.deals = { deal(4306, 280, 300, "failed"), deal(4306, 200, 300, "failed") }
+    P.result = nil; UI:Render()
+    check(strip(pk.head._text):find("^Keep sniping with the radar. Not enough has been seen yet") and strip(pk.why._text):find("2 deals recorded", 1, true), "two deals on record: it says there is not enough to go on")
+    -- the snapshot carries it
+    Sc.d.deals = { deal(4306, 300, 400, "bought", { bu = 8, bc = 800 }), deal(4306, 280, 300, "failed"), deal(4306, 200, 300, "failed"),
+        deal(4306, 150, 300, "failed"), deal(2592, 100, 200, "bought", { bu = 8, bc = 800 }) }
+    ns.Do.Snapshot()
+    local text = AuctionMeshLogFrame.edit._text
+    check(text:find("PICKS (5 deals seen in the last 5h, got 6s 0c): try a stake-out on Silk Cloth", 1, true) and text:find("stake-outs so far: Silk Cloth(4306) asked 10, bought 2", 1, true),
+        "the Snapshot says what the Picks tab recommends and what stake-outs have done so far")
+    AuctionMeshLogFrame:Hide()
+    Sc.d.deals, AuctionMeshDB.stakeLog = dealsWas, logWas
+    S.lastRows[4306] = nil; P.result = nil; S.termsCache = nil
+    UI.tab = "BUY"; UI:Render()
+end
+
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -492,17 +492,20 @@ function Sniper:SetStake(key)
     dirty()
 end
 
--- The dearest price at which one unit is still a deal, or nil and the reason.
-function Sniper:StakeTerms()
-    local key = self:StakeKey()
-    if not key then self.stake = nil; return nil end
-    local st = self.stake
-    if not st or st.key ~= key then st = { key = key, asked = 0, bought = 0, q = 1 }; self.stake = st end
+-- What a stake-out on ANY item would buy at, from that item's listing as it
+-- was last read (no request is sent for this). Returns a table
+-- { max, why, kind, sell, each, cap, at } ; max = nil means no price would be
+-- a deal, and why says so. Kept until the listing is read again or your gold
+-- changes, so asking twice costs nothing.
+function Sniper:TermsFor(key)
     local last = self.lastRows and self.lastRows[key]
-    if not last or #last.rows == 0 then st.max = nil; return nil, "reading its market first" end
+    if not last or #last.rows == 0 then return { why = "reading its market first" } end
     local gold = GetMoney()
-    if st.termsAt == last.at and st.termsGold == gold then return st.max, st.why end
-    st.termsAt, st.termsGold = last.at, gold
+    self.termsCache = self.termsCache or {}
+    local c = self.termsCache[key]
+    if c and c.at == last.at and c.gold == gold then return c end
+    c = { at = last.at, gold = gold }
+    self.termsCache[key] = c
     local opts, cfg = self:DealOptions(key, true), self:CfgFor(key)
     local why
     local function dealAt(p, n)
@@ -531,16 +534,46 @@ function Sniper:StakeTerms()
         if best then lot = n; break end
     end
     if not best then
-        st.max = nil
-        st.why = why and (tostring(why):gsub("%$(%d+)", function(c) return plain(tonumber(c)) end)) or "no price would be a deal right now"
-        return nil, st.why
+        c.why = why and (tostring(why):gsub("%$(%d+)", function(n) return plain(tonumber(n)) end)) or "no price would be a deal right now"
+        return c
     end
-    st.max, st.kind, st.sell, st.why = best, bestDeal.kind, bestDeal.sell, nil
-    st.each = bestDeal.kind == "VENDOR" and (bestDeal.sell - best) or (floor(bestDeal.sell * (1 - Deals.cfg.cut)) - best)
-    st.cap = lot
-    ns.Log("STAKE-OUT terms for %s: buys at %d or less (%s, sells at %d), up to %d at a time; listing read %.0fs ago",
-        tostring(key), best, tostring(st.kind), st.sell, st.cap, GetTime() - last.at)
-    return best
+    c.max, c.kind, c.sell = best, bestDeal.kind, bestDeal.sell
+    c.each = bestDeal.kind == "VENDOR" and (bestDeal.sell - best) or (floor(bestDeal.sell * (1 - Deals.cfg.cut)) - best)
+    c.cap = lot
+    return c
+end
+
+-- The dearest price at which one unit of the staked item is still a deal, or
+-- nil and the reason.
+function Sniper:StakeTerms()
+    local key = self:StakeKey()
+    if not key then self.stake = nil; return nil end
+    local st = self.stake
+    if not st or st.key ~= key then st = { key = key, asked = 0, bought = 0, q = 1 }; self.stake = st end
+    local c = self:TermsFor(key)
+    if st.terms ~= c then
+        st.terms = c
+        st.max, st.why, st.kind, st.sell, st.each, st.cap = c.max, c.why, c.kind, c.sell, c.each, c.cap
+        if c.max then
+            ns.Log("STAKE-OUT terms for %s: buys at %d or less (%s, sells at %d), up to %d at a time; listing read %.0fs ago",
+                tostring(key), c.max, tostring(c.kind), c.sell, c.cap, GetTime() - c.at)
+        end
+    end
+    return st.max, st.why
+end
+
+-- What stake-outs have done so far, per item, kept across sessions:
+-- { asked = price requests sent, bought = units bought }.
+function Sniper:StakeRecord(key, asked, bought)
+    AuctionMeshDB.stakeLog = AuctionMeshDB.stakeLog or {}
+    local r = AuctionMeshDB.stakeLog[key]
+    if not r then
+        if not asked and not bought then return { asked = 0, bought = 0 } end
+        r = { asked = 0, bought = 0 }
+        AuctionMeshDB.stakeLog[key] = r
+    end
+    r.asked, r.bought = r.asked + (asked or 0), r.bought + (bought or 0)
+    return r
 end
 
 -- True while the stake-out is the thing running: an item is chosen, its terms
@@ -577,6 +610,7 @@ function Sniper:StakeNotch()
     self.buying = { key = st.key, units = q, max = q * max, phase = "quote", deal = deal, at = now, stake = true }
     self.react = { key = st.key, secs = 0, via = "stake-out" }
     st.asked = st.asked + 1
+    self:StakeRecord(st.key, 1, 0)
     ns.Gate:Use(("stake-out price request %dx %s (buys at %d or less each)"):format(q, tostring(st.key), max))
     C_AuctionHouse.StartCommoditiesPurchase(st.key, q)
     self:ArmPurchaseTimeout(4)
@@ -1535,6 +1569,7 @@ function Sniper:OnPurchase(ok, why)
             local st = self.stake
             if st then
                 st.bought = st.bought + b.units
+                self:StakeRecord(b.key, 0, b.units)
                 st.cheap = floor(spent / math.max(1, b.units) + 0.5)
                 st.q = min((st.q or 1) * 2, STAKE_CAP)
             end

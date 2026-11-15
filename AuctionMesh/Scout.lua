@@ -10,7 +10,7 @@
 --                   purchases, missed deals, failed purchases
 --        per hour   of the day: reads, dips, deals (when to play)
 --        reasons    why item checks were not deals, counted
---        deals      the last 80 deals seen, with what became of them
+--        deals      the last 400 deals seen, with what became of them
 --
 --   2. PRIME ITEMS. An item is prime when it is measured to sell fast
 --      (30+ an hour over at least 10 minutes of watching), has a known
@@ -161,7 +161,7 @@ function Scout:Deal(key, deal)
     log[#log + 1] = { t = self.now(), k = key, kind = deal.kind, u = deal.units, c = deal.cost, s = deal.sell,
                       p = deal.profit, r = deal.rate and floor(deal.rate) or nil, o = "seen",
                       f = deal.instant and "radar" or "check" }
-    while #log > 80 do table.remove(log, 1) end
+    while #log > 400 do table.remove(log, 1) end -- (80 until 3.31: too few to say which item loses most)
 end
 
 local function lastDeal(self, key)
@@ -537,6 +537,25 @@ function Scout:Snapshot(o)
         local st = S.stake or {}
         add("stake-out: ", plainName(S:StakeKey()), "(", S:StakeKey(), "), ", st.max and ("buys at " .. coin(st.max) .. " or less") or ("waiting: " .. tostring(st.why or "reading its market first")),
             " | this session: asked ", st.asked or 0, " time(s), bought ", st.bought or 0, st.lastPrice and (" | last price " .. coin(st.lastPrice)) or "")
+    end
+    do  -- stake-outs so far, per item, and what the Picks tab says
+        local parts = {}
+        for k, r in pairs(AuctionMeshDB.stakeLog or {}) do
+            parts[#parts + 1] = plainName(k) .. "(" .. k .. ") asked " .. (r.asked or 0) .. ", bought " .. (r.bought or 0)
+        end
+        table.sort(parts)
+        if #parts > 0 then add("stake-outs so far: ", table.concat(parts, "; ")) end
+        local P = ns.Picks
+        local r = P and P.Compute and P:Compute()
+        if r then
+            add("PICKS (", r.all, " deals seen in the last ", r.hours, "h, got ", coin(r.gotAll), "): ",
+                not r.enough and "not enough seen yet" or r.best and ("try a stake-out on " .. plainName(r.best.key)) or "keep the radar, no item is worth a stake-out")
+            for _, it in ipairs(r.list) do
+                add("  ", plainName(it.key), "(", it.key, "): ", it.n, " deals, got ", it.got, ", missed ", it.miss, " worth ", coin(it.missP),
+                    ", gone ", it.gone, it.life and (" (lasted " .. ("%.0f"):format(it.life) .. "s)") or "",
+                    " | radar elsewhere made ", coin(it.givenUp), it.max and (" | would buy at " .. coin(it.max)) or "", it.low and (" | cheapest " .. coin(it.low)) or "")
+            end
+        end
     end
     if ns.Auto then
         local lines = ns.Auto:Lines(6)
