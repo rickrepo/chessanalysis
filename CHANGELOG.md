@@ -6,6 +6,18 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.32.0 (2026-11-15)
+
+- **Throttle watch.** Everything that makes an auction house request wait is recorded for the whole session with its cause, as one log line starting with `THROTTLE` and as a block in the Snapshot:
+  - `QUEUED`: the game held a request back because an earlier one still had the lock. Says which request waited, how long, and which one held the lock.
+  - `SLOW`: the lock stayed shut much longer than usual after a request.
+  - `BACKOFF`: a dropped or refused request or an auction house error; the addon's 5-second stop, with the reason.
+  - `NO-ANSWER`, `GAME-UI` (one of the game's own screens made a request), `PACE` (the addon's pause between requests changed), `STALL` (nothing sent for over 3 seconds, with the reason).
+  - Each incident lists the requests sent just before it and how many went out in the last 2 and 10 seconds.
+  - The Snapshot block also has a table of lock times per request and the held-back requests by kind with their average wait.
+- **A refused post or cancel no longer stops the radar.** The game's error message for it was treated as the server pushing back: a 5-second stop, and it could lengthen the pause between all requests.
+- **Fewer routine requests.** Items you hold are re-priced every 45 seconds only while the Bags tab is open; on other tabs once in 10 minutes. Pressing Post still asks for the price at once.
+
 ## 3.31.0 (2026-11-15)
 
 - **Picks tab: which item is worth a stake-out.** A fourth tab, between Bags and Setup. From the deals the radar has already seen in the last 24 hours it lists, per item: deals, how many you got, how many you went for and missed (with their worth), how many were gone before any input, what a stake-out would buy at, and the cheapest price now.

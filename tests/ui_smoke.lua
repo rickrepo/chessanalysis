@@ -320,7 +320,10 @@ do  -- the row's Post button and the Post next button are there together, always
     do
         local realPost = C_AuctionHouse.PostCommodity
         C_AuctionHouse.PostCommodity = function() fire("UI_ERROR_MESSAGE", 1, "You don't have enough money to post that auction") end
+        local errsWas = ns.Gate.errors
         click(1); UI:Render()
+        check(ns.Gate.errors == errsWas and ns.Gate.nextAt <= GetTime() + 0.2 and GetTime() >= (ns.Gate.penaltyUntil or 0),
+            "a post the game refuses does not stop the radar: no 5-second stop, nothing counted against the pace (it did both)")
         r = rowsText()
         print("     " .. tostring(r[1]))
         check(#posted == 0 and r[1] and r[1]:find("Not posted. The game says: You don't have enough money to post that auction", 1, true),
@@ -658,14 +661,16 @@ do
     C_AuctionHouse.IsThrottledMessageSystemReady = readyWas
     -- the game refuses
     C_AuctionHouse.CancelAuction = function() fire("UI_ERROR_MESSAGE", 1, "Auction not found") end
+    local errsWas = ns.Gate.errors
     press(); r = rowOf(2592)
+    check(ns.Gate.errors == errsWas and ns.Gate.nextAt <= GetTime() + 0.2, "a cancel the game refuses does not stop the radar either")
     check(Se.cancelling == nil and AuctionMeshDB.listed[2592] and strip(r.state._text):find("Not cancelled. The game says: Auction not found", 1, true), "if the game refuses, the row shows the game's own reason and nothing changes")
     C_AuctionHouse.CancelAuction = function(id) cancelled[#cancelled + 1] = id end
     -- two clicks cancel
     local banked = AuctionMeshDB.realized or 0
     local learnWas = ns.Learn.d.n
     Se.note = nil
-    advance(6); UI:Render() -- (an error makes the request engine wait a few seconds)
+    advance(6); UI:Render()
     press(); press(); r = rowOf(2592)
     print("     " .. strip(r.state._text) .. " | cancelled " .. #cancelled)
     check(#cancelled == 1 and cancelled[1] == 9001 and strip(r.state._text) == "Cancelling..." and not r.btn._shown, "two clicks: the auction is cancelled at the auction house (its own id), and the row says Cancelling...")
@@ -2300,6 +2305,117 @@ do
     AuctionMeshLogFrame:Hide()
     Sc.d.deals, AuctionMeshDB.stakeLog = dealsWas, logWas
     S.lastRows[4306] = nil; P.result = nil; S.termsCache = nil
+    UI.tab = "BUY"; UI:Render()
+end
+
+print("throttle watch: everything that made a request wait, with its cause")
+do
+    local W, G = ns.Watch, ns.Gate
+    local Se = ns.Seller
+    W:Reset()
+    G.cycle = 0.65
+    local function last() return W.list[#W.list] end
+    -- a purchase sent while the radar's read still holds the lock: the game holds it back
+    W:Call("SendBrowseQuery", "swarm browse class 7 sub nil", true)
+    advance(0.2)
+    W:Call("StartCommoditiesPurchase", "buy start 16x 4306, verified total 1584", true)
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED")
+    advance(0.45)
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT")
+    local e = last()
+    print("     " .. e.kind .. ": " .. e.text)
+    print("       before it: " .. e.ctx)
+    check(W.count.QUEUED == 1 and e.kind == "QUEUED" and math.abs(e.secs - 0.45) < 0.06
+        and e.text:find("^'buy start 16x 4306, verified total 1584' waited 0.4%ds: the auction house was still locked by 'swarm browse class 7 sub nil', sent 0.20s before it"),
+        "a purchase held back by the game: which request waited, how long, and which one held the lock")
+    check(e.ctx:find("buy start 16x 4306, verified total 1584 0.4%ds ago; swarm browse class 7 sub nil 0.6%ds ago") and e.ctx:find("2 requests in the last 2s, 2 in the last 10s", 1, true),
+        "with the requests sent just before it and how busy the last seconds were")
+    check(ns.Diag:Text():find("THROTTLE QUEUED 0.4%ds: 'buy start 16x 4306", 1) ~= nil, "it is one line in the log that starts with THROTTLE")
+    check(W.byCall.StartCommoditiesPurchase and W.byCall.StartCommoditiesPurchase.n == 1, "and counted by the kind of request")
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED")
+    -- the lock stays shut far longer than usual
+    advance(1.6)
+    fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    e = last()
+    print("     " .. e.kind .. ": " .. e.text)
+    check(W.count.SLOW == 1 and e.kind == "SLOW" and e.text:find("^the lock stayed shut 1.6%ds after 'buy start 16x 4306, verified total 1584' %(usual: 0.65s%)") and W.slowest > 1.5,
+        "a lock that stays shut much longer than usual is an incident, with the request it followed")
+    -- a normal answer is only counted
+    local nList = #W.list
+    W:Call("SendBrowseQuery", "swarm browse class 7 sub nil", true)
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT"); advance(0.65); fire("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED"); fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    check(#W.list == nList and (W.hist[3] or 0) == 1, "a normal answer (0.65s) is counted in the lock-time table and is no incident")
+    -- a stake-out's price requests are held back all the time: counted, not listed
+    W:Call("SendBrowseQuery", "swarm browse class 7 sub nil", true)
+    W:Call("StartCommoditiesPurchase", "stake-out price request 1x 4306 (buys at 112 or less each)", true)
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED"); advance(0.4); fire("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT")
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED")
+    check(W.count.QUEUED == 2 and #W.list == nList and W.byCall.StartCommoditiesPurchase.n == 2, "a stake-out's price request held back for a normal lock is counted but not listed")
+    -- the game drops a request: the addon's 5-second stop is recorded with its reason
+    W:Call("SendSearchQuery", "item check 2589", true)
+    local gapWas = ns.Tuner.d and ns.Tuner.d.gap and ns.Tuner.d.gap.i
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED") -- (this fake client delivers every event twice, so it counts as two)
+    e = nil
+    for i = #W.list, 1, -1 do if W.list[i].kind == "BACKOFF" then e = W.list[i]; break end end
+    print("     " .. e.kind .. ": " .. e.text)
+    check((W.count.BACKOFF or 0) >= 1 and e.secs == 5 and e.text:find("^message dropped: the addon stops for 5 seconds") and e.ctx:find("^item check 2589 0.00s ago"),
+        "a dropped request: the 5-second stop is recorded, with the request that was dropped")
+    e = nil
+    for i = #W.list, 1, -1 do if W.list[i].kind == "PACE" then e = W.list[i]; break end end
+    if e then print("     " .. e.kind .. ": " .. e.text) end
+    check((W.count.PACE or 0) == 0 or (e and e.text:find("pause after 'ready' is now", 1, true) ~= nil), "when that makes the addon lengthen its pause between requests, that is recorded too")
+    if gapWas then ns.Tuner.d.gap.i = gapWas; ns.Tuner:Apply() end
+    G.nextAt, G.penaltyUntil, G.lastError = 0, 0, -100
+    -- nothing sent for seconds: the reason is recorded when sending starts again
+    if not AuctionHouseFrame._shown then AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW") end
+    UI:Open("BUY")
+    S.buying = nil; G.holdUntil = nil
+    W.stall, W.lastCallAt = nil, GetTime() - 4.2
+    G.userUntil = GetTime() + 10
+    W:Tick()
+    check(W.stall and W.stall.why:find("one of the game's own screens made a request", 1, true), "a silence of more than 3 seconds is noticed, with the reason at the time")
+    G.userUntil = 0
+    W:Call("SendBrowseQuery", "swarm browse class 7 sub nil", true)
+    e = last()
+    print("     " .. e.kind .. ": " .. e.text)
+    check(W.count.STALL == 1 and e.kind == "STALL" and e.text:find("^nothing was sent for 4.%ds: one of the game's own screens made a request"), "and written down when requests start again")
+    -- the hold while a deal is on screen is on purpose: counted, not listed
+    nList = #W.list
+    W.lastCallAt = GetTime() - 5
+    G.holdUntil = GetTime() + 3
+    W:Tick(); G.holdUntil = nil
+    W:Call("SendBrowseQuery", "swarm browse class 7 sub nil", true)
+    check(W.count.HOLD == 1 and #W.list == nList, "the radar holding still while a deal is on screen is counted as on purpose, not as an incident")
+    -- the Snapshot carries all of it
+    ns.Do.Snapshot()
+    local text = AuctionMeshLogFrame.edit._text
+    for line in text:gmatch("[^\n]+") do
+        if line:find("THROTTLE WATCH", 1, true) or line:find("^lock time") or line:find("^what made") or line:find("^held on purpose") or line:find("^requests the game held") then print("     | " .. line) end
+    end
+    check(text:find("THROTTLE WATCH this session: 8 auction house requests", 1, true) and text:find("lock time per request: usual 0.", 1, true)
+        and text:find("what made requests wait: QUEUED 2 (0.", 1, true) and text:find("| SLOW 1 (", 1, true) and text:find("| BACKOFF %d %(%d+.0s in all, worst 5.00s%)")
+        and text:find("| STALL 1 (", 1, true), "the Snapshot has the throttle watch: requests, lock times, and what made requests wait")
+    check(text:find("requests the game held back, by kind: StartCommoditiesPurchase 2 (average 0.4", 1, true) and text:find("held on purpose (a deal on screen or a purchase in progress): 1 time(s)", 1, true),
+        "which kind of request was held back and for how long on average; holds on purpose are separate")
+    check(text:find("  %d%d:%d%d:%d%d STALL 4.%d+s: nothing was sent") and text:find("  %d%d:%d%d:%d%d QUEUED 0.4%ds: 'buy start 16x 4306"), "and the incidents, newest first, each with what came before it")
+    AuctionMeshLogFrame:Hide()
+    W:Reset()
+
+    -- FEWER ROUTINE REQUESTS: what you hold is re-priced every 45s only on the Bags tab
+    for s2 = 1, 16 do bags[s2] = nil end
+    bags[1] = { itemID = 2589, stackCount = 6 }; fire("BAG_UPDATE_DELAYED")
+    AuctionMeshDB.flips[2589] = { kind = "FLIP", units = 6, cost = 20, sell = 77, at = GetServerTime() }
+    Se.priority, Se.pricedAt = nil, {}
+    Se.prices[2589] = { price = 77, at = GetTime() - 60, commodity = true }
+    UI.tab = "BUY"
+    check(Se:NextToPrice() == nil, "Trades tab: a price read a minute ago is not read again (the request goes to the radar)")
+    UI.tab = "SELL"
+    check(Se:NextToPrice() == 2589, "Bags tab: it is re-read, as before, so Post always has a fresh price")
+    Se.pricedAt = {}; Se.prices[2589] = nil; UI.tab = "BUY"
+    check(Se:NextToPrice() == 2589, "an item that has never been priced is priced on any tab")
+    Se.pricedAt = {}; Se.prices[2589] = { price = 77, at = GetTime() - 700, commodity = true }
+    check(Se:NextToPrice() == 2589, "and on the Trades tab a price is still refreshed once in 10 minutes")
+    AuctionMeshDB.flips[2589] = nil; bags[1] = nil; fire("BAG_UPDATE_DELAYED"); Se.prices[2589] = nil; Se.pricedAt = {}; Se.pending = nil
     UI.tab = "BUY"; UI:Render()
 end
 

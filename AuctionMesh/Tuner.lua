@@ -58,6 +58,14 @@ Tuner.hour = function()
     return type(h) == "number" and h or tonumber(date("%H")) or 0
 end
 local function log(...) if ns.Log then ns.Log(...) end end
+-- a change of the pause between requests: logged, and told to the throttle watch
+local function pace(fmt, ...)
+    log(fmt, ...)
+    if ns.Watch then
+        local ok, text = pcall(string.format, fmt, ...)
+        ns.Watch:Add("PACE", nil, ok and (text:gsub("^TUNER pace: ", "")) or tostring(fmt))
+    end
+end
 
 function Tuner:Attach(t)
     local c = self.cfg
@@ -127,14 +135,14 @@ function Tuner:Answered(dt)
     if g.trial then
         g.trial.n = g.trial.n + 1
         if g.trial.n >= c.trial then
-            log("TUNER pace: %.2fs pause held for %d requests without a failure; kept (was %.2fs)", c.gaps[g.i], c.trial, c.gaps[g.trial.from])
+            pace("TUNER pace: %.2fs pause held for %d requests without a failure; kept (was %.2fs)", c.gaps[g.i], c.trial, c.gaps[g.trial.from])
             g.trial, g.clean, g.probeAfter = nil, 0, c.probeAfter
             self.lastMove = { text = ("Faster pace kept: %.2fs pause"):format(c.gaps[g.i]), at = self.now() }
         end
     elseif c.enabled and g.i > 1 and g.clean >= g.probeAfter then
         g.trial = { from = g.i, n = 0 }
         g.i, g.clean = g.i - 1, 0
-        log("TUNER pace: %d clean requests; trying a shorter pause (%.2fs instead of %.2fs) for %d requests",
+        pace("TUNER pace: %d clean requests; trying a shorter pause (%.2fs instead of %.2fs) for %d requests",
             g.probeAfter, c.gaps[g.i], c.gaps[g.trial.from], c.trial)
     end
     self:Apply()
@@ -158,11 +166,11 @@ function Tuner:Failed(why)
     if g.trial then
         g.i, g.trial, g.clean = g.trial.from, nil, 0
         g.probeAfter = min(c.probeMax, g.probeAfter * 2)
-        log("TUNER pace: the shorter pause failed (%s); back to %.2fs, next try after %d clean requests", tostring(why), c.gaps[g.i], g.probeAfter)
+        pace("TUNER pace: the shorter pause failed (%s); back to %.2fs, next try after %d clean requests", tostring(why), c.gaps[g.i], g.probeAfter)
         self.lastMove = { text = ("Shorter pause failed: back to %.2fs"):format(c.gaps[g.i]), at = self.now() }
     elseif c.enabled and second and g.i < #c.gaps then
         g.i, g.clean = g.i + 1, 0
-        log("TUNER pace: second failure within %d requests (%s); pause after 'ready' is now %.2fs", c.failWindow, tostring(why), c.gaps[g.i])
+        pace("TUNER pace: second failure within %d requests (%s); pause after 'ready' is now %.2fs", c.failWindow, tostring(why), c.gaps[g.i])
         self.lastMove = { text = ("Server refused requests: pause now %.2fs"):format(c.gaps[g.i]), at = self.now() }
     end
     self:Apply()

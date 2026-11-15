@@ -1019,6 +1019,10 @@ function Sniper:Tick()
         local timeout = ns.Tuner and ns.Tuner:Timeout() or SEARCH_TIMEOUT
         if unsent or now - sr.at > timeout then
             if ns.Tuner then ns.Tuner:Wasted(unsent and "unsent" or "timeout") end
+            if ns.Watch then
+                ns.Watch:Add("NO-ANSWER", now - sr.at, unsent and ("the item check of %s was never transmitted by the game; skipped"):format(tostring(sr.key))
+                    or ("the item check of %s was not answered in %.1fs; given up"):format(tostring(sr.key), now - sr.at))
+            end
             local Se = ns.Seller
             if Se and Se.pending and Se.pending.key == sr.key then
                 Se.pending = nil

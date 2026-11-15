@@ -622,6 +622,10 @@ function Scout:Snapshot(o)
         end
     end
 
+    -- THROTTLE WATCH: everything that made a request wait this session, and why
+    add("")
+    if ns.Watch then for _, l in ipairs(ns.Watch:Lines()) do add(l) end end
+
     -- ENGINE
     add("")
     do

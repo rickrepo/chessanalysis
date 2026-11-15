@@ -691,6 +691,7 @@ function Seller:CancelClick(key)
     end
     self.cancelArm = nil
     ns.Gate:Use(("cancel auction %s: %dx %s @%d"):format(tostring(a.id), a.qty, tostring(key), a.price or 0))
+    ns.Gate.ignoreErrorUntil = math.max(ns.Gate.ignoreErrorUntil or 0, GetTime() + 3) -- a refused cancel is not the server pushing back
     self.cancelling = { key = key, id = a.id, qty = a.qty, price = a.price, at = GetTime(), a = a }
     self.note = nil -- the row now says "Cancelling..."
     self.quietUntil = GetTime() + 2
@@ -796,7 +797,14 @@ function Seller:NextToPrice()
         -- known (re-checked every 10 minutes while the vendor is the better one).
         if (f.kind == "FLIP" or f.kind == "VENDOR") and (bagCount[key] or 0) > 0 then
             local p = self.prices[key]
-            local ttl = (p and p.hold) and HOLD_TTL or PRICE_REFRESH
+            -- A fresh price is only needed for posting, and posting is done on
+            -- the Bags tab: there it is re-read every 45 seconds. On every
+            -- other tab once in 10 minutes is enough, and the requests go to
+            -- the radar. (It was every 45 seconds on every tab: with five
+            -- items held, one request in six was a price check.) Pressing Post
+            -- still asks for the price at once.
+            local posting = ns.UI and ns.UI.tab == "SELL"
+            local ttl = ((p and p.hold) or not posting) and HOLD_TTL or PRICE_REFRESH
             -- at most one price check per item every 20s, whatever else happens
             if (not p or now - p.at >= ttl) and (not last[key] or now - last[key] >= 20) then
                 last[key] = now
@@ -934,6 +942,10 @@ function Seller:Post(key)
     end
 
     ns.Gate:Use(("post %dx %s @%d (deposit %d, commodity=%s, step=%d)"):format(qty, tostring(key), p.price, deposit, tostring(p.commodity), Deals.cfg.step))
+    -- If the game refuses this post it says so with an error message. That is
+    -- an answer to your click, not the server pushing back: it must not stop
+    -- the radar for 5 seconds or lengthen the pause between requests. (It did.)
+    ns.Gate.ignoreErrorUntil = math.max(ns.Gate.ignoreErrorUntil or 0, GetTime() + 3)
     self.posting = { key = key, qty = qty, before = bagCount[key] or 0, price = p.price,
                      deposit = deposit, why = p.why, at = GetTime() }
     self.quietUntil = GetTime() + 2

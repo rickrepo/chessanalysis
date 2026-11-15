@@ -70,6 +70,224 @@ local function args(...)
     return table.concat(out, ", ")
 end
 
+---------------------------------------------------------------- the throttle watch
+
+-- EVERYTHING THAT MADE A REQUEST WAIT, written down with what caused it.
+-- The log only holds the last few minutes, so this is kept separately for the
+-- whole session and printed in the Snapshot. Every incident is also one log
+-- line that starts with THROTTLE.
+--
+--   QUEUED     a request was sent while the auction house was still locked by
+--              the one before it: the game held it back. Says which request
+--              waited, how long, and which one held the lock.
+--   SLOW       the lock stayed shut much longer than usual after a request.
+--   BACKOFF    the game refused or dropped a request, or showed an auction
+--              house error: the addon stops for 5 seconds.
+--   NO-ANSWER  a request was never answered (or never transmitted).
+--   GAME-UI    one of the game's own screens made a request: the addon stays
+--              silent for a moment so it does not get in its way.
+--   PACE       the pause the addon keeps between requests changed.
+--   STALL      nothing at all was sent for more than 3 seconds while the
+--              panel was open, with the reason. (A deal on screen holds the
+--              radar on purpose: those are counted, not listed.)
+--
+-- Cost: a few table writes per request. Nothing here sends anything.
+local Watch = { calls = {}, times = {}, list = {}, count = {}, lost = {}, worst = {}, byCall = {}, hist = {}, sends = 0, slowest = 0 }
+ns.Watch = Watch
+Watch.BUCKETS = { { 0.5, "under 0.5s" }, { 0.6, "0.5-0.6s" }, { 0.7, "0.6-0.7s" }, { 0.8, "0.7-0.8s" }, { 1.0, "0.8-1s" }, { 2.0, "1-2s" }, { math.huge, "over 2s" } }
+Watch.KINDS = { "QUEUED", "SLOW", "BACKOFF", "NO-ANSWER", "GAME-UI", "PACE", "STALL" }
+local WATCH_KEEP = 40
+
+function Watch:Reset()
+    self.calls, self.times, self.list, self.count, self.lost, self.worst, self.byCall, self.hist = {}, {}, {}, {}, {}, {}, {}, {}
+    self.sends, self.slowest, self.firstAt, self.lastCallAt, self.stall, self.queued, self.lastGameUI = 0, 0, nil, nil, nil, nil, nil
+end
+
+-- Every auction house call, ours or the game's. desc = what it was for.
+function Watch:Call(name, desc, ours)
+    local now = GetTime()
+    local c = self.calls
+    c[#c + 1] = { t = now, name = name, desc = desc, ours = ours }
+    if #c > 8 then table.remove(c, 1) end
+    local ts = self.times
+    ts[#ts + 1] = now
+    if #ts > 64 then table.remove(ts, 1) end
+    self.sends = self.sends + 1
+    if not self.firstAt then self.firstAt = now end
+    -- the end of a stall
+    local st = self.stall
+    if st then
+        self.stall = nil
+        self:Add(st.hold and "HOLD" or "STALL", now - st.since, ("nothing was sent for %.1fs: %s"):format(now - st.since, st.why), st.hold)
+    end
+    self.lastCallAt = now
+end
+
+-- The last requests before now, newest first, and how busy the last seconds were.
+function Watch:Context(skip)
+    local now, parts = GetTime(), {}
+    local c = self.calls
+    for i = #c - (skip or 0), math.max(1, #c - (skip or 0) - 2), -1 do
+        local e = c[i]
+        parts[#parts + 1] = ("%s %.2fs ago%s"):format(tostring(e.desc or e.name), now - e.t, e.ours and "" or " (the game's own)")
+    end
+    local n2, n10 = 0, 0
+    for i = #self.times, 1, -1 do
+        local age = now - self.times[i]
+        if age <= 2 then n2 = n2 + 1 end
+        if age <= 10 then n10 = n10 + 1 else break end
+    end
+    return (#parts > 0 and table.concat(parts, "; ") or "nothing") .. (" | %d requests in the last 2s, %d in the last 10s"):format(n2, n10)
+end
+
+-- One incident. secs = the time it cost (nil if none). quiet = counted only.
+function Watch:Add(kind, secs, text, quiet)
+    self.count[kind] = (self.count[kind] or 0) + 1
+    self.lost[kind] = (self.lost[kind] or 0) + (secs or 0)
+    if secs and secs > (self.worst[kind] or 0) then self.worst[kind] = secs end
+    if quiet then return end
+    local ctx = self:Context()
+    local l = self.list
+    l[#l + 1] = { clock = date and date("%H:%M:%S") or "", kind = kind, secs = secs, text = text, ctx = ctx }
+    if #l > WATCH_KEEP then table.remove(l, 1) end
+    ns.Log("THROTTLE %s%s: %s | before it: %s", kind, secs and (" %.2fs"):format(secs) or "", tostring(text), ctx)
+end
+
+-- The game held a request back (QUEUED) and has now sent it.
+function Watch:Queued()
+    self.queued = { at = GetTime() }
+end
+function Watch:Sent()
+    local q = self.queued
+    if not q then return end
+    self.queued = nil
+    -- which request was it? The one made at the moment the game said "queued"
+    -- (the game's event and the call can arrive in either order).
+    do
+        local c, best = self.calls, nil
+        for i = #c, 1, -1 do
+            local d = math.abs(c[i].t - q.at)
+            if d < 0.1 and (not best or d < math.abs(c[best].t - q.at)) then best = i end
+        end
+        best = best or #c
+        q.call, q.holder = c[best], c[best - 1]
+    end
+    local wait = GetTime() - q.at
+    local name = q.call and q.call.name or "?"
+    local b = self.byCall[name] or { n = 0, total = 0, worst = 0 }
+    self.byCall[name] = b
+    b.n, b.total = b.n + 1, b.total + wait
+    if wait > b.worst then b.worst = wait end
+    -- A stake-out asks the price with every input, so its requests are queued
+    -- all the time: those are counted, and listed only when the wait is long.
+    local stake = q.call and tostring(q.call.desc or ""):find("^stake%-out") ~= nil
+    local quiet = wait < 0.05 or (stake and wait < 0.75)
+    self:Add("QUEUED", wait, ("'%s' waited %.2fs: the auction house was still locked by '%s', sent %.2fs before it")
+        :format(tostring(q.call and (q.call.desc or q.call.name) or "?"), wait,
+            tostring(q.holder and (q.holder.desc or q.holder.name) or "an earlier request"), (q.call and q.holder) and (q.call.t - q.holder.t) or 0), quiet)
+end
+
+-- Seconds from a request being sent to the lock opening again.
+function Watch:Cycle(dt, usual)
+    for i, b in ipairs(self.BUCKETS) do
+        if dt < b[1] then self.hist[i] = (self.hist[i] or 0) + 1; break end
+    end
+    if dt > self.slowest then self.slowest = dt end
+    local limit = math.max(1.0, (usual or 0.65) * 1.6)
+    if dt >= limit then
+        local c = self.calls[#self.calls]
+        self:Add("SLOW", dt - (usual or 0.65), ("the lock stayed shut %.2fs after '%s' (usual: %.2fs)")
+            :format(dt, tostring(c and (c.desc or c.name) or "?"), usual or 0.65))
+    end
+end
+
+-- Why nothing is being sent right now (for a stall). Second value: true when
+-- it is the hold the addon keeps on purpose while a deal is on screen.
+function Watch:WhyIdle()
+    local G, now = ns.Gate, GetTime()
+    local S, Sw = ns.Sniper, ns.Swarm
+    if now < (G.holdUntil or 0) then return "a deal is on screen: the radar holds so that your purchase goes first", true end
+    if S and S.buying then return "a purchase is in progress (" .. tostring(S.buying.phase) .. ")", true end
+    if now < (G.userUntil or 0) then return "one of the game's own screens made a request; the addon is staying silent" end
+    if now < (G.nextAt or 0) and now - (G.lastError or -100) < 6 then return "5-second stop after an error or a refused request" end
+    if (G.outstanding or 0) > 0 then return "a request has not been answered yet" end
+    if C_AuctionHouse and C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+        return "the auction house reports it is not ready (its lock is shut)"
+    end
+    if Sw and Sw.blocked and Sw.blocked >= 3 then return "the game blocked the radar's reads" end
+    if Sw and not Sw.active then return "the radar is not running" end
+    if S and S.Staking and S:Staking() then return "a stake-out is running and no input arrived" end
+    return "no reason found by the addon"
+end
+
+-- Once a second while the panel is open: has anything been sent lately?
+function Watch:Tick()
+    local U = ns.UI
+    local open = AuctionHouseFrame and AuctionHouseFrame.IsShown and AuctionHouseFrame:IsShown() and U and U.IsShown and U:IsShown()
+    if not open then self.stall, self.lastCallAt = nil, nil; return end
+    local now = GetTime()
+    if not self.lastCallAt then self.lastCallAt = now; return end
+    if now - self.lastCallAt < 3 then return end
+    local why, hold = self:WhyIdle()
+    local st = self.stall
+    if not st then
+        self.stall = { since = self.lastCallAt, why = why, hold = hold }
+    elseif st.hold and not hold then
+        st.why, st.hold = why, false -- it started as a deal hold and went on for another reason
+    end
+end
+
+-- The block for the Snapshot.
+function Watch:Lines()
+    local out = {}
+    local function add(...) out[#out + 1] = table.concat({ ... }) end
+    local mins = self.firstAt and (GetTime() - self.firstAt) / 60 or 0
+    local usual = ns.Gate and ns.Gate.cycle
+    add("THROTTLE WATCH this session: ", self.sends, " auction house requests in ", ("%.0f"):format(mins), " min | lock time per request: usual ",
+        usual and ("%.2fs"):format(usual) or "not measured yet", ", slowest ", ("%.2fs"):format(self.slowest))
+    do
+        local parts = {}
+        for i, b in ipairs(self.BUCKETS) do if (self.hist[i] or 0) > 0 then parts[#parts + 1] = b[2] .. ": " .. self.hist[i] end end
+        add("lock time, how many requests: ", #parts > 0 and table.concat(parts, " | ") or "none measured")
+    end
+    do
+        local parts = {}
+        for _, k in ipairs(self.KINDS) do
+            local n = self.count[k] or 0
+            parts[#parts + 1] = k .. " " .. n .. ((n > 0 and (self.lost[k] or 0) > 0) and (" (%.1fs in all, worst %.2fs)"):format(self.lost[k], self.worst[k] or 0) or "")
+        end
+        add("what made requests wait: ", table.concat(parts, " | "))
+        add("held on purpose (a deal on screen or a purchase in progress): ", self.count.HOLD or 0, " time(s), ", ("%.0fs"):format(self.lost.HOLD or 0), " in all",
+            " | errors that answered your own purchase, post or cancel (no stop, not counted against the pace): ", self.count["PURCHASE-ERROR"] or 0)
+    end
+    do
+        local parts = {}
+        for name, b in pairs(self.byCall) do
+            parts[#parts + 1] = ("%s %d (average %.2fs, worst %.2fs)"):format(name, b.n, b.total / math.max(1, b.n), b.worst)
+        end
+        table.sort(parts)
+        add("requests the game held back, by kind: ", #parts > 0 and table.concat(parts, " | ") or "none")
+    end
+    local l = self.list
+    if #l == 0 then
+        add("incidents: none")
+    else
+        -- newest first: up to 6 held-back requests and up to 12 of everything
+        -- else, so that the common kind does not push the rare ones out
+        add("incidents, newest first:")
+        local nq, no = 0, 0
+        for i = #l, 1, -1 do
+            local e = l[i]
+            local show
+            if e.kind == "QUEUED" then nq = nq + 1; show = nq <= 6 else no = no + 1; show = no <= 12 end
+            if show then
+                add("  ", e.clock, " ", e.kind, e.secs and (" %.2fs"):format(e.secs) or "", ": ", tostring(e.text), " | before it: ", tostring(e.ctx))
+            end
+        end
+    end
+    return out
+end
+
 ---------------------------------------------------------------- the gate
 
 -- MEASURED LIMIT (from real logs of this client): the auction house takes one
@@ -132,6 +350,7 @@ end
 function Gate:Use(what, kind)
     self.nextAt = GetTime() + self.interval
     self.usedAt = GetTime()
+    self.lastWhat = what
     if ns.Tuner then ns.Tuner:Sent(kind) end
     Log("SEND %s", what)
 end
@@ -144,6 +363,7 @@ function Gate:Penalize(why)
     -- The Tuner decides whether the pace itself has to change (and remembers it).
     local counted = ns.Tuner and ns.Tuner:Failed(why)
     Log("GATE backoff (%s): pause 5s%s", why, counted and "; counted against the current pace" or "")
+    Watch:Add("BACKOFF", 5, ("%s: the addon stops for 5 seconds%s"):format(tostring(why), counted and " (counted against the current pace)" or ""))
 end
 
 ---------------------------------------------------------------- hooks & events
@@ -183,6 +403,7 @@ local function onEvent(_, event, ...)
         if Gate.sentAt then
             local dt = GetTime() - Gate.sentAt
             Gate.sentAt = nil
+            Watch:Cycle(dt, Gate.cycle)
             if ns.Tuner then ns.Tuner:Answered(dt) end
             if dt > 0.2 and dt < 10 then
                 local old = Gate.cycle
@@ -212,6 +433,7 @@ local function onEvent(_, event, ...)
         Gate.sentCount, Gate.sawSent = Gate.sentCount + 1, true
         Gate.sentAt = GetTime()
         Gate.outstanding, Gate.changedAt = Gate.outstanding + 1, GetTime()
+        Watch:Sent()
     elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED" then
         Gate.outstanding, Gate.changedAt = math.max(0, Gate.outstanding - 1), GetTime()
     elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
@@ -220,9 +442,17 @@ local function onEvent(_, event, ...)
     elseif event == "UI_ERROR_MESSAGE" then
         local _, msg = ...
         if not isAHError(msg) and not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
-        if isAHError(msg) and GetTime() >= (Gate.ignoreErrorUntil or 0) then Gate:Penalize(tostring(msg)) end
+        if isAHError(msg) and GetTime() >= (Gate.ignoreErrorUntil or 0) then
+            Gate:Penalize(tostring(msg))
+        elseif isAHError(msg) then
+            -- it answers your own purchase, post or cancel: not the server pushing back, so no 5-second stop
+            Watch:Add("PURCHASE-ERROR", nil, tostring(msg), true)
+        end
+    elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED" then
+        Watch:Queued()
     elseif event == "AUCTION_HOUSE_SHOW_ERROR" and GetTime() < (Gate.ignoreErrorUntil or 0) then
         -- follows our own cancelled purchase: log it, no back-off
+        Watch:Add("PURCHASE-ERROR", nil, "error " .. tostring((...)) .. " after a refused purchase", true)
     elseif event == "PLAYER_MONEY" then
         if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
         Log("MONEY now %d", GetMoney())
@@ -272,14 +502,26 @@ function Diag:Init()
                 -- of your auctions and a vendor-price alert waited 3 seconds for it.)
                 local pause = (name:find("^Query") or name:find("Browse") or name:find("^Refresh")) and 1 or 8
                 if not ours then Gate.userUntil = math.max(Gate.userUntil or 0, GetTime() + pause) end
-                Log("CALL %s(%s) ready=%s%s", name, args(...), tostring(C_AuctionHouse.IsThrottledMessageSystemReady()),
+                local ready = C_AuctionHouse.IsThrottledMessageSystemReady()
+                Log("CALL %s(%s) ready=%s%s", name, args(...), tostring(ready),
                     ours and "" or ("  [you / game UI: background paused %ds]"):format(pause))
+                Watch:Call(name, (ours and Gate.usedAt == GetTime() and Gate.lastWhat) or name, ours and true or false)
+                if not ours then
+                    -- listed at most once every 10 seconds (browsing the game's own screens makes many)
+                    local now = GetTime()
+                    local quiet = now - (Watch.lastGameUI or -100) < 10
+                    if not quiet then Watch.lastGameUI = now end
+                    Watch:Add("GAME-UI", pause, ("the game's own screen called %s: the addon stays silent for %ds"):format(name, pause), quiet)
+                end
             end)
         end
     end
     local f = CreateFrame("Frame")
     for _, e in ipairs(EVENTS) do pcall(f.RegisterEvent, f, e) end
     f:SetScript("OnEvent", onEvent)
+    if C_Timer and C_Timer.NewTicker and not Watch.ticker then
+        Watch.ticker = C_Timer.NewTicker(1, function() Watch:Tick() end)
+    end
 end
 
 function Diag:Save()
