@@ -12,7 +12,7 @@ local say = ns.Print
 
 -- New realm: profession goods are where the early money is, so the swarm scans them first.
 local DEFAULTS = { channel = "", password = "", route = "channel", focus = "tradegoods", scope = "mats",
-    snipeAuto = true, margin = 20, minProfit = 50, flips = true, autoOpen = true, autoScan = true }
+    snipeAuto = true, margin = 20, minProfit = 50, flips = true, autoOpen = true, autoScan = true, share = false }
 
 local function money(c)
     if C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString then return C_CurrencyInfo.GetCoinTextureString(c) end
@@ -105,6 +105,9 @@ end
 
 local function applyRoute()
     local cfg = AuctionMeshDB.cfg
+    Comm.enabled = cfg.share == true
+    if not Comm.enabled then Comm:Leave(); return end
+    Comm.guild = cfg.route == "guild" or nil
     if cfg.route == "channel" and cfg.channel ~= "" then
         Comm:JoinChannel(cfg.channel, cfg.password ~= "" and cfg.password or nil)
     else
@@ -172,7 +175,12 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             for k in pairs(Store.vu) do Store.vu[k] = nil end
             for k in pairs(Store.vs) do Store.vs[k] = nil end
         end
-        db.cfg.v = 8
+        if (db.cfg.v or 0) < 9 then
+            -- Sharing is off unless switched on (Setup tab). The channel name and
+            -- password stay saved, so switching it back on is one click.
+            db.cfg.share = false
+        end
+        db.cfg.v = 9
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)
@@ -297,6 +305,7 @@ function Do.Channel(name, pw)
     name = name and name:match("^%s*(%S+)") or nil
     if not name then UI:Notice("Type a channel name first. Everyone in your group uses the same name and password.", true); return end
     cfg.channel, cfg.password, cfg.route = name, (pw and pw:match("^%s*(%S*)")) or "", "channel"
+    cfg.share = true -- pressing Join is switching sharing on
     applyRoute()
     UI:Notice("Joining channel '" .. name .. "'...", true)
     -- the game needs a moment to answer; then say plainly whether it worked, and ask who is there
@@ -315,8 +324,36 @@ function Do.Channel(name, pw)
     end)
 end
 
+-- The on/off switch. Off: nothing is sent or used, and the channel is left.
+-- On: the saved channel (or the guild, if that was chosen) is used again.
+function Do.Share(on)
+    local cfg = AuctionMeshDB.cfg
+    if on == nil then on = cfg.share ~= true end
+    cfg.share = on and true or false
+    applyRoute()
+    if not on then
+        for k in pairs(Sync.peers) do Sync.peers[k] = nil end
+        ns.peerAt = nil
+        UI:Notice("Sharing is off. Nothing is sent to any channel or to your guild, and the addon's channel has been left.", true)
+        return
+    end
+    if cfg.route == "guild" then
+        UI:Notice("Sharing is on, with guild members who run the addon.", true)
+    elseif cfg.channel and cfg.channel ~= "" then
+        UI:Notice("Sharing is on. Joining channel '" .. cfg.channel .. "'...", true)
+    else
+        UI:Notice("Sharing is on, but no channel is chosen yet: type a name and a password, then Join.", true)
+        return
+    end
+    C_Timer.After(2, function()
+        if Comm:Route() then Comm:Resume(); Sync:Hello(); Sync:RollCall() end
+        if UI.Dirty then UI:Dirty() end
+    end)
+end
+
 function Do.Guild()
     AuctionMeshDB.cfg.route = "guild"
+    AuctionMeshDB.cfg.share = true -- choosing the guild is switching sharing on
     applyRoute()
     UI:Notice("Sharing with guild members who run the addon.", true)
     C_Timer.After(1, function() Comm:Resume(); Sync:Hello(); if Comm:Route() then Sync:RollCall() end end)
@@ -339,6 +376,9 @@ end
 -- other addons actually report. Returns the sentence and "ok" | "alone" | "off".
 function Do.SharingText()
     local cfg = AuctionMeshDB.cfg
+    if cfg.share ~= true then
+        return "Sharing is off. Nothing is sent to any channel or to your guild.", "quiet"
+    end
     local where
     if cfg.route == "guild" or not Comm.channelName then
         if not (IsInGuild and IsInGuild()) then

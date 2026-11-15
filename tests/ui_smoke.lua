@@ -1171,6 +1171,29 @@ do
     fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, "P" .. ns.Codec.uint(1), "CHANNEL", "Old-Realm")
     UI:Render()
     check(strip(sp.share._text):find("with 2 players", 1, true) and strip(sp.share._text):find("Old (older version", 1, true), "a friend on an older version is listed as such")
+
+    -- SHARING OFF: one switch, and it is the default
+    check(sp.shareOn._text == "Sharing: on" and cfg.share == true, "pressing Join switched sharing on, and the switch shows it")
+    sp.shareOn._scripts.OnClick(sp.shareOn); UI.notice = nil; UI:Render()
+    print("     " .. strip(sp.share._text))
+    check(cfg.share == false and sp.shareOn._text == "Sharing: off" and strip(sp.share._text) == "Sharing is off. Nothing is sent to any channel or to your guild.",
+        "one click switches it off, and the panel says nothing is sent")
+    check(joined["goldcrew7"] == nil and Comm:Route() == nil, "the addon's channel is left, and there is no route, guild included")
+    check(cfg.channel == "GoldCrew7" and cfg.password == "secret", "the channel name and password stay saved")
+    before = #sentAddon
+    Sync:Hello(); Sync:RollCall(); Sync:Observe(2589, 20, 100, GetServerTime()); if Sync.Bought then Sync:Bought(2589, 5, 20) end
+    advance(200)
+    check(#sentAddon == before, "while off, nothing at all is sent (not even the regular presence beacon)")
+    local peersBefore = #Sync:Peers()
+    fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, friendP, "CHANNEL", "Carol-Realm")
+    check(#Sync:Peers() == peersBefore and Sync.peers["Carol-Realm"] == nil, "and nothing received is used")
+    check(strip(AuctionMeshFrame.barText._text):find("sharing off", 1, true), "the bar says sharing off")
+    -- a fresh install, and every install after this update, starts with it off
+    check(ns.Do.SharingText() == "Sharing is off. Nothing is sent to any channel or to your guild.", "the default is off")
+    -- back on: the saved channel is joined again
+    sp.shareOn._scripts.OnClick(sp.shareOn); advance(3); UI:Render()
+    check(cfg.share == true and joined["goldcrew7"] == true and Comm:Route() == "CHANNEL", "one click switches it back on with the saved channel")
+    sp.shareOn._scripts.OnClick(sp.shareOn) -- leave it off for the rest of the run
     GetChannelName = oldGet; IsInGuild = function() return false end
     Sync.peers, Sync.peerInfo = {}, {}
     cfg.channel, cfg.route = "", "channel"; Comm.channelName = nil
@@ -1581,7 +1604,9 @@ do
     for i = before + 1, #sentAddon do if sentAddon[i]:sub(1, 1) == "B" then msgB = sentAddon[i] end end
     check(msgB ~= nil, "a purchase is announced to friends")
     S.result.at = GetTime()
+    ns.Comm.enabled = true -- sharing on for this check
     fire("CHAT_MSG_ADDON", ns.Comm.PREFIX_LIVE, msgB, "CHANNEL", "Datacus-Realm")
+    ns.Comm.enabled = false
     print("     " .. strip(S.result.text))
     check(S.result.text:find("Your friend Datacus got it.", 1, true), "a deal you missed that a friend got says so")
 

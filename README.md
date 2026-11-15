@@ -132,7 +132,7 @@ Nothing has to be typed in chat. The Setup tab has a control for everything that
 | Laser focus | Click to change: off, prime items (picked from measured activity), or my own list |
 | Focus code | A box and **Apply**, for a code you were given (see below) |
 | The panel | Inside the auction house window or a window of its own; opens by itself on or off |
-| Share prices with friends | Channel name, password, **Join**; or **Use my guild**. The line underneath says, in colour, whether you are connected and to whom; **Who is there?** asks everyone to answer |
+| Share prices with friends | **Sharing: off** by default: nothing is sent anywhere. To use it: channel name, password, **Join**; or **Use my guild**. The line underneath says whether you are connected and to whom; **Who is there?** asks everyone to answer |
 | Self-tuning | One switch for the pace, the split of requests and the profit bar. **Forget what was learned** needs a second click |
 | Share with Claude | **Daily report** (once a day), **Log** and **Last session's log** (when something looks wrong), **Rebuild from purchases** |
 
@@ -305,6 +305,15 @@ What the second real report corrected:
 * **GONE** someone else bought it N seconds after it appeared (orange). It left before you clicked.
 
 The message is on the big button for 6 seconds, flashes in large text in the middle of your screen, and then stays on the line under the button with its age until the next outcome. That line also keeps a count for the session: "3 got, 1 missed, 2 gone before a click".
+
+### Sharing is off unless you switch it on
+
+**Sharing: off** is the default, and updating to 3.24 switches it off on existing installs too. While it is off the addon sends nothing to any chat channel or to your guild, uses nothing it receives, and sits in no channel of its own. Everything else works the same: the radar, the snipe box and your own deals need no sharing.
+
+* The switch is on the Setup tab, next to **Who is there?**. The bar at the top of every tab says `sharing off` while it is off.
+* Pressing **Join** (with a channel name and password) or **Use my guild** switches it on. Switching it off leaves the channel; the name and password stay saved, so switching it back on is one click.
+* The guild is used only when you press **Use my guild**. It used to be the fallback whenever no channel had been chosen, which meant a player in a guild was sending to it without having asked for that.
+* When it is on, what is exchanged are hidden addon messages (not chat lines), at most about one a second: prices of the side categories, deals, purchases and what the request engine has measured.
 
 ### Sharing: knowing that it worked
 

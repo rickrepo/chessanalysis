@@ -94,7 +94,14 @@ function Comm:Purge(lane, pred)
 end
 
 -- Route: dedicated channel if joined, else guild. Returns chatType, target.
+-- SHARING IS OFF UNLESS YOU SWITCH IT ON. While it is off nothing is sent to
+-- any channel or to the guild, nothing received is acted on, and the addon
+-- sits in no chat channel of its own. (It used to send to the guild by
+-- default whenever no channel had been chosen.)
+Comm.enabled = false
+
 function Comm:Route()
+    if not self.enabled then return nil end
     local name = self.channelName
     if name then
         -- A private channel was chosen: use it or nothing. (It used to fall back
@@ -104,8 +111,18 @@ function Comm:Route()
         if id and id > 0 then return "CHANNEL", id end
         return nil
     end
-    if IsInGuild and IsInGuild() then return "GUILD", nil end
+    -- the guild only when you chose it (Use my guild), never as a fallback
+    if self.guild and IsInGuild and IsInGuild() then return "GUILD", nil end
     return nil
+end
+
+-- Sharing switched off: leave the addon's channel and forget the route.
+function Comm:Leave()
+    if self.channelName and LeaveChannelByName and GetChannelName and (GetChannelName(self.channelName) or 0) > 0 then
+        pcall(LeaveChannelByName, self.channelName)
+    end
+    self.channelName, self.guild = nil, nil
+    for i = 1, 3 do lanes[i] = { head = 1, tail = 0 }; retry[i] = nil end -- nothing waits to go out later
 end
 
 -- Called when a connection has just been made: send what is waiting right away.
@@ -248,7 +265,7 @@ function Comm:Init()
     ev:RegisterEvent("CHAT_MSG_ADDON")
     ev:SetScript("OnEvent", function(_, _, prefix, msg, chatType, sender)
         local h = Comm.handlers[prefix]
-        if not h then return end
+        if not h or not Comm.enabled then return end -- sharing off: nothing received is used either
         -- Always use full Name-Realm so every client agrees on tie-break order.
         if not sender:find("-", 1, true) then sender = sender .. "-" .. (Comm.realm or "") end
         if sender == Comm.me then return end -- our own echo

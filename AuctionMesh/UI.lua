@@ -579,7 +579,8 @@ function UI:RenderBar()
     else bar.fill:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 1) end
     local friends = #ns.Sync:Peers()
     frame.barText:SetText((st.mode == "try" and ORANGE or GREY) .. st.text .. "|r"
-        .. (friends > 0 and ("  %s%d friend%s connected|r"):format(GREEN, friends, friends == 1 and "" or "s") or (GREY .. "  no friends connected|r")))
+        .. (AuctionMeshDB.cfg.share ~= true and (GREY .. "  sharing off|r")
+            or friends > 0 and ("  %s%d friend%s connected|r"):format(GREEN, friends, friends == 1 and "" or "s") or (GREY .. "  no friends connected|r")))
     self.barState = st
 end
 
@@ -601,7 +602,9 @@ function UI:RenderSetup()
     sp.forget:SetText((self.forgetUntil and GetTime() < self.forgetUntil) and "Click again to forget" or "Forget what was learned")
     do
         local text, state = ns.Do.SharingText()
-        sp.share:SetText((state == "ok" and GREEN or state == "alone" and ORANGE or RED) .. text .. "|r")
+        sp.share:SetText((state == "ok" and GREEN or state == "alone" and ORANGE or state == "quiet" and GREY or RED) .. text .. "|r")
+        sp.shareOn:SetText(cfg.share == true and "Sharing: on" or "Sharing: off")
+        UI.outline(sp.shareOn, cfg.share == true and ACCENT or LINE)
     end
     if not sp.margin:HasFocus() then sp.margin:SetText(tostring(cfg.margin or floor(ns.Deals.cfg.margin * 100 + 0.5))) end
     if not sp.chan:HasFocus() and not sp.pass:HasFocus() and not self.chanFilled then
@@ -1165,7 +1168,10 @@ function UI:Create()
     sp.who = tip(button(sp, 100, "Who is there?", function() ns.Do.WhoIsThere() end),
         "Asks everyone on the channel to answer. The line on the left then lists who is connected, their version, and when they were last heard.")
     sp.who:SetPoint("RIGHT", sp.guild, "LEFT", -6, 0)
-    sp.share:SetPoint("RIGHT", sp.who, "LEFT", -8, 0)
+    sp.shareOn = tip(button(sp, 96, "", function() ns.Do.Share() end),
+        "Off (the default): the addon sends nothing to any chat channel or to your guild, uses nothing it receives, and sits in no channel of its own.\nOn: prices, deals and purchases are exchanged with friends on the channel you joined (or your guild), as hidden addon messages, at most about one a second.")
+    sp.shareOn:SetPoint("RIGHT", sp.who, "LEFT", -6, 0)
+    sp.share:SetPoint("RIGHT", sp.shareOn, "LEFT", -8, 0)
     sp.share:SetWordWrap(false)
 
     setting(y(10), "Self-tuning: pace, split of requests, profit bar")
