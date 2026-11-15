@@ -515,7 +515,8 @@ function Scout:Snapshot(o)
     add("")
     add("SETTINGS")
     add("smallest profit ", coin(cfg.minProfit), " | flip margin ", tostring(cfg.margin), "% | flips ", cfg.flips ~= false and "on" or "off (vendor deals only)",
-        " | radar reads: ", tostring(cfg.scope or "mats"), " | laser focus: ", tostring(cfg.focusMode or "off"))
+        " | radar reads: ", tostring(cfg.scope or "mats"), " | laser focus: ", tostring(cfg.focusMode or "off"),
+        " | focus items re-read every ", tostring(ns.Sniper and ns.Sniper.FocusEvery and ns.Sniper.FocusEvery() or "?"), "s")
     add("unsold auctions may hold ", tostring(cfg.maxTied or 50), "% | mouse wheel buys ", cfg.wheel ~= false and "on" or "off",
         " | one-click buy: ", cfg.autoConfirm == false and "BLOCKED by the game (second input needed)" or (cfg.autoTried and "works" or "on, not tried yet"),
         " | self-tuning ", cfg.tune ~= false and "on" or "off", " | posting fee comes back: ", cfg.feeBack == nil and "not known yet" or tostring(cfg.feeBack))

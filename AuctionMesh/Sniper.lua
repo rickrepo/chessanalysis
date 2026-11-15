@@ -74,7 +74,14 @@ for _, id in ipairs({
 Sniper.VENDOR_SOLD = VENDOR_SOLD
 Sniper.STAPLES = STAPLES
 local WATCH_MIN = 300             -- routine full look at a watched item (keeps its market price current)
-local FOCUS_MIN = 30              -- with laser focus on: each focus item gets a full look this often
+local FOCUS_MIN = 60              -- with laser focus on: each focus item gets a full look this often (settings code: every=)
+-- It was 30. A real day's figures: 2859 item checks against 2054 radar reads.
+-- Twelve focus items re-read every 30 seconds took more requests than the
+-- radar, which then came round every 1.3 seconds instead of every 0.65.
+function Sniper.FocusEvery()
+    local v = AuctionMeshDB and AuctionMeshDB.cfg and AuctionMeshDB.cfg.focusEvery
+    return math.max(20, math.min(300, v or FOCUS_MIN))
+end
 local TRIGGER_MIN = 20            -- never fully re-read the same item sooner than this on a trigger
 local SEARCH_TIMEOUT = 3 -- default; the Tuner replaces it with a figure from the measured pace
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
@@ -754,7 +761,7 @@ function Sniper:RebuildBackground()
             end
             if #list > 0 then
                 list.i, list.staples, list.focus = 1, #list, true
-                self.background, self.watchMin = list, FOCUS_MIN
+                self.background, self.watchMin = list, Sniper.FocusEvery()
                 return
             end
         end

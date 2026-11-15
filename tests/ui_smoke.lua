@@ -835,7 +835,7 @@ do
     check(cfg.focusMode == "list" and cfg.focusItems[1] == 2589 and sp.focus._text == "My own list (1)" and sp.code._text == "", "pasting a focus code and pressing Apply focuses on that item")
     S.verified, S.checkedAt, S.triggers, S.sweep = {}, {}, {}, {}
     S:RebuildBackground()
-    check(#S.background == 1 and S.background[1] == 2589 and S.background.focus and S.watchMin == 30, "the watch list is now only the focus item, checked every 30s instead of every 5 minutes")
+    check(#S.background == 1 and S.background[1] == 2589 and S.background.focus and S.watchMin == 60, "the watch list is now only the focus item, re-read every 60s instead of every 5 minutes")
     ITEMS[4306] = { "Silk Cloth", 150 }
     ns.Store.fp[4306], ns.Store.ft[4306] = 400, GetServerTime()
     ns.Store.fp[2589], ns.Store.ft[2589] = 80, GetServerTime()
@@ -1584,7 +1584,7 @@ do
         cfg.focusItems, cfg.focusMode = {}, "off"
         local code0 = ns.Do.SettingsCode()
         print("     " .. code0)
-        check(code0:find("^AMS1:min=%d+;margin=%d+;flips=1;scope=%a+;focus=off;tied=%d+;spend=%d+;small=%d+;wheel=1;tune=1"), "the current settings as one code")
+        check(code0:find("^AMS1:min=%d+;margin=%d+;flips=1;scope=%a+;focus=off;tied=%d+;spend=%d+;small=%d+;every=60;wheel=1;tune=1"), "the current settings as one code")
         UI.tab = "HISTORY"; UI:Render()
         local sp = AuctionMeshFrame.setup
         -- the whole message is pasted, not just the code
@@ -1627,6 +1627,10 @@ do
         check(#cfg.focusItems == 1 and cfg.focusItems[1] == 4306 and not S:Ignored(2287) and S:CfgFor(4306) == D, "a code can also remove: off the watch list, off the ignore list, per-item minimum cleared")
         check(ns.Do.Import("nothing useful here") == false and strip(UI.notice.text):find("^No code found in that text"), "text with no code in it changes nothing")
         check(cfg.share ~= true, "a code never switches sharing on")
+        ns.Do.Import("AMS1:every=90")
+        check(cfg.focusEvery == 90 and S.FocusEvery() == 90 and strip(UI.notice.text):find("focus items are re-read every 60s > 90s", 1, true), "how often focus items are re-read is a setting too")
+        ns.Do.Import("AMS1:every=5"); check(S.FocusEvery() == 20, "never more often than every 20 seconds")
+        cfg.focusEvery = nil
         cfg.minProfit, cfg.margin, cfg.scope, cfg.focusMode, cfg.focusItems, cfg.maxTied, cfg.maxSpend, cfg.smallFlip = keep[1], keep[2], keep[3], keep[4], keep[5], keep[6], keep[7], keep[8]
         D.maxSpend, D.maxTied, D.smallFlip, D.minProfit, D.margin = keep[9], keep[10], keep[11], keep[1], keep[2] / 100
         cfg.itemMin, cfg.ignore = nil, nil

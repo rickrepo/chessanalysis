@@ -203,6 +203,7 @@ Claude reads it in your Snapshot and sends back a changed one. On the Setup tab,
 | `itemmin=4306:300` | A smallest profit for one item only (`4306:0` clears it) |
 | `ignore=+2287,-2589` | Items never to show deals for; `-` takes one off the list |
 | `tied=50`, `spend=35`, `small=15` | The capital limits, in percent: unsold auctions, one flip, the always-allowed small flip |
+| `every=60` | With laser focus on, how often each focus item's full listing is re-read, in seconds (20 to 300). Each re-read is one request the radar does not get; flips straight from the radar need a listing read in the last two minutes |
 | `wheel=1`, `tune=1` | Mouse wheel buying; auto-adjust |
 
 * A code need not carry everything: `AMS1:min=60;watch=+2592` changes those two things and nothing else.

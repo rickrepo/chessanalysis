@@ -1147,7 +1147,7 @@ function UI:Create()
 
     setting(y(5), "Laser focus: look for flips only on")
     sp.focus = tip(button(sp, 250, "", function() ns.Do.FocusMode() end),
-        "Click to change.\nOff: every material is watched.\nPrime items: the addon picks the items measured to sell fastest with the most gold moving, and checks each one every 30 seconds.\nMy own list: items you added in the drawer, or a focus code.\nVendor-price deals are always shown, whatever the focus.")
+        "Click to change.\nOff: every material is watched.\nPrime items: the addon picks the items measured to sell fastest with the most gold moving, and re-reads each one about once a minute.\nMy own list: items you added in the drawer, or a focus code.\nVendor-price deals are always shown, whatever the focus.")
     sp.focus:SetPoint("TOPRIGHT", 0, y(5) + 5)
 
     setting(y(6), "Import: paste what Claude sent, then Apply")

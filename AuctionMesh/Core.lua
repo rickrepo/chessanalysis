@@ -519,6 +519,7 @@ function Do.SettingsCode()
     put("tied", cfg.maxTied or 50)
     put("spend", cfg.maxSpend or floor(Deals.cfg.maxSpend * 100 + 0.5))
     put("small", cfg.smallFlip or floor(Deals.cfg.smallFlip * 100 + 0.5))
+    put("every", Sniper.FocusEvery())
     put("wheel", cfg.wheel ~= false and 1 or 0)
     put("tune", cfg.tune ~= false and 1 or 0)
     do
@@ -615,6 +616,11 @@ function Do.Import(text)
             n = clamp(n, 0, 50)
             cfg.smallFlip, Deals.cfg.smallFlip = n, n / 100
             note("a small flip is always allowed up to", old .. "%", n .. "%")
+        elseif k == "every" and n then
+            local old = Sniper.FocusEvery()
+            cfg.focusEvery = clamp(n, 20, 300)
+            Sniper.lastBg = 0
+            note("focus items are re-read every", old .. "s", cfg.focusEvery .. "s")
         elseif k == "wheel" then
             local on, old = onoff(v), cfg.wheel ~= false
             cfg.wheel = on
