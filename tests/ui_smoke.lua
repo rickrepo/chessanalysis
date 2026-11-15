@@ -150,7 +150,8 @@ AuctionMeshDB.cfg.minProfit, ns.Deals.cfg.minProfit = 20, 20 -- the walkthrough 
 -- The walkthrough below drives the two-click path (first click asks for the price, second buys),
 -- which is what happens when the game does not allow a price request without a click.
 -- One-click buying and holding fire have their own section at the end.
-AuctionMeshDB.cfg.prearm = false; S.hold = 0
+S.hold = 0
+ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1 -- the capital limits have their own section at the end
 ns.Deals.cfg.requireTurnover = false -- the fake auction house has no other buyers until the "volume" section
 local function rowsText()
     local out = {}
@@ -1135,6 +1136,37 @@ do
     check(d2 and d1 and d2.profit - d1.profit == 100, "the same deal shows 1s less profit once the fee is known not to come back")
     cfg.feeBack = true; ns.Deals.cfg.depositIsCost = false
     AuctionMeshDB.listed = {}
+end
+
+print("capital: your money is out of reach for an hour after a sale")
+do
+    local cfg = AuctionMeshDB.cfg
+    ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 0.35, 0.50
+    gold = 2155
+    AuctionMeshDB.listed = {}; AuctionMeshDB.sales = nil; AuctionMeshDB.flips = {}
+    S.ownSoldQty, S.own, S.ownRead = { [2449] = 16 }, {}, true
+    S.ownSoldPay = { { amount = 3654, due = GetTime() + 29 * 60 } }
+    local c = S:Capital()
+    check(c.gold == 2155 and c.tied == 3654 and c.paused == true and c.room == 0, "21s55c in hand, 36s54c sold and not paid out: flips are paused")
+    UI.tab = "BUY"; UI.notice = nil; UI:Render()
+    local st = strip(AuctionMeshFrame.status._text)
+    print("     " .. (st:match("^[^\n]+") or ""))
+    check(st:find("^Flips paused: 36s54c of your 58s09c is in auctions and unpaid sales %(limit 50%%%). Next pay%-out in 29 min. Vendor deals are still shown."),
+        "the Trades tab says so, with the time of the next pay-out")
+    UI.tab = "HISTORY"; UI:Render()
+    local sp = AuctionMeshFrame.setup
+    check(sp.tied._text == "Flips may tie up: 50%", "Setup shows the limit")
+    sp.tied._scripts.OnClick(sp.tied); UI:Render()
+    check(cfg.maxTied == 70 and math.abs(ns.Deals.cfg.maxTied - 0.70) < 1e-9 and sp.tied._text == "Flips may tie up: 70%" and S:Capital().paused == false,
+        "one click raises it to 70%: flips are allowed again")
+    ns.Do.MaxTied(50)
+    -- the pay-out time passes: the gold is in the mailbox, and the panel says to collect it
+    advance(30 * 60)
+    UI.tab = "BUY"; UI.notice = nil; UI:Render()
+    print("     " .. strip(AuctionMeshSnipeButton.label._text))
+    check(strip(AuctionMeshSnipeButton.label._text):find("^NEXT  Collect 36s54c at a mailbox: sale gold has arrived."), "when a pay-out is due the next step is to collect it")
+    S.ownSoldPay, S.ownSoldQty = {}, {}
+    ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1
 end
 
 print(("\n%d passed, %d failed"):format(pass, fail))

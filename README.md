@@ -273,6 +273,24 @@ Two faults fixed here. A private channel that had not been joined used to fall b
 
 Inside the auction house the panel is part of that window and cannot be dragged on its own (the addon does not move the game's windows). The **Pop out** button at the top right turns it into a separate window; drag it by its background, by an item row or by the drawer, and its position is remembered. **Dock** puts it back.
 
+### Capital: an hour between a sale and your gold
+
+The auction house pays out an hour after an auction sells. Gold spent on a flip is therefore out of reach for at least an hour, while gold spent on a vendor deal is back as soon as you reach a vendor. With a small purse that difference decides everything: a real 50 silver purse went all in on two flips, had nothing left for the vendor deals that followed, and after an hour was a few silver up.
+
+So the addon treats your gold as the scarce thing:
+
+| Rule | What it does |
+|---|---|
+| One flip takes at most 35% of the gold in hand | 50s in hand: a 20s pile of Earthroot is bought for 17s 50c, not all of it |
+| Flips stop when 50% of all your money is in auctions and unpaid sales | The Trades tab says `Flips paused: 36s 54c of your 58s 09c is in auctions and unpaid sales (limit 50%). Next pay-out in 29 min.` |
+| Vendor deals are never limited | Their gold is back in minutes, with no cut and no fee |
+| Under 5 silver in all, neither limit applies | There is nothing to split |
+
+* **Flips may tie up** on the Setup tab changes the 50%: click for 30%, 50%, 70% or 100%.
+* Every deal says when its gold comes back: `gold back at the next vendor`, or `gold back in about 1h 05m` (time to sell plus the hour).
+* When a pay-out is due, the next step shown is `Collect 36s 54c at a mailbox: sale gold has arrived.`
+* For a flip in your bags that a vendor would also pay more than cost for, the recommendation gives both: post it (more, an hour later) or sell it to a vendor now (less, at once).
+
 ### Why the total can differ from your gold
 
 Gold spent on a flip is not gone, it is somewhere else until the sale pays out. The MONEY section's total counts all of it:

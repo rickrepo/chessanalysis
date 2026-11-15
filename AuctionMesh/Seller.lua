@@ -801,6 +801,18 @@ end
 ---------------------------------------------------------------- window hooks (the window lives in UI.lua)
 
 -- Re-render; with show=true also open the window on the SELL tab if there is something to do.
+-- MONEY THAT IS OUT OF REACH: live auctions at their listed price, sales the
+-- auction house has not paid out yet, and sale gold waiting in the mailbox.
+-- Returns the total, seconds to the next pay-out, and the three parts.
+function Seller:Tied()
+    local waiting, onway, nextIn, soldKeys = self:SalesMoney()
+    local listed = 0
+    for key, L in pairs(AuctionMeshDB.listed or {}) do
+        if not soldKeys[key] then listed = listed + floor((L.price or 0) * (1 - Deals.cfg.cut)) * (L.qty or 0) end
+    end
+    return listed + onway + waiting, nextIn, listed, onway, waiting
+end
+
 -- ONE RECOMMENDATION for a holding: what to do with it now, and why. Built
 -- only from what is known for certain (live price, your cost, the cheapest
 -- listing from the last radar read, measured sales per hour, mailbox invoices).
@@ -823,7 +835,14 @@ function Seller:Advice(e)
                 return ("Post at %s each (Bags tab). Your cost is not known, so check that price yourself first."):format(short(p.price)), "warn"
             end
             local each = floor(p.price * (1 - cfg.cut)) - paid
-            return ("Post %d at %s each (Bags tab, Post): %s after the cut.%s"):format(e.count, short(p.price), signed(each * e.count), sells), "do"
+            local text = ("Post %d at %s each (Bags tab, Post): %s after the cut, in your hands about an hour after it sells.%s"):format(
+                e.count, short(p.price), signed(each * e.count), sells)
+            -- the quick way out, when a vendor pays more than it cost: less profit, but the gold is back at once
+            local v = ns.Sniper and ns.Sniper.vendorOf(key) or 0
+            if v > paid then
+                text = text .. (" Or sell it to a vendor now for %s: no wait, no fee."):format(signed((v - paid) * e.count))
+            end
+            return text, "do"
         end
         return ahOpen() and "Its live price is being checked. Post appears on the Bags tab in a moment."
             or "Open the auction house: the live price is checked, then press Post.", "do"

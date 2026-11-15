@@ -195,6 +195,7 @@ local function buyStatus(n)
     local name, lines = S.nameOf, {}
     local q = S.background
     local mode = ns.Deals.cfg.flips and "" or (GREEN .. "Vendor-only.|r ")
+    local cap = S:Capital()
     if ns.Deals.cfg.flips and (AuctionMeshDB.cfg.focusMode or "off") ~= "off" then
         local set, flist = S:FocusSet()
         mode = set and (TEAL .. ("Focus on %d item%s.|r "):format(#flist, #flist == 1 and "" or "s")) or (GREY .. "Focus: still measuring.|r ")
@@ -214,6 +215,12 @@ local function buyStatus(n)
         else
             lines[1] = mode .. "Nothing to check yet: waiting for the first price scan."
         end
+    end
+    if cap.paused then
+        -- your money is out of reach: say so, and when some of it comes back
+        table.insert(lines, 1, ("%sFlips paused:|r %s of your %s is in auctions and unpaid sales (limit %d%%).%s Vendor deals are still shown."):format(
+            ORANGE, ns.Seller.short(cap.tied), ns.Seller.short(cap.worth), floor(ns.Deals.cfg.maxTied * 100 + 0.5),
+            cap.nextIn and (" Next pay-out in %s."):format(cap.nextIn >= 90 and (floor(cap.nextIn / 60 + 0.5) .. " min") or (floor(cap.nextIn) .. "s")) or ""))
     end
     -- line 2: last result
     local l = S.last
@@ -265,6 +272,10 @@ local function nextStep(deals, entries, short)
     if n.VENDOR > 0 then
         return merchantOpen() and ("Press |cffffd100Sell all to vendor|r to collect %s+%s|r profit."):format(GREEN, short(gain.VENDOR))
             or ("Visit any vendor: %d item(s) to sell for %s+%s|r profit."):format(n.VENDOR, GREEN, short(gain.VENDOR))
+    end
+    do
+        local waiting = Se:SalesMoney()
+        if waiting > 0 then return ("Collect %s%s|r at a mailbox: sale gold has arrived."):format(GREEN, short(waiting)) end
     end
     if n.MAIL > 0 then return ("Visit a mailbox: %d purchase(s) to collect."):format(n.MAIL) end
     if sold > 0 then return "Visit a mailbox: an auction sold or expired." end
@@ -387,6 +398,13 @@ function UI:RenderMoney(entries, short)
     lg.note:SetText((#parts > 0 and ("Not counted: " .. table.concat(parts, "; ") .. ".") or "All amounts are after the 5% auction house cut.") .. endedNote .. feeText)
 end
 
+-- How long gold spent on a flip is out of reach: time to sell plus the hour
+-- the auction house takes to pay out.
+function UI.backIn(d)
+    local mins = (d.eta or 0) + 60
+    return mins >= 120 and ("%.1f hours"):format(mins / 60) or ("1h %02dm"):format(math.max(0, floor(mins - 60 + 0.5)))
+end
+
 -- THE BIG BUY BUTTON (Trades tab). It never moves and always acts on the best
 -- deal, so it can be clicked without looking for a row, and clicked repeatedly.
 --   teal    a deal: the first click asks the server for the price
@@ -409,8 +427,9 @@ function UI:RenderSnipe(short)
     local text, colour, fill = nil, LINE, { 0.09, 0.10, 0.12 }
     if d then
         local units, total = S.NextBuy(d)
-        local what = ("%s x%d    pay %s    make + %s%s    %s"):format(S.nameOf(d.key), units, short(total), short(d.profit),
-            d.kind == "VENDOR" and " (guaranteed, vendor)" or "",
+        local back = d.kind == "VENDOR" and " (guaranteed; gold back at the next vendor)"
+            or (" (gold back in about %s)"):format(UI.backIn(d))
+        local what = ("%s x%d    pay %s    make + %s%s    %s"):format(S.nameOf(d.key), units, short(total), short(d.profit), back,
             d.from == "friend" and (ORANGE .. "spotted by a friend|r") or (TEAL .. "spotted by you|r"))
         if S:OneClick(key) then
             text, colour, fill = GREEN .. "BUY NOW|r    " .. what, { 0.2, 1, 0.4 }, { 0.05, 0.22, 0.10 }
@@ -471,6 +490,7 @@ function UI:RenderSetup()
     local sp, cfg = frame.setup, AuctionMeshDB.cfg
     sp.flips:SetText(ns.Deals.cfg.flips and "Vendor deals + flips" or "Vendor deals only")
     sp.scope:SetText(ns.Do.SCOPE_NAMES[cfg.scope] or ns.Do.SCOPE_NAMES.mats)
+    sp.tied:SetText(("Flips may tie up: %d%%"):format(floor(ns.Deals.cfg.maxTied * 100 + 0.5)))
     sp.dock:SetText(cfg.dock ~= false and "Inside the auction house" or "A window of its own")
     sp.auto:SetText(cfg.autoOpen and "Opens by itself: on" or "Opens by itself: off")
     sp.tune:SetText(ns.Tuner.cfg.enabled and "Self-tuning: on" or "Self-tuning: off")
@@ -644,6 +664,8 @@ local function rowEnter(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:SetItemByID(item.key)
     if not item.action then
+        GameTooltip:AddLine(item.kind == "VENDOR" and (GREEN .. "Your gold is back as soon as you sell it to a vendor.|r")
+            or (GOLD .. "Your gold is out of reach for about " .. UI.backIn(item) .. ": until it sells, plus the hour the auction house takes to pay.|r"), 1, 1, 1, true)
         GameTooltip:AddLine(item.from == "friend"
             and (ORANGE .. "Spotted by a friend's radar and passed on over the channel. They saw it before you, so they can also click before you.|r")
             or (TEAL .. "Spotted by your own radar" .. (item.instant and ", shown without an item check" or "") .. ".|r"), 1, 1, 1, true)
@@ -958,6 +980,9 @@ function UI:Create()
     sp.flips = tip(button(sp, 170, "", function() UI:SetVendorOnly(ns.Deals.cfg.flips) end),
         "Vendor deals are guaranteed profit: buy, sell to any vendor. Flips are resold on the auction house and are not guaranteed.")
     sp.flips:SetPoint("TOPRIGHT", 0, y(3) + 5)
+    sp.tied = tip(button(sp, 190, "", function() ns.Do.MaxTied() end),
+        "Sale gold takes an hour to arrive, so gold in a flip is out of reach for an hour or more. This is the most of your money that flips may tie up at once; the rest stays free for vendor deals, which pay back in minutes. Click to change: 30%, 50%, 70%, 100%.")
+    sp.tied:SetPoint("RIGHT", sp.flips, "LEFT", -6, 0)
 
     setting(y(4), "What the radar reads")
     sp.scope = tip(button(sp, 170, "", function() ns.Do.Scope() end),

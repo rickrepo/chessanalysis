@@ -141,6 +141,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         end
         -- learned from a sale invoice: on this realm the posting fee does not come back
         if db.cfg.feeBack == false then Deals.cfg.depositIsCost = true end
+        if db.cfg.maxTied then Deals.cfg.maxTied = db.cfg.maxTied / 100 end
         r.scout = r.scout or {}
         ns.Scout:Attach(r.scout)
         r.tune = r.tune or {}
@@ -363,6 +364,21 @@ function Do.SharingText()
     end
     return ("Connected on %s with %d player%s: %s%s."):format(where, #peers, #peers == 1 and "" or "s", table.concat(names, ", "),
         #peers > 3 and (" and %d more"):format(#peers - 3) or ""), "ok"
+end
+
+-- How much of your money flips may tie up at once (the rest stays free for vendor deals).
+local TIED = { 30, 50, 70, 100 }
+function Do.MaxTied(pct)
+    local cfg = AuctionMeshDB.cfg
+    if not pct then
+        local at = 1
+        for i, v in ipairs(TIED) do if v == (cfg.maxTied or 50) then at = i end end
+        pct = TIED[at % #TIED + 1]
+    end
+    cfg.maxTied = pct
+    Deals.cfg.maxTied = pct / 100
+    Sniper.checkedAt = {}
+    UI:Notice(("Flips may tie up at most %d%% of your money at once. The rest stays free for vendor deals, which pay back in minutes."):format(pct), true)
 end
 
 -- Self-tuning covers both learners: the request engine and the profit bar.

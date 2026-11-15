@@ -3,6 +3,9 @@ local ns = {}
 assert(loadfile("AuctionMesh/Store.lua"))("AuctionMesh", ns)
 assert(loadfile("AuctionMesh/Deals.lua"))("AuctionMesh", ns)
 local D, S = ns.Deals, ns.Store
+-- The rule tests below are about one rule each and assume the whole purse may go into a flip.
+-- The capital limits (share of gold per flip, share of all money tied up) have their own section at the end.
+D.cfg.maxSpend, D.cfg.maxTied = 1, 1
 local pass, fail = 0, 0
 local function check(c, l) if c then pass = pass + 1; print("  ok   " .. l) else fail = fail + 1; print("  FAIL " .. l) end end
 local function ev(rows, o)
@@ -37,9 +40,10 @@ check(ev(with({ { price = 20, qty = 300 } }), { budget = 100000 }) ~= nil, "chea
 d = ev(with({ { price = 20, qty = 40 } }), { budget = 700 })
 check(d and d.units == 35 and d.partial == 5, "can't afford all 40 of a pile that is tiny next to a 900-unit market -> buy 35, 5 left")
 check(ev(with({ { price = 20, qty = 200 } }), { budget = 700 }) == nil, "can't afford all of a pile that is NOT tiny (200 vs 900) -> no deal")
-check(ev(with({ { price = 20, qty = 40 } }), { budget = 900, gold = 900 }) ~= nil, "under 1g you may put nearly all your gold into one deal")
+D.cfg.maxSpend = 0.35
 d = ev({ { price = 200, qty = 40 }, { price = 780, qty = 100 }, { price = 800, qty = 300 } }, { budget = 15000, gold = 15000 })
-check(d and d.cost + d.deposit <= 7500, "above 1g: one deal never takes more than half your gold (buys " .. tostring(d and d.units) .. " of 40)")
+check(d and d.cost + d.deposit <= 5250, "one flip never takes more than 35% of the gold in hand (buys " .. tostring(d and d.units) .. " of 40)")
+D.cfg.maxSpend = 1
 check(ev({ { price = 200, qty = 30 }, { price = 780, qty = 100 }, { price = 800, qty = 300 } }, { budget = 15000, gold = 15000 }) ~= nil, "above 1g: a deal under half your gold is fine")
 check(ev({ { price = 20, qty = 5 }, { price = 300, qty = 50 } }, {}) == nil, "one lonely expensive listing is not a market price -> no deal")
 check(ev({ { price = 20, qty = 5 }, { price = 300, qty = 3 }, { price = 310, qty = 3 } }, {}) == nil, "thin market (6 units) -> no deal")
@@ -221,6 +225,33 @@ for i = 0, 400 do S:PutFair(52, 500, t0 + i * H) end
 check(#S.hist[52] == 168 * 3, "history is capped at 7 days of hourly records per item")
 local items, records = S:TrimHistory(t0 + 400 * H + 10 * 24 * H)
 check(S.hist[52] == nil and S.hist[50] == nil and items == 0, "records older than 7 days are dropped at login")
+
+print("capital: sale gold takes an hour to arrive")
+do
+    D.cfg.maxSpend, D.cfg.maxTied = 0.35, 0.50
+    local mkt = { { price = 173, qty = 100 }, { price = 174, qty = 300 }, { price = 180, qty = 500 } }
+    local function book(cheapQty) return { { price = 125, qty = cheapQty }, mkt[1], mkt[2], mkt[3] } end
+    -- the real case: 50s purse, 16 Earthroot at 1s25c (20s) under a 1s73c market
+    local d, _, why = ev(book(16), { budget = 5000, gold = 5000 })
+    print("     " .. tostring(d and ("buys " .. d.units .. " for " .. d.cost) or why))
+    check(d and d.units == 14 and d.cost == 1750 and d.partial == 2, "50s in hand: one flip takes at most 35% (17s50c), so 14 of the 16 are bought, not all 20s worth")
+    d, _, why = ev(book(16), { budget = 2155, gold = 2155, tied = 3847 })
+    print("     " .. tostring(why))
+    check(d == nil and why == "flip skipped: $3847 of your money is in auctions and unpaid sales already (limit 50%)",
+        "21s55c in hand and 38s47c in unpaid sales: no flip at all until some of it pays out")
+    d = ev(book(4), { budget = 2155, gold = 2155, tied = 1000 })
+    check(d and d.units == 4 and d.cost == 500, "10s tied up of 31s55c: a 5s flip still fits under the 50% limit")
+    d = ev(book(16), { budget = 2155, gold = 2155, tied = 1000 })
+    check(d and d.cost <= 577, ("...but a bigger one is cut to the room that is left (5s77c): spends %d"):format(d and d.cost or -1))
+    d = ev({ { price = 100, qty = 30 } }, { budget = 2155, gold = 2155, tied = 3847, vendor = 150 })
+    check(d and d.kind == "VENDOR" and d.units == 21, "vendor deals are never limited by this: the gold is back in minutes")
+    d = ev({ { price = 34, qty = 8 }, { price = 134, qty = 11 }, { price = 158, qty = 237 }, { price = 159, qty = 150 } }, { budget = 189, gold = 189, deposit = 0.02, depositMin = 100 })
+    check(d and d.units == 2, "under 5 silver in all there is nothing to split: the limits do not apply")
+    D.cfg.maxTied = 1
+    d = ev(book(16), { budget = 2155, gold = 2155, tied = 3847 })
+    check(d ~= nil, "with the limit set to 100% flips are offered whatever is tied up")
+    D.cfg.maxSpend, D.cfg.maxTied = 1, 1
+end
 
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

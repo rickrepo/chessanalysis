@@ -18,7 +18,9 @@
 --        part of it; the few leftovers get bought up quickly.
 --     4. What we buy is at most `share` (50%) of the wall's size: outliers
 --        only, never a market that simply is cheap.
---     5. One item never takes more than `maxSpend` (50%) of our gold (all of it while under 1g).
+--     5. One flip never takes more than `maxSpend` (35%) of the gold in hand, and no
+--        flip is offered while `maxTied` (50%) of all your money is in auctions and
+--        unpaid sales: sale gold takes an hour to arrive.
 --     6. Profit after the 5% AH cut and the deposit is at least `margin` (20%).
 --     9. Never goods that NPC vendors sell in unlimited supply.
 --    12. Learned: finished flips (ours and friends') scale the planned price
@@ -54,7 +56,9 @@ Deals.cfg = {
     depthRows = 2,        -- ...in at least this many price rows
     share = 0.50,         -- we buy at most half of the wall's size
     partialShare = 0.10,  -- a pile this small vs the market may be bought in part
-    maxSpend = 0.5,       -- at most half our gold on one flip
+    maxSpend = 0.35,      -- one flip takes at most this share of the gold in hand
+    maxTied = 0.50,       -- flips stop when this share of all your money is in auctions and unpaid sales
+    smallPurse = 500,     -- below this (5 silver in all) the two limits above do not apply
     minSamples = 4,       -- average needs this many samples before we trust it
     fairMaxAge = 20 * 60, -- a wall price older than this is re-checked
     maxAge = 30 * 60,     -- only consider lowest prices seen in the last 30 min
@@ -192,8 +196,24 @@ local function flipDeal(rows, o, cfg)
     end
     local need = cost + depFor(units)
     local partial
-    local cap = (o.gold < 10000) and 1 or cfg.maxSpend -- under 1g you may go all in on one deal
-    local limit = min(o.budget, floor(o.gold * cap))
+    -- CAPITAL. Sale gold arrives an hour after the sale, so gold spent on a
+    -- flip is out of reach for an hour or more, while gold spent on a vendor
+    -- deal is back in minutes. A small purse that goes all in on flips has
+    -- nothing left for the next vendor deal (this is what emptied a 50 silver
+    -- purse in a real session). So: one flip takes at most `maxSpend` of the
+    -- gold in hand, and no flip is offered once `maxTied` of everything you
+    -- own is already sitting in auctions and sales that have not paid out.
+    -- Under 5 silver in all there is nothing to split: every copper may go
+    -- into one deal, as before.
+    local tied = o.tied or 0
+    local limit = o.budget
+    if o.gold + tied >= cfg.smallPurse then
+        local room = floor((o.gold + tied) * cfg.maxTied) - tied
+        if room <= 0 then
+            return nil, wall, ("flip skipped: $%d of your money is in auctions and unpaid sales already (limit %d%%)"):format(tied, floor(cfg.maxTied * 100 + 0.5))
+        end
+        limit = min(o.budget, floor(o.gold * cfg.maxSpend), room)
+    end
     if need > limit then
         -- Small purse: buy part of the pile, but only when the whole pile is tiny
         -- next to the market (<= partialShare), so the leftovers sell out quickly.

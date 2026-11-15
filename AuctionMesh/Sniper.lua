@@ -187,6 +187,7 @@ function Sniper:DealOptions(key, commodity)
     local feePer, feeMin = self.depositInfo(key, commodity)
     return {
         budget = self:Budget(), gold = GetMoney(), commodity = commodity,
+        tied = ns.Seller and ns.Seller.Tied and (ns.Seller:Tied()) or 0,
         vendor = self.vendorOf(key),
         avg = (avg and n and n >= Deals.cfg.minSamples) and avg or nil,
         deposit = feePer, depositMin = feeMin,
@@ -843,6 +844,18 @@ local function recordFlip(deal, units, spent, proof)
     s.expected = s.expected + (deal.units > 0 and floor(deal.profit / deal.units) or 0) * units
     say(("|cff33ff66Bought:|r %d x %s for %s. It is in your mailbox; opening a mailbox moves it to your bags.")
         :format(units, nameOf(deal.key), money(spent)))
+end
+
+-- Where your money is: gold in hand, money out of reach (auctions, unpaid
+-- sales), what flips may still use, and seconds to the next pay-out.
+function Sniper:Capital()
+    local gold = GetMoney()
+    local tied, nextIn, listed, onway, waiting = 0, nil, 0, 0, 0
+    if ns.Seller and ns.Seller.Tied then tied, nextIn, listed, onway, waiting = ns.Seller:Tied() end
+    local room = floor((gold + tied) * Deals.cfg.maxTied) - tied
+    if gold + tied < Deals.cfg.smallPurse then room = gold end -- a tiny purse is not split
+    return { gold = gold, tied = tied, worth = gold + tied, room = math.max(0, room), paused = Deals.cfg.flips and room <= 0,
+             nextIn = nextIn, listed = listed, onway = onway, waiting = waiting }
 end
 
 -- THE BEST DEAL RIGHT NOW: the one the big Buy button acts on. It stays on a
