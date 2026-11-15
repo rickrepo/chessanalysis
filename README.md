@@ -709,6 +709,10 @@ python3 companion/mesh_companion.py --wow "C:/Program Files (x86)/World of Warcr
 
 The server and every client use the same conflict rule: the newer timestamp wins; on equal timestamps, the lower price wins. That way everyone ends up with the same table. Put the server behind HTTPS if it's reachable from the internet.
 
+## Changelog
+
+Every release, newest first, is in [CHANGELOG.md](CHANGELOG.md).
+
 ## Install & use
 
 1. Copy the `AuctionMesh` folder into `World of Warcraft/_forever_/Interface/AddOns/`. The folder name may differ on your install; it's the one Auctioneer lives in.
