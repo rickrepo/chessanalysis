@@ -268,6 +268,14 @@ end
 --   * lowest price fell 15% or more since the previous sweep.
 -- The same sweep also measures volume: a drop in the listed quantity between
 -- two sweeps means units were bought.
+-- How far under the market the cheapest listing must be before a full check
+-- is worth a request: the same bar a flip has to clear (profit margin after
+-- the cut), with 3% to spare. At 20% margin that is 77% of market. The old
+-- fixed 80% sent 66 checks for 3 deals in the first real report.
+function Sniper.TriggerRatio()
+    return (1 - Deals.cfg.cut) / (1 + Deals.cfg.margin) * 0.97
+end
+
 -- (class, subclass) of an item, for category focus
 local function classSub(key)
     local _, _, _, _, _, classID, subID = C_Item.GetItemInfoInstant(key)
@@ -286,17 +294,23 @@ function Sniper:InFocus(key)
     return set == nil or set[key] == true
 end
 
-function Sniper:OnSweep(key, price, qty)
+function Sniper:OnSweep(key, price, qty, shared)
     if not self.active or key <= 0 or self.isItem[key] then return end
     local now = GetTime()
     self.sweep = self.sweep or {}
     local prev = self.sweep[key]
     self.sweep[key] = { p = price, q = qty, at = now }
-    if prev then
-        local dt = now - prev.at
-        if dt >= 10 and dt <= 900 then
-            local gone = prev.q - qty - (self.bought[key] or 0)
-            Store:AddTurnover(key, gone > 0 and gone or 0, dt)
+    -- Quantity leaving the whole listing is CHURN (sales + cancelled auctions),
+    -- measured on our own reads only: a friend's read arrives late and out of
+    -- order, which made every new posting look like a sale. Real sales are
+    -- measured from full listings (Turnover below).
+    if not shared then
+        local own = self.ownSweep and self.ownSweep[key]
+        self.ownSweep = self.ownSweep or {}
+        self.ownSweep[key] = { q = qty, at = now }
+        if own and now - own.at >= 1 and now - own.at <= 900 then
+            local gone = own.q - qty
+            Store:AddChurn(key, gone > 0 and gone or 0, now - own.at)
         end
     end
     local ft = Store.ft[key]
@@ -308,7 +322,7 @@ function Sniper:OnSweep(key, price, qty)
     if v and price <= floor(v / (1 + Deals.cfg.vendorMargin)) then why = "at or under vendor price"
     elseif VENDOR_SOLD[key] or not Deals.cfg.flips then return
     elseif not self:InFocus(key) then return -- laser focus: flips only on the focus items
-    elseif market and price <= market * 0.8 then why = "20% under market"
+    elseif market and price <= market * self.TriggerRatio() then why = "under market"
     elseif prev and price <= prev.p * 0.85 then why = "price just dropped"
     end
     if not why then return end
@@ -362,29 +376,56 @@ end
 -- Trading volume. Between two readings of the same listing, units that
 -- disappeared from the cheap end (at or below the 3rd price level) were bought
 -- by someone. New cheap listings hide some sales, so this never overstates.
+-- REAL SALES, from two full listings of the same item. Commodities are always
+-- bought cheapest first, so a sale eats the listing from the bottom:
+--   * walk the OLD price levels from the cheapest up;
+--   * units missing from a level count as sold;
+--   * stop at the first level that is intact (buyers never got past it);
+--   * a level that vanished entirely while at least as much NEW stock now sits
+--     below it is treated as a cancelled-and-relisted auction, not a sale, and
+--     counting stops there.
+-- Anything that disappears higher up while cheaper stock remains is a
+-- cancellation and is never counted. This under-counts rather than over-counts.
+function Sniper.SoldBetween(old, rows)
+    local now = {}
+    for i = 1, #rows do now[rows[i].price] = (now[rows[i].price] or 0) + rows[i].qty end
+    local was = {}
+    for i = 1, #old do was[old[i].price] = (was[old[i].price] or 0) + old[i].qty end
+    local sold = 0
+    for i = 1, #old do
+        local p, q = old[i].price, old[i].qty
+        local q2 = now[p] or 0
+        if q2 >= q then break end
+        local gone = q - q2
+        if q2 == 0 then
+            local newBelow = 0
+            for price, qty in pairs(now) do
+                if price < p then newBelow = newBelow + math.max(0, qty - (was[price] or 0)) end
+            end
+            if newBelow >= gone then break end
+        end
+        sold = sold + gone
+        if q2 > 0 then break end
+    end
+    return sold
+end
+
 function Sniper:Turnover(key, rows)
     if #rows == 0 then return end
     local now = GetTime()
-    local function cumAt(x)
-        local c = 0
-        for i = 1, #rows do
-            if rows[i].price > x then break end
-            c = c + rows[i].qty
-        end
-        return c
-    end
     local prev = self.book[key]
     if prev then
         local dt = now - prev.at
         if dt < 20 then return end -- same reading (the game sends results twice)
-        if dt <= 900 then
-            local gone = prev.cum - cumAt(prev.x) - (self.bought[key] or 0)
+        if dt <= 900 and prev.rows then
+            local gone = self.SoldBetween(prev.rows, rows) - (self.bought[key] or 0)
             Store:AddTurnover(key, gone > 0 and gone or 0, dt)
         end
     end
     self.bought[key] = nil
-    local x = rows[math.min(3, #rows)].price
-    self.book[key] = { x = x, cum = cumAt(x), at = now }
+    local keep = {}
+    for i = 1, math.min(8, #rows) do keep[i] = { price = rows[i].price, qty = rows[i].qty } end
+    self.book[key] = { rows = keep, at = now }
 end
 
 function Sniper.RowsText(rows)
@@ -510,10 +551,23 @@ function Sniper:RebuildBackground()
     end
     local scope = ns.Swarm and ns.Swarm.ScopeClasses and ns.Swarm:ScopeClasses() or PROFESSION
     local list, seen = {}, {}
-    -- Staples first. Ones whose known lowest price is above your gold are skipped.
+    -- Items that have really been seen under market come first (most dips
+    -- first): that is where a full look pays. Up to 20 of them.
+    if ns.Scout and ns.Scout.d and Deals.cfg.flips then
+        local dippy = {}
+        for key, it in pairs(ns.Scout.d.items) do
+            local p = Store.p[key]
+            if (it.d or 0) >= 3 and key > 0 and not self.isItem[key] and not VENDOR_SOLD[key] and p and p <= budget then
+                dippy[#dippy + 1] = key
+            end
+        end
+        table.sort(dippy, function(a, b) return ns.Scout.d.items[a].d > ns.Scout.d.items[b].d end)
+        for i = 1, math.min(20, #dippy) do list[#list + 1] = dippy[i]; seen[dippy[i]] = true end
+    end
+    -- Then the staples. Ones whose known lowest price is above your gold are skipped.
     for _, key in ipairs(STAPLES) do
         local p = Store.p[key]
-        if not self.isItem[key] and (not p or p <= budget) then list[#list + 1] = key; seen[key] = true end
+        if not seen[key] and not self.isItem[key] and (not p or p <= budget) then list[#list + 1] = key; seen[key] = true end
     end
     -- New Forever materials, found by name among what the scan has seen.
     for key in pairs(Store.t) do

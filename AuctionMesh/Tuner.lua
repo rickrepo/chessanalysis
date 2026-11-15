@@ -115,6 +115,7 @@ function Tuner:Answered(dt)
     h.cycle = h.cycle and (h.cycle * 0.9 + dt * 0.1) or dt
     local r = self.recent
     r[#r + 1] = self.now()
+    if ns.Scout then ns.Scout:Request() end
     if d.n == c.measure then
         log("TUNER limit measured: %.2fs per request (%.1f a second) over the first %d requests", d.cycle, 1 / d.cycle, d.n)
     end

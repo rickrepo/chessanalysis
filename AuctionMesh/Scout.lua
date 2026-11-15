@@ -41,6 +41,7 @@ local floor, min, max = math.floor, math.min, math.max
 
 Scout.cfg = {
     dipAt = 0.80,       -- cheapest listing at or under this share of the market = a dip
+    dipGap = 3,         -- ... and at least this many copper under it (3c against 4c is rounding, not a dip)
     primeRate = 30,     -- units an hour an item must be measured to sell
     primeObs = 600,     -- seconds of watching before a rate is trusted
     primeTop = 12,      -- how many prime items are focused on
@@ -72,7 +73,8 @@ function Scout:Day()
     local today = dayOf(self.now())
     local rec = d.days[today]
     if not rec then
-        rec = { reads = 0, checks = 0, deals = 0, profit = 0, bought = 0, spent = 0, gone = 0, fails = 0, secs = 0 }
+        rec = { reads = 0, checks = 0, deals = 0, profit = 0, bought = 0, spent = 0, gone = 0, fails = 0, secs = 0,
+                sweeps = 0, req = 0, near = {} }
         d.days[today] = rec
         for k in pairs(d.days) do if k < today - self.cfg.days then d.days[k] = nil end end
         d.reasons = {} -- reasons are counted per day
@@ -102,17 +104,43 @@ function Scout:Read(key, price, market)
     h.r = h.r + 1
     local day = self:Day()
     day.reads = day.reads + 1
-    if price <= market * self.cfg.dipAt then
+    if price <= market * self.cfg.dipAt and market - price >= self.cfg.dipGap then
         it.d = it.d + 1
         h.d = h.d + 1
     end
 end
+
+-- One radar read finished; one background request was answered.
+function Scout:Sweep()
+    if not self.d then return end
+    local day = self:Day()
+    day.sweeps = (day.sweeps or 0) + 1
+end
+function Scout:Request()
+    if not self.d then return end
+    local day = self:Day()
+    day.req = (day.req or 0) + 1
+end
+
+-- How close a failed check was: cheapest price against the most a deal could
+-- pay. Tells whether a slightly lower profit bar would find many more deals.
+Scout.NEAR = { { 1.05, "within 5%" }, { 1.15, "5-15% over" }, { 1.30, "15-30% over" }, { math.huge, "more than 30% over" } }
 
 -- One full item check came back without a deal.
 function Scout:NoDeal(key, reason)
     if not self.d then return end
     local day = self:Day()
     day.checks = day.checks + 1
+    do
+        local low, need = tostring(reason or ""):match("^cheapest is %$(%d+), market %$%d+: needs %$(%d+) or less")
+        low, need = tonumber(low), tonumber(need)
+        if low and need and need > 0 then
+            day.near = day.near or {}
+            for i, b in ipairs(self.NEAR) do
+                if low / need <= b[1] then day.near[i] = (day.near[i] or 0) + 1; break end
+            end
+        end
+    end
     -- the same reason with different numbers counts as one reason
     local r = tostring(reason or "?"):gsub("%$?%d+", "#"):sub(1, 70)
     self.d.reasons[r] = (self.d.reasons[r] or 0) + 1
@@ -172,6 +200,7 @@ function Scout:Online(secs)
     if not self.d or not secs or secs <= 0 or secs > 5 then return end
     local day = self:Day()
     day.secs = day.secs + secs
+    if not day.gold0 and GetMoney then day.gold0 = GetMoney() end -- gold when the day's first session began
 end
 
 ---------------------------------------------------------------- prime items
@@ -186,6 +215,7 @@ function Scout:Facts(key, now)
         key = key, low = St.p[key], lowAt = St.t[key], market = St.fp[key], marketAt = St.ft[key],
         rate = rate, obs = obs, reads = it.r or 0, dips = it.d or 0, deals = it.n or 0, profit = it.p or 0,
         gone = it.g or 0, life = (it.g or 0) > 0 and (it.gs / it.g) or nil,
+        churn = St.Churn and St:Churn(key) or nil,
     }
     f.value = (rate and f.market) and rate * f.market or nil
     f.dipShare = f.reads > 0 and f.dips / f.reads or 0
@@ -384,7 +414,7 @@ function Scout:Report(o)
     local function add(...) L[#L + 1] = table.concat({ ... }, "") end
     local budget = o.gold or 0
 
-    add("=== AUCTIONMESH DAILY REPORT v1 ===")
+    add("=== AUCTIONMESH DAILY REPORT v2 ===")
     add("addon ", tostring(o.version or "?"), " | realm ", tostring(o.realm or "?"), " | server time ", date("%Y-%m-%d %H:%M", now),
         " | gold ", tostring(budget), "c")
     add("All money is in copper (100 = 1 silver, 10000 = 1 gold).")
@@ -399,17 +429,39 @@ function Scout:Report(o)
     end
 
     add("")
-    add("-- DAYS (newest first): minutes working, radar reads, item checks, deals found and their profit, purchases, copper spent, deals gone before a buy, failed buys")
-    add("day | min | reads | checks | deals | dealProfit | bought | spent | gone | fails")
+    add("-- DAYS (newest first): minutes working, radar sweeps, requests answered, item reads, item checks, deals found and their profit, purchases, copper spent, deals gone before a buy, failed buys, gold at the day's start")
+    add("day | min | sweeps | requests | reads | checks | deals | dealProfit | bought | spent | gone | fails | goldStart")
     do
         local _, today = self:Day()
         for dd = today, today - self.cfg.days, -1 do
             local r = d.days[dd]
             if r then
-                add(dd == today and "today" or ("-" .. (today - dd) .. "d"), " | ", num(r.secs / 60), " | ", r.reads, " | ", r.checks, " | ", r.deals,
-                    " | ", r.profit, " | ", r.bought, " | ", r.spent, " | ", r.gone, " | ", r.fails)
+                add(dd == today and "today" or ("-" .. (today - dd) .. "d"), " | ", num(r.secs / 60), " | ", (r.sweeps or 0), " | ", (r.req or 0), " | ", r.reads,
+                    " | ", r.checks, " | ", r.deals, " | ", r.profit, " | ", r.bought, " | ", r.spent, " | ", r.gone, " | ", r.fails, " | ", num(r.gold0))
             end
         end
+    end
+
+    do  -- how much of the request budget was used, and how often the radar came round
+        local r = self:Day()
+        local cyc = ns.Tuner and ns.Tuner.d and ns.Tuner.d.cycle
+        if r.secs > 60 and cyc then
+            add(("today: %d%% of the request budget used; radar came round every %.1fs on average"):format(
+                floor((r.req or 0) * cyc / r.secs * 100 + 0.5), (r.sweeps or 0) > 0 and r.secs / r.sweeps or 0))
+        end
+    end
+
+    add("")
+    add("-- MY AUCTIONS NOW: listed, cheapest listing now, undercut or not, hours since posting")
+    add("item(id) | qty | my price | cost each | cheapest now | state | hours listed")
+    for key, Lr in pairs(AuctionMeshDB.listed or {}) do
+        local low, t = St.p[key], St.t[key]
+        local fresh = t and now - t < 900
+        add(plainName(key), "(", key, ") | ", num(Lr.qty), " | ", num(Lr.price), " | ", num(Lr.cost), " | ", fresh and num(low) or "-", " | ",
+            (fresh and low and low < (Lr.price or 0)) and "UNDERCUT" or (fresh and "cheapest" or "unknown"), " | ", ("%.1f"):format((now - (Lr.at or now)) / 3600))
+    end
+    for key, f in pairs(AuctionMeshDB.flips or {}) do
+        add(plainName(key), "(", key, ") | ", num(f.units), " | not listed | ", f.unknownCost and "?" or num(f.cost), " | ", num(St.p[key]), " | in bags or mail (", tostring(f.kind), ") | -")
     end
 
     add("")
@@ -446,6 +498,9 @@ function Scout:Report(o)
         for r, n in pairs(d.reasons) do rs[#rs + 1] = { r = r, n = n } end
         table.sort(rs, function(a, b) return a.n > b.n end)
         for i = 1, min(#rs, 15) do add(rs[i].n, " x ", rs[i].r) end
+        local near, parts = self:Day().near or {}, {}
+        for i, b in ipairs(self.NEAR) do parts[#parts + 1] = b[2] .. ": " .. (near[i] or 0) end
+        add("how far the cheapest listing was from a deal: ", table.concat(parts, ", "))
     end
 
     add("")
@@ -461,19 +516,26 @@ function Scout:Report(o)
 
     add("")
     add("-- MARKET: the 40 items with the most copper traded per hour, then every other item with a dip or a deal on record")
-    add("item(id) | low | market | vendor | sells/h | watched min | traded/h | 6h | 24h | 24h range | reads | dips | deals | dealProfit | gone | avg life s | prime")
+    add("sold/h = units eaten from the cheap end between full listings (real sales, may under-count). churn/h = units leaving the whole listing between radar reads (sales + cancelled auctions).")
+    add("item(id) | low | market | vendor | sold/h | watched min | traded/h | churn/h | 6h | 24h | 24h range | reads | dips | deals | dealProfit | gone | avg life s | prime")
     do
         local all, shown = {}, {}
-        for key in pairs(St.vs or {}) do if key > 0 then all[#all + 1] = self:Facts(key, now) end end
+        local have = {}
+        for key in pairs(St.vs or {}) do if key > 0 then all[#all + 1] = self:Facts(key, now); have[key] = true end end
         for key, it in pairs(d.items) do
-            if not (St.vs and St.vs[key]) and ((it.d or 0) > 0 or (it.n or 0) > 0) then all[#all + 1] = self:Facts(key, now) end
+            if not have[key] and ((it.d or 0) > 0 or (it.n or 0) > 0) then all[#all + 1] = self:Facts(key, now); have[key] = true end
         end
-        table.sort(all, function(a, b) return (a.value or 0) > (b.value or 0) end)
+        for key in pairs(St.cs or {}) do
+            if key > 0 and not have[key] then all[#all + 1] = self:Facts(key, now) end
+        end
+        -- real sales first; among items with no measured sales yet, the busiest listings
+        local function weight(f) return (f.value or 0) * 1000 + (f.churn or 0) * (f.market or f.low or 0) / 1000 end
+        table.sort(all, function(a, b) return weight(a) > weight(b) end)
         local function line(f)
             local lo, hi = St:Range(f.key, now, 24)
             local score, why = self:Score(f, budget, o.vendorSold and o.vendorSold[f.key])
             add(plainName(f.key), "(", f.key, ") | ", num(f.low), " | ", num(f.market), " | ", num(o.vendorOf and o.vendorOf(f.key)), " | ", num(f.rate),
-                " | ", num(f.obs and f.obs / 60), " | ", num(f.value), " | ", pct(St:Trend(f.key, now, 6)), " | ", pct(St:Trend(f.key, now, 24)),
+                " | ", num(f.obs and f.obs / 60), " | ", num(f.value), " | ", num(f.churn), " | ", pct(St:Trend(f.key, now, 6)), " | ", pct(St:Trend(f.key, now, 24)),
                 " | ", lo and (num(lo) .. "-" .. num(hi)) or "-", " | ", f.reads, " | ", f.dips, " | ", f.deals, " | ", f.profit, " | ", f.gone,
                 " | ", num(f.life), " | ", score and "PRIME" or ("no: " .. tostring(why)))
         end

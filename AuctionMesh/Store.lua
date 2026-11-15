@@ -243,6 +243,22 @@ function Store:PutSold(key, unit, qty, t)
 end
 
 -- Adds one observation: `units` left the cheap end of the listing in `seconds`.
+-- CHURN: units that left the whole listing between two radar reads. That is
+-- sales plus cancelled and re-posted auctions, so it overstates demand (the
+-- first real report showed 15,000 "sold" an hour for one item). It is kept for
+-- the report only and never used to decide anything.
+function Store:AddChurn(key, units, seconds)
+    self.cu, self.cs = self.cu or {}, self.cs or {}
+    local u, s = (self.cu[key] or 0) + units, (self.cs[key] or 0) + seconds
+    if s > 3600 then u, s = u * 0.5, s * 0.5 end
+    self.cu[key], self.cs[key] = u, s
+end
+function Store:Churn(key)
+    local s = self.cs and self.cs[key]
+    if not s or s < 60 then return nil end
+    return self.cu[key] / s * 3600
+end
+
 function Store:AddTurnover(key, units, seconds)
     local u, s = (self.vu[key] or 0) + units, (self.vs[key] or 0) + seconds
     if s > 3600 then u, s = u * 0.5, s * 0.5 end -- recent hours weigh more

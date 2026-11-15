@@ -97,13 +97,29 @@ local function focused(u)
 end
 
 -- Returns the unit this peer should scan next, or nil if everything is fresh/claimed.
+-- SOLO RADAR. The first real report showed that one request returns the whole
+-- materials class (395 items). Sharing out a job that costs one request only
+-- adds waiting: with a friend online the radar came round every 8 seconds and
+-- more than half the request budget sat idle, while deals lasted 7 to 36
+-- seconds. So when a full read costs 2 requests or fewer, every player reads
+-- on their own clock and ignores claims; friends' reads still arrive as extra
+-- data. Work is only split when a read is expensive (the whole auction house).
+function Swarm:Solo()
+    if #self.units == 0 then return false end
+    local total = 0
+    for _, u in ipairs(self.units) do total = total + ((self.unitReq and self.unitReq[u]) or 1) end
+    return total <= 2
+end
+
 function Swarm:PickUnit()
     local now, clock = self.serverTime(), self.clock()
     local best, bestScore
+    local solo = self:Solo()
+    self.myDone = self.myDone or {}
     for _, u in ipairs(self.units) do
-        local age = now - (self.doneAt[u] or 0)
+        local age = now - ((solo and self.myDone[u]) or (not solo and self.doneAt[u]) or 0)
         local c = self.claims[u]
-        local claimed = c and (clock - c.at) < self.cfg.claimTTL and c.by ~= Comm.me
+        local claimed = not solo and c and (clock - c.at) < self.cfg.claimTTL and c.by ~= Comm.me
         if age >= self.cfg.fresh and not claimed then
             -- Focus wins outright; otherwise stalest first; jitter splits ties.
             local score = (focused(u) and 1e12 or 0) + age + random()
@@ -174,7 +190,7 @@ function Swarm:Step()
         self.idle = (u == nil)
         if not u then return end
         self.claims[u] = { by = Comm.me, at = clock }
-        note(1, u)
+        if not self:Solo() then note(1, u) end
         -- Wait one beat so a competing claim can arrive before we spend a query.
         self.current = { unit = u, phase = "claimed", at = clock }
         return
@@ -182,7 +198,7 @@ function Swarm:Step()
 
     if cur.phase == "claimed" then
         -- the pause for competing claims only matters when friends are online
-        local wait = (ns.peerAt and clock - ns.peerAt < 600) and self.cfg.claimWait or 0
+        local wait = (not self:Solo() and ns.peerAt and clock - ns.peerAt < 600) and self.cfg.claimWait or 0
         if clock - cur.at < wait or not ex.ready() then return end
         if ns.Sniper and not ns.Sniper:YieldTo("swarm") then return end
         self.resultsSeen = false
@@ -199,8 +215,11 @@ function Swarm:Step()
         if not ex.gotResults() then return end
         if ex.full() then
             self.doneAt[cur.unit] = self.serverTime()
+            self.myDone = self.myDone or {}
+            self.myDone[cur.unit] = self.serverTime()
             self.claims[cur.unit] = nil
-            note(2, cur.unit)
+            if ns.Scout then ns.Scout:Sweep() end
+            if not self:Solo() then note(2, cur.unit) end
             self.stats.units = self.stats.units + 1
             self:Tune(cur.unit, cur.requests or 1)
             self.current = nil

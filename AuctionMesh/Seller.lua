@@ -220,6 +220,27 @@ end
 
 ---------------------------------------------------------------- mailbox (automatic)
 
+-- You sold a tracked item to a vendor yourself (not with the panel's button).
+-- Seen as: the vendor window is open and tracked units left your bags. It is
+-- recorded like any vendor sale, so the profit is banked and the trade closes
+-- instead of being reported as "not found".
+function Seller:CheckSoldByHand(before)
+    if not merchantOpen() or self.selling or not before then return end
+    for key, f in pairs(flips()) do
+        local gone = (before[key] or 0) - (bagCount[key] or 0)
+        if gone > 0 then
+            local n = min(gone, f.units or 0)
+            local unit = ns.Sniper and ns.Sniper.vendorOf(key) or 0
+            if n > 0 and unit > 0 then
+                if not f.unknownCost then Seller.Realize((unit - (f.cost or 0)) * n) end
+                if ns.Journal then ns.Journal:Vendored(key, n, unit) end
+                Seller.ForgetUnits(key, n)
+                say(("Sold to the vendor by hand: %d x %s at %s each."):format(n, nameOf(key), money(unit)))
+            end
+        end
+    end
+end
+
 function Seller:CollectMail()
     if self.mailBusy then return end
     self.mailBusy = true
@@ -768,6 +789,9 @@ function Seller:Advice(e)
         local each = paid and (floor(repost * (1 - cfg.cut)) - paid) or nil
         if gap <= max(1, price * 0.03) then
             return ("Wait. Undercut by only %s each: the cheaper units sell first, then yours.%s%s"):format(short(gap), sells, expires), "wait"
+        elseif each and each * e.count >= cfg.minProfit and GetMoney() < self:DepositTotal(key, true, e.count) then
+            return ("Wait. Someone lists at %s. Posting again costs a fee of %s first and you have %s.%s")
+                :format(short(low), short(self:DepositTotal(key, true, e.count)), short(GetMoney()), expires), "wait"
         elseif each and each * e.count >= cfg.minProfit then
             return ("Someone lists at %s. Cancel yours (the game's Auctions tab) and post again at %s: still %s. The posting fee is paid again.")
                 :format(short(low), short(repost), signed(each * e.count)), "do"
@@ -831,7 +855,10 @@ function Seller:Init()
             Seller.pending, Seller.posting = nil, nil
             Seller:Refresh()
         elseif event == "BAG_UPDATE_DELAYED" then
-            Seller:ScanBags(); Seller:CheckPosted(); Seller:Refresh()
+            local before = bagCount
+            Seller:ScanBags()
+            Seller:CheckSoldByHand(before)
+            Seller:CheckPosted(); Seller:Refresh()
         elseif event == "UI_ERROR_MESSAGE" then
             Seller:OnError(a2 or a1)
         else

@@ -431,8 +431,12 @@ check(S.verified[2318] == nil and tostring(S.reasons[2318]):find("measuring how 
 -- nobody buys for two minutes
 advance(60); S.checkedAt = {}; S.priority = 2318; advance(3); advance(60); S.checkedAt = {}; S.priority = 2318; advance(3)
 check(S.verified[2318] == nil and tostring(S.reasons[2318]):find("not a popular item"), "nothing sold while watching: rejected as not a popular item")
--- now other players buy 150 from the market price level over the next minutes
-LIST[2318][2][2] = 50
+-- now other players buy 150: the 4 cheap ones first (buyers always get the cheapest), then 146 at the market price
+LIST[2318] = { { 30, 54 }, { 31, 300 }, { 32, 400 } }
+advance(60); S.checkedAt = {}; S.priority = 2318; advance(3)
+check(ns.Store:Rate(2318, 0) and ns.Store:Rate(2318, 0) > 100, "units eaten from the cheap end of the listing are counted as sold")
+-- and someone lists 4 cheap ones again
+LIST[2318] = { { 10, 4 }, { 30, 54 }, { 31, 300 }, { 32, 400 } }
 advance(60); S.checkedAt = {}; S.priority = 2318; advance(3)
 local vd = S.verified[2318]
 check(vd and vd.rate and vd.rate > 100 and vd.eta and vd.eta < 60, ("units are leaving the listing: deal accepted, about %d/h, sells in ~%d min"):format(vd and vd.rate or 0, vd and vd.eta or 0))
@@ -616,8 +620,9 @@ LIST[2319] = { { 40, 5 }, { 100, 300 }, { 101, 300 } }
 advance(30); sweep(40, 605); advance(3)
 check(searches() == 1 and S.verified[2319] and S.verified[2319].units == 5, "someone lists 5 at 40c: the next sweep spots it and ONE search confirms the deal")
 advance(30); sweep(40, 505); advance(30); sweep(40, 455)
-local rate = ns.Store:Rate(2319, 30)
-check(rate and rate > 1000, ("the same sweeps measure volume: 150 units left in a minute (about %d an hour)"):format(rate or 0))
+local churn = ns.Store:Churn(2319)
+check(churn and churn > 1000, ("the sweeps measure churn: 150 units left the listing in a minute (about %d an hour)"):format(churn or 0))
+check((ns.Store:Rate(2319, 0) or 0) < 1000, "but churn is not counted as sales: it includes cancelled auctions")
 check(searches() == 1, "no further searches while the deal is already confirmed")
 S.verified[2319] = nil
 
@@ -733,7 +738,7 @@ do
     UI.tab = "HISTORY"; UI:Render()
     sp.report._scripts.OnClick(sp.report)
     local text = AuctionMeshLogFrame.edit._text
-    check(AuctionMeshLogFrame:IsShown() and text:find("=== AUCTIONMESH DAILY REPORT v1 ===", 1, true) and text:find("=== END OF REPORT ===", 1, true), "Daily report opens one block of text to copy")
+    check(AuctionMeshLogFrame:IsShown() and text:find("=== AUCTIONMESH DAILY REPORT v2 ===", 1, true) and text:find("=== END OF REPORT ===", 1, true), "Daily report opens one block of text to copy")
     check(text:find("focus code: AMF1:2589", 1, true) and text:find("-- TRADES", 1, true) and text:find("Linen Cloth(2589)", 1, true) and text:find("-- ENGINE", 1, true),
         "it has the focus, the trades, the market table and the engine's figures")
     print(("     report: %d characters, %d lines"):format(#text, select(2, text:gsub("\n", "\n")) + 1))
@@ -743,6 +748,71 @@ do
     S:RebuildBackground()
     check(not S.background.focus and S.watchMin == 300, "focus off: the normal watch list is back")
     UI.tab = "BUY"; UI:Render()
+end
+
+print("fixes from the first real report")
+do
+    local SB = S.SoldBetween
+    local function rows(t) local r = {}; for i, x in ipairs(t) do r[i] = { price = x[1], qty = x[2] } end return r end
+    check(SB(rows({ { 10, 50 }, { 12, 200 } }), rows({ { 10, 20 }, { 12, 200 } })) == 30, "real sales: 30 units gone from the cheapest level = 30 sold")
+    check(SB(rows({ { 10, 50 }, { 12, 200 } }), rows({ { 12, 150 } })) == 100, "the cheapest level gone and 50 off the next = 100 sold")
+    check(SB(rows({ { 10, 50 }, { 12, 200 } }), rows({ { 10, 50 }, { 12, 20 } })) == 0, "180 gone from a higher level while cheaper stock is untouched = a cancelled auction, not a sale")
+    check(SB(rows({ { 10, 50 }, { 12, 200 } }), rows({ { 9, 50 }, { 12, 200 } })) == 0, "the cheapest level vanished and the same amount reappeared 1c lower = cancelled and relisted, not a sale")
+    check(SB(rows({ { 10, 50 }, { 12, 200 } }), rows({ { 9, 5 }, { 10, 30 }, { 12, 200 } })) == 20, "a small undercut appeared but the old cheapest level still lost 20: counted")
+    -- one request reads the whole class: the radar keeps its own clock
+    local Sw = ns.Swarm
+    Sw.unitReq = { [Sw.units[1]] = 1 }
+    check(Sw:Solo() == true, "a radar read that costs 1 request is not shared out")
+    Sw.claims[Sw.units[1]] = { by = "Friend-Realm", at = Sw.clock() }
+    Sw.doneAt[Sw.units[1]] = Sw.serverTime()
+    Sw.myDone = { [Sw.units[1]] = Sw.serverTime() - 10 }
+    check(Sw:PickUnit() == Sw.units[1], "a friend's claim and a friend's fresh read no longer hold our own radar back")
+    Sw.unitReq[Sw.units[1]] = 6
+    check(Sw:Solo() == false and Sw:PickUnit() == nil, "an expensive read (6 requests) is still shared out as before")
+    Sw.unitReq[Sw.units[1]] = 1; Sw.claims = {}
+    -- the under-market alert uses the same bar as the deal rule
+    check(math.abs(S.TriggerRatio() - 0.95 / 1.20 * 0.97) < 1e-9, ("alert when the cheapest listing is under %d%% of market (was a fixed 80%%)"):format(S.TriggerRatio() * 100))
+    -- small guaranteed vendor profits count while the purse is small
+    local vrows = { { price = 20, qty = 2 } }
+    local d1 = ns.Deals.evaluate(rows({ { 20, 2 } }), { budget = 54, gold = 54, commodity = true, vendor = 30 })
+    local d2, _, why2 = ns.Deals.evaluate(rows({ { 20, 2 } }), { budget = 5000, gold = 5000, commodity = true, vendor = 30 })
+    check(d1 and d1.kind == "VENDOR" and d1.profit == 20, "with 54c: a guaranteed +20c vendor deal is shown (minimum is 20c in settings)")
+    ns.Deals.cfg.minProfit = 50
+    d1 = ns.Deals.evaluate(rows({ { 20, 2 } }), { budget = 54, gold = 54, commodity = true, vendor = 30 })
+    d2, _, why2 = ns.Deals.evaluate(rows({ { 20, 2 } }), { budget = 5000, gold = 5000, commodity = true, vendor = 30 })
+    check(d1 and d1.profit == 20 and d2 == nil, "minimum 50c: still shown while you hold under 5 silver, hidden once you hold more")
+    ns.Deals.cfg.minProfit = 20
+    -- a vendor sale made by hand is recorded
+    local realized = AuctionMeshDB.realized or 0
+    AuctionMeshDB.flips[1210] = { kind = "VENDOR", sell = 250, units = 1, cost = 164, at = GetServerTime() }
+    ITEMS[1210] = { "Shadowgem", 250 }
+    ns.Journal:Bought(1210, "Shadowgem", "VENDOR", 1, 164, 250)
+    MerchantFrame:Show()
+    Se:CheckSoldByHand({ [1210] = 1 })
+    MerchantFrame:Hide()
+    local tr = ns.Journal:Trades(1210)[1]
+    check(AuctionMeshDB.flips[1210] == nil and AuctionMeshDB.realized == realized + 86 and tr.vend == 1 and ns.Journal.left(tr) == 0,
+        "selling a tracked item to a vendor yourself banks the profit (+86c) and closes the trade")
+    -- repost advice checks that the posting fee can be paid
+    AuctionMeshDB.listed = { [2838] = { qty = 1, price = 318, cost = 105, at = GetServerTime(), plan = 319 } }
+    ITEMS[2838] = { "Heavy Stone", 60 }
+    ns.Store.p[2838], ns.Store.t[2838] = 300, GetServerTime()
+    S.own, S.ownRead = { [2838] = { 1 } }, true
+    local le
+    for _, e in ipairs(Se:Entries()) do if e.key == 2838 and e.action == "LISTED" then le = e end end
+    gold = 54
+    local dep0 = C_AuctionHouse.CalculateCommodityDeposit
+    C_AuctionHouse.CalculateCommodityDeposit = function(id, d, q) return math.max(100, q) end -- this realm: 1s minimum fee
+    ns.Sniper.ClearFees()
+    local adv, tone = Se:Advice(le)
+    print("     " .. strip(adv))
+    check(tone == "wait" and strip(adv):find("Posting again costs a fee of", 1, true) and strip(adv):find("you have 54c", 1, true), "undercut but the posting fee is more than your gold: the advice is to wait, and says why")
+    gold = 900
+    adv, tone = Se:Advice(le)
+    check(tone == "do" and strip(adv):find("post again at 2s99c", 1, true), "with enough gold for the fee the advice is to repost")
+    C_AuctionHouse.CalculateCommodityDeposit = dep0
+    ns.Sniper.ClearFees()
+    AuctionMeshDB.listed = {}
 end
 
 print(("\n%d passed, %d failed"):format(pass, fail))

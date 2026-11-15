@@ -153,7 +153,7 @@ To track an item you bought some other way, drag it from your bags onto the pane
 
 ### Laser focus: only where money moves fast
 
-The addon counts what it sees, per item, and keeps the counts between sessions: how many units sell an hour (from quantity leaving the listing between radar reads), how much gold that is, how often the cheapest listing is 20% or more under the market, how many deals were confirmed, and how long deals lasted before someone else took them.
+The addon counts what it sees, per item, and keeps the counts between sessions: how many units really sell an hour (see below), how much gold that is, how often the cheapest listing is 20% or more under the market, how many deals were confirmed, and how long deals lasted before someone else took them.
 
 An item is **prime** when all of these hold:
 
@@ -174,7 +174,9 @@ The **Laser focus** button on the Setup tab has three positions:
 
 Vendor-price deals are shown whatever the focus, because they are guaranteed. Everything the radar reads is still counted, so the prime list keeps improving while you are focused.
 
-One limit of the measurement: units leaving a listing are counted as sold. A seller cancelling an auction looks the same, so "sells an hour" can be somewhat high.
+**How "sold an hour" is measured.** Commodities are always bought cheapest first, so a sale eats a listing from the bottom. Between two full readings of an item, units missing from the cheapest price levels count as sold; counting stops at the first level that is intact. Units that vanish higher up while cheaper stock remains are cancelled auctions and are not counted, and a cheapest level that vanishes while the same amount reappears lower is treated as cancelled-and-relisted. This under-counts rather than over-counts.
+
+The radar's quantity drops (units leaving the whole listing) are kept separately as **churn** and shown in the report only. The first real report showed why: churn said 15,000 Heavy Leather "sold" an hour, because it includes every cancelled and re-posted auction.
 
 ### The daily report, and focus codes
 
@@ -192,6 +194,22 @@ One limit of the measurement: units leaving a listing are counted as sold. A sel
 It holds no character name. All money in it is in copper.
 
 From that, Claude can send back a **focus code**, for example `AMF1:2589,2592,c7.5,m25,p150`. Paste it into the Focus code box and press **Apply**. A number is an item to focus on, `c7.5` is a category (its prime items are included), `m25` sets the flip profit to 25% and `p150` sets the smallest deal to 1s 50c. Applying a code switches laser focus to that list.
+
+### What the first real report changed (version 3.13)
+
+| The report showed | What was changed |
+|---|---|
+| One request returns the whole materials class (395 items) | Recorded as fact; the radar is nearly free |
+| With a friend online the radar came round every 8s and under half the request budget was used, while deals lasted 7 to 36 seconds | A radar read that costs 1 or 2 requests is no longer shared out: each player reads on their own clock, every 3s. Work is only split when a read is expensive |
+| "Sells an hour" was wildly inflated (cancelled auctions counted as sales) | Sales are measured from the cheap end of full listings only; the old figures were discarded |
+| 66 under-market alerts gave 3 deals | The alert bar is now the deal rule's own bar (77% of market at a 20% margin, was a fixed 80%) |
+| 404 routine checks gave 1 deal | Items actually seen under market are checked first |
+| A 1c gap on a 4c item counted as a dip | A dip must also be at least 3c |
+| 12 guaranteed vendor deals hidden by the 50c minimum | While you hold under 5 silver, vendor profits from a tenth of your gold (at least 10c) are shown |
+| "Cancel and repost" was advised with 54c against a 1s fee | The advice checks the fee against your gold |
+| A vendor sale made by hand was reported as "not found" | Selling a tracked item to a vendor yourself is recorded and banked |
+
+The report itself (now v2) adds: your auctions with the cheapest listing now, requests used and radar interval, churn next to real sales, gold at the day's start, and how close failed checks were to being deals.
 
 ### The columns
 
@@ -249,7 +267,7 @@ What the addon does with that:
 |---|---|
 | The next request is sent from the game's "ready" event, in the same frame | A polling timer left about 18% of the budget idle |
 | No extra spacing of its own unless the server refuses requests | The client's lock is the limit; more spacing only wastes budget. A pause is added only when learned to be needed (see below) |
-| The sweep asks for the whole materials class in one request | Asking per sub-category returns the same items for about 12 requests |
+| The sweep asks for the whole materials class in one request | Measured in the game: 395 items came back in one request |
 | The sweep interval is computed from the sweep's measured cost and the learned split (30% of the budget to start with) | 6 requests per sweep at 30% gives a radar every 13s; never more often than every 3s |
 | The rest goes to confirmations, best first: vendor-price hits, then the biggest price gap weighted by how often that kind of alert was real | Each confirmation costs one request, so the most valuable one goes first |
 | Items whose details aren't loaded are skipped at no cost and retried in a few seconds | Avoids the dead wait described above |

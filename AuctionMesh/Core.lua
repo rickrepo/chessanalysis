@@ -159,7 +159,12 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         if (db.cfg.v or 0) < 6 then db.cfg.margin = 20 end -- tuned from a real market log
         if (db.cfg.v or 0) < 7 then db.deposits = nil end -- old per-unit fee guesses were wrong
         if (db.cfg.v or 0) < 5 then if db.cfg.minProfit < 50 then db.cfg.minProfit = 50 end end
-        db.cfg.v = 7
+        if (db.cfg.v or 0) < 8 then
+            -- Sales per hour used to include cancelled auctions (radar churn). Start the measurement again.
+            for k in pairs(Store.vu) do Store.vu[k] = nil end
+            for k in pairs(Store.vs) do Store.vs[k] = nil end
+        end
+        db.cfg.v = 8
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)

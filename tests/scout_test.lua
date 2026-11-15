@@ -44,12 +44,17 @@ local function classOf(key) return 7, (key == 3) and 6 or 5 end
 print("counting what the radar sees")
 for _ = 1, 90 do Scout:Read(1, 78, 80) end
 for _ = 1, 10 do Scout:Read(1, 60, 80) end -- 25% under market: a dip
+Scout:Read(9, 3, 4); Scout:Read(9, 3, 4)   -- 3c against 4c is rounding, not a dip
 Scout:Read(1, 60, nil)
 check(d.items[1].r == 100 and d.items[1].d == 10, "100 reads with a known market, 10 of them dips (a read with no market price is not counted)")
-check(d.hours[20].r == 100 and d.hours[20].d == 10, "and by hour of the day")
+check(d.items[9].r == 2 and d.items[9].d == 0, "a 1c gap on a 4c item is not counted as a dip")
+d.items[9] = nil
+check(d.hours[20].r == 102 and d.hours[20].d == 10, "and by hour of the day")
 Scout:Deal(1, { kind = "FLIP", units = 6, cost = 360, sell = 79, profit = 90, rate = 400 })
 Scout:NoDeal(2, "cheapest is $9, market $10: needs $8 or less")
 Scout:NoDeal(3, "cheapest is $28, market $30: needs $24 or less")
+Scout:Sweep(); Scout:Sweep()
+for _ = 1, 7 do Scout:Request() end
 check(d.items[1].n == 1 and d.items[1].p == 90 and #d.deals == 1 and d.deals[1].o == "seen", "a confirmed deal is logged with its profit")
 check(d.reasons["cheapest is #, market #: needs # or less"] == 2, "the same reason with different numbers counts as one reason")
 Scout:Gone(1, 42)
@@ -63,7 +68,7 @@ check(d.deals[3].o == "failed" and d.deals[3].why == "price changed", "a purchas
 Scout:Online(0.25); Scout:Online(0.25); Scout:Online(900)
 local day = Scout:Day()
 check(day.secs == 0.5, "working time adds up (a gap of 15 minutes is not working time)")
-check(day.reads == 100 and day.checks == 5 and day.deals == 3 and day.bought == 1 and day.gone == 1 and day.fails == 1, "the day's totals")
+check(day.reads == 102 and day.checks == 5 and day.deals == 3 and day.bought == 1 and day.gone == 1 and day.fails == 1, "the day's totals")
 
 print("prime items")
 local prime = Scout:Prime(1000, vendorSold)
@@ -112,18 +117,22 @@ check(not ok and msg:find("not a focus code"), "anything else is refused with a 
 print("the daily report")
 local a = ns.Journal:Bought(1, "Linen Cloth", "FLIP", 6, 60, 79)
 ns.Journal:Posted(1, 6, 79); T = T + 1800; ns.Journal:Sold(1, 6, 79, 450); T = T + 60
+AuctionMeshDB.listed = { [4] = { qty = 2, price = 650, cost = 500, at = T - 3600 } }
+ns.Store.t[4] = T -- the radar has just read it
 local rep = Scout:Report({ version = "9.9.9", realm = "Test Realm", gold = 1000, vendorOf = function(k) return k == 2 and 5 or nil end,
     vendorSold = vendorSold, classOf = classOf, sharing = "nobody", errors = 2 })
 print(rep)
 local function has(s) return rep:find(s, 1, true) ~= nil end
-check(has("=== AUCTIONMESH DAILY REPORT v1 ===") and has("=== END OF REPORT ==="), "one block with a clear start and end")
+check(has("=== AUCTIONMESH DAILY REPORT v2 ===") and has("=== END OF REPORT ==="), "one block with a clear start and end")
 check(has("addon 9.9.9 | realm Test Realm") and has("gold 1000c") and has("focus code: AMF1:1,3,c7.5"), "header: version, realm, gold, settings and the focus code")
-check(has("today | 0 | 100 | 5 | 3 | 195 | 1 | 360 | 1 | 1"), "the day's line")
+check(has("today | 0 | 2 | 7 | 102 | 5 | 3 | 195 | 1 | 360 | 1 | 1 | -"), "the day's line")
+check(has("how far the cheapest listing was from a deal: within 5%: 0, 5-15% over: 1, 15-30% over: 1, more than 30% over: 0"), "how close the failed checks were")
+check(has("-- MY AUCTIONS NOW") and has("Slow Gem(4) | 2 | 650 | 500 | 500 | UNDERCUT | 1.0"), "your auctions with the cheapest listing now")
 check(has("Linen Cloth(1) | 6 | 60 | 79 | 0@79 | 6@79 | 0 | 450 | 90 | 0 | 0.5 |"), "a trade: cost, plan, sold price, what came back, profit, hours to sell")
 check(has("Linen Cloth(1) | FLIP | 6 | 360 | 79 | 90 | 400 | bought") and has("| gone after 42s") and has("| failed (price changed)"), "deals seen with what became of each")
 check(has("2 x cheapest is #, market #: needs # or less"), "why checks were not deals")
-check(has("20: 100/10/3"), "reads, dips and deals by hour")
-check(has("Copper Ore(2) | 9 | 10 | 5 | 2000 | 30 | 20000 |") and has("| PRIME"), "market table: prices, vendor price, sells per hour, copper traded per hour, prime or not")
+check(has("20: 102/10/3"), "reads, dips and deals by hour")
+check(has("Copper Ore(2) | 9 | 10 | 5 | 2000 | 30 | 20000 | - |") and has("| PRIME"), "market table: prices, vendor price, sells per hour, copper traded per hour, prime or not")
 check(has("no: sells only 4 an hour") and has("no: costs more than you have"), "and for the others, the reason they are not prime")
 check(#rep < 12000, ("small enough to paste: %d characters"):format(#rep))
 

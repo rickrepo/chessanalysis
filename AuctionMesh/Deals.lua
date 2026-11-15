@@ -121,8 +121,14 @@ local function vendorDeal(rows, o, cfg)
         end
     end
     if units == 0 then return nil end
-    if profit < cfg.minProfit then
-        return nil, ("vendor profit $%d is under your $%d minimum"):format(profit, cfg.minProfit)
+    -- Guaranteed, instant and with no posting fee: while you hold under 5
+    -- silver, a vendor profit of a tenth of your gold (at least 10c) is worth
+    -- showing even if it is under your minimum. (12 guaranteed deals were
+    -- hidden by the 50c minimum in the first real report.)
+    local need = cfg.minProfit
+    if o.gold and o.gold < 500 then need = min(need, math.max(10, floor(o.gold * 0.10))) end
+    if profit < need then
+        return nil, ("vendor profit $%d is under your $%d minimum"):format(profit, need)
     end
     return { kind = "VENDOR", units = units, cost = cost, deposit = 0, profit = profit, sell = sell,
              buys = buys, counts = counts }

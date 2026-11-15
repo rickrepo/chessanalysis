@@ -244,7 +244,7 @@ function Sync:OnDelta(msg, sender)
             -- SHARED RADAR: a friend's sweep just showed a new lowest price. Treat it
             -- exactly like our own sweep, so a deal a friend's scan uncovers is
             -- checked here within a second, without us spending a sweep on it.
-            if ns.Sniper and ns.Sniper.OnSweep and now - t < 120 then ns.Sniper:OnSweep(key, p, q) end
+            if ns.Sniper and ns.Sniper.OnSweep and now - t < 120 then ns.Sniper:OnSweep(key, p, q, true) end
         else
             stats.ignored = stats.ignored + 1
         end
