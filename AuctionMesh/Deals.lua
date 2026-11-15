@@ -169,10 +169,18 @@ local function flipDeal(rows, o, cfg)
         return nil, wall, ("did not sell last time (yours or a friend's): skipped for %d more hour(s)"):format(math.ceil(o.blockedHours))
     end
     if o.learn and o.learn < 1 then ref = floor(ref * o.learn) end
-    if o.trend and o.trend <= -cfg.trendSkip then
-        return nil, wall, ("price is falling fast (%d%% in 6h): not buying into a drop"):format(floor(o.trend * 100 + 0.5))
+    -- A FALLING PRICE IS PRICED IN, NOT REFUSED. The resale is planned at the
+    -- price the market is heading for (today's price less the same fall
+    -- again, at most half off), and the usual margin decides. A flip that is
+    -- 75% under the market is still a flip when the market is falling 20%; one
+    -- that is 25% under is not. (A fast fall used to refuse every flip on the
+    -- item: 140 refusals in one real day, on a realm where prices drift down
+    -- most evenings.)
+    local falling
+    if o.trend and o.trend < 0 then
+        falling = o.trend <= -cfg.trendSkip and o.trend or nil
+        ref = floor(ref * (1 + max(o.trend, -0.5)))
     end
-    if o.trend and o.trend < 0 then ref = floor(ref * (1 + o.trend)) end
     -- Rule 3: the resale price is set by the first row we do NOT buy.
     local k, sell, gross, maxBuy
     for _ = 1, wi do
@@ -188,6 +196,10 @@ local function flipDeal(rows, o, cfg)
         end
     end
     if not k or k == 0 or sell <= 0 then
+        if falling then
+            return nil, wall, ("price is falling fast (%d%% in 6h): at the price it is heading for this needs $%d or less, cheapest is $%d"):format(
+                floor(falling * 100 + 0.5), math.max(maxBuy or 0, 0), rows[1].price)
+        end
         return nil, wall, ("cheapest is $%d, market $%d: needs $%d or less"):format(rows[1].price, wall, math.max(maxBuy or 0, 0))
     end
     local units, cost = 0, 0

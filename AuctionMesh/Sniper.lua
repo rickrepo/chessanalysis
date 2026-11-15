@@ -365,11 +365,18 @@ end
 function Sniper:InstantVendor(key, price, qty, v, prev)
     if self.verified[key] or self.buying or not prev then return false end
     local now = GetTime()
-    if now - prev.at > 2.5 or not prev.p or prev.p <= price then return false end
+    if now - prev.at > 5 or not prev.p or prev.p <= price then return false end
     local cl = self.cool and self.cool[key]
     if cl and now < cl.till and price <= cl.price then return false end
+    -- The cheapest price fell under vendor price, so at least one new unit is
+    -- there. How many is the rise in the item's total quantity; on a busy item
+    -- that total moves for other reasons too (a real log: 16 Silk Cloth
+    -- appeared at 99c while the total went down, so the deal waited for an
+    -- item check and 1.1 seconds). When the count is not clear, ask for four:
+    -- the server's price for them decides, and what is left is found after.
     local n = qty - prev.q
-    if n <= 0 then return false end
+    local unsure = n <= 0
+    if unsure then n = 4 end
     n = min(n, floor(self:Budget() / price))
     if n <= 0 then return false end
     local profit = n * (v - price)
@@ -378,7 +385,7 @@ function Sniper:InstantVendor(key, price, qty, v, prev)
     if gold < 500 then need = min(need, max(10, floor(gold * 0.10))) end
     if profit < need then return false end
     local deal = { kind = "VENDOR", units = n, cost = n * price, deposit = 0, profit = profit, sell = v, buys = {}, counts = {},
-                   commodity = true, key = key, instant = true, from = "me", next = prev.p, rowsText = ("radar: %d new at %d"):format(n, price),
+                   commodity = true, key = key, instant = true, from = "me", next = prev.p, rowsText = unsure and ("radar: price fell to %d, count not known, asking for %d"):format(price, n) or ("radar: %d new at %d"):format(n, price),
                    -- trusted for 8 seconds only; then the item gets its full look like any other
                    at = now - VERIFIED_TTL + 8 }
     self.verified[key] = deal
@@ -407,7 +414,7 @@ end
 function Sniper:InstantFlip(key, price, qty, prev)
     if self.verified[key] or self.buying or not prev then return false end
     local now = GetTime()
-    if now - prev.at > 2.5 or not prev.p or prev.p <= price then return false end
+    if now - prev.at > 5 or not prev.p or prev.p <= price then return false end
     local n = qty - prev.q
     if n <= 0 then return false end
     local last = self.lastRows and self.lastRows[key]
@@ -512,11 +519,19 @@ function Sniper:StakeTerms()
         why = w or why
         return nil
     end
-    local lo, hi, best, bestDeal = 1, last.rows[#last.rows].price, nil, nil
-    while lo <= hi do
-        local mid = floor((lo + hi) / 2)
-        local d = dealAt(mid, 1)
-        if d then best, bestDeal, lo = mid, d, mid + 1 else hi = mid - 1 end
+    -- The smallest-profit setting is judged on a lot of up to eight units, not
+    -- on one: you chose this item, and a single unit of a cheap material never
+    -- clears it (with a 1s20c minimum, Silk Cloth at 99c against a 1s50c vendor
+    -- price would never have been bought one at a time).
+    local best, bestDeal, lot
+    for _, n in ipairs({ STAKE_CAP, 4, 2, 1 }) do
+        local lo, hi = 1, last.rows[#last.rows].price
+        while lo <= hi do
+            local mid = floor((lo + hi) / 2)
+            local d = dealAt(mid, n)
+            if d then best, bestDeal, lo = mid, d, mid + 1 else hi = mid - 1 end
+        end
+        if best then lot = n; break end
     end
     if not best then
         st.max = nil
@@ -525,10 +540,7 @@ function Sniper:StakeTerms()
     end
     st.max, st.kind, st.sell, st.why = best, bestDeal.kind, bestDeal.sell, nil
     st.each = bestDeal.kind == "VENDOR" and (bestDeal.sell - best) or (floor(bestDeal.sell * (1 - Deals.cfg.cut)) - best)
-    st.cap = 1
-    for _, n in ipairs({ STAKE_CAP, 4, 2 }) do
-        if dealAt(best, n) then st.cap = n; break end
-    end
+    st.cap = lot
     ns.Log("STAKE-OUT terms for %s: buys at %d or less (%s, sells at %d), up to %d at a time; listing read %.0fs ago",
         tostring(key), best, tostring(st.kind), st.sell, st.cap, GetTime() - last.at)
     return best

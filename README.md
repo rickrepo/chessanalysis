@@ -303,7 +303,7 @@ The mouse resting in the box pauses nothing. It used to: the radar stood still w
 
 | | |
 |---|---|
-| The buying price | Not typed in and not a guess: the dearest price at which one unit is still a deal by your normal rules (flip margin, smallest profit, capital limits), worked out from the item's full listing. The listing is re-read once a minute while the stake-out runs |
+| The buying price | Not typed in and not a guess: the dearest price that is still a deal by your normal rules (flip margin, capital limits, and the smallest profit judged on a lot of up to eight units), worked out from the item's full listing. The listing is re-read once a minute while the stake-out runs |
 | More than one unit | After a purchase the next request asks for two, then four, up to eight, and buys them only if every one is at the price just paid. Any other answer puts it back to one, so a dear unit is never bought along with cheap ones |
 | What it costs | The radar is off while you roll: every request is a price request for that one item. Stop rolling and the radar is back within 3 seconds |
 | Ending it | **Stop the stake-out** in the same place, or `stake=0` in a settings code. `stake=2838` in a code sets it |
@@ -314,6 +314,15 @@ This has not run in the real game yet. What it saves is the radar read and the i
 **No key binding is needed** for the wheel; the addon handles it. If you would rather use a key, the game's own Key Bindings screen (Options, Keybindings, AddOns) lists **AuctionMesh: Buy the best deal**; any key bound there presses the box.
 
 **Buy with the mouse wheel.** While a deal is on the button, rolling the mouse wheel anywhere on the panel presses Buy; one flick of the wheel is several presses, which covers both steps. With **Mouse wheel buys: on** (Setup tab, the default) the wheel does this anywhere on screen while a deal is up, and goes back to normal the moment there is none. If the game does not accept the wheel as an input, that switches itself off too.
+
+What the seventh real log showed (version 3.28):
+
+| The log showed | Change |
+|---|---|
+| 16 Silk Cloth appeared at 99c, under vendor price. The item's total quantity went down in the same second (other units were bought), so the addon could not count the new ones and fell back to an item check: 1.1 seconds before the price request went out | When the price falls under vendor price and the count is not clear, the deal is shown at once for four units; the server's price for them decides, and what is left is found straight after |
+| "Price is falling fast: not buying into a drop" refused 140 checks in one day, whatever the discount | A falling price is priced in instead: the resale is planned at the price the market is heading for, and the usual margin decides. 7 Wool Cloth at 34c under a 1s 34c market is still a flip in a market falling 20%; a listing 25% under is not |
+| With the wider radar setting, three of the four extra categories held nothing, and each was read every 30 seconds | A category with nothing in it is looked at every 10 minutes |
+| A stake-out would have judged the smallest profit on one unit, which a cheap material never clears | It is judged on a lot of up to eight |
 
 What the sixth real log showed (version 3.26), with the wheel in use (reaction time 0.0 seconds, 11 got and 12 missed):
 

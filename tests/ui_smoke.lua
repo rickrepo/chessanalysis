@@ -151,6 +151,7 @@ AuctionMeshDB.cfg.minProfit, ns.Deals.cfg.minProfit = 20, 20 -- the walkthrough 
 -- which is what happens when the game does not allow a price request without a click.
 -- One-click buying and holding fire have their own section at the end.
 S.hold = 0
+ns.Auto.cfg.tooMany = 1e9 -- the walkthrough shows far more deals than a real session: auto-adjust must not raise the smallest profit under it (it has its own section)
 ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1 -- the capital limits have their own section at the end
 AuctionMeshDB.cfg.autoConfirm = false -- the walkthrough drives the two-input path; one-input buying has its own section
 ns.Deals.cfg.requireTurnover = false -- the fake auction house has no other buyers until the "volume" section
@@ -844,7 +845,9 @@ do
     S:OnSweep(2589, 40, 50)
     check(S.triggers[2589] ~= nil, "the focus item: the same kind of listing is checked at once")
     S:OnSweep(4306, 100, 50)
-    check(S.triggers[4306] ~= nil, "outside the focus but under vendor price: still checked (guaranteed profit is never filtered)")
+    check(S.triggers[4306] ~= nil or (S.verified[4306] and S.verified[4306].kind == "VENDOR"),
+        "outside the focus but under vendor price: still acted on (guaranteed profit is never filtered)")
+    S.verified[4306] = nil
     check(Sc.d.items[4306].r == 2 and Sc.d.items[4306].d == 2, "everything the radar reads is still counted, focus or not")
     S.triggers = {}
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
@@ -1386,11 +1389,12 @@ do
     LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
     S.priority = 2770
     local t0, got = GetTime(), nil
-    for _ = 1, 30 do -- still rolling: a notch every 0.1s
+    for _ = 1, 60 do -- still rolling: a notch every 0.1s
         wheel(btn, 1); advance(0.1)
-        if S.result and S.result.kind == "won" then got = GetTime() - t0; break end
+        if not got and gold < 900 then got = GetTime() - t0 end
+        if gold == 900 - 36 then break end
     end
-    print(("     deal put up while rolling: bought %.1fs later, no click"):format(got or -1))
+    print(("     deal put up while rolling: first purchase %.1fs later, no click; all 12 bought for %d"):format(got or -1, 900 - gold))
     check(got and gold == 900 - 36, "a deal appears while you roll: it is bought by the wheel alone, without a click")
     AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test")
     advance(2); UI:Render()
@@ -1644,6 +1648,7 @@ do
         local A, D = ns.Auto, ns.Deals.cfg
         local keepMin, keepTune = cfg.minProfit, cfg.tune
         local function review(shown) A.win = { at = GetTime(), shown = shown, worked = 0 }; A:Worked(601) end
+        A.cfg.tooMany = 15
         cfg.tune = true; A.d.log, A.d.manual = {}, {}
         -- nothing shown, deals hidden by the minimum: it comes down, in steps, never under 20c
         UI:SetMinProfit(200); A.d.manual = {}
@@ -1685,6 +1690,7 @@ do
         A.d.log, A.d.manual = {}, {}
         AuctionMeshDB.outcomes = {}
         UI:SetMinProfit(keepMin); A.d.manual = {}; cfg.tune = keepTune
+        A.cfg.tooMany = 1e9
         UI.tab = "BUY"; UI.notice = nil; UI:Render()
     end
 
@@ -1787,6 +1793,62 @@ do
         AuctionMeshDB.flips[2838] = nil; ns.Journal:Dropped(2838, nil, "test"); LIST[2838] = nil; LIST[2319] = leather
         UI.wheelSeen = nil; cfg.autoConfirm = false
         UI:Render()
+    end
+
+    -- a price that falls under vendor price while the item's total goes down: acted on at once, asking for four
+    do
+        reset(); gold = 1100
+        ITEMS[4306] = { "Silk Cloth", 150 }
+        S.ownSweep[4306] = { q = 11556, p = 190, at = GetTime() - 1.1 }
+        S:OnSweep(4306, 99, 11540) -- 16 appeared at 99c, but 32 others were bought or cancelled meanwhile
+        local d = S.verified[4306]
+        print("     " .. tostring(d and d.rowsText))
+        check(d and d.instant and d.kind == "VENDOR" and d.units == 4 and d.cost == 396 and #S.triggers == 0,
+            "Silk Cloth falls to 99c while its total drops: shown at once for 4 units, with no item check first (it used to wait for one)")
+        S.verified[4306] = nil
+        -- too small to be worth it on a guess: the normal check finds the exact count instead
+        ITEMS[6661] = { "Flax Thread", 13 }
+        local wasMin = ns.Deals.cfg.minProfit
+        ns.Deals.cfg.minProfit = 120
+        S.ownSweep[6661] = { q = 9000, p = 20, at = GetTime() - 1.1 }
+        S:OnSweep(6661, 2, 8990)
+        check(S.verified[6661] == nil and S.triggers[6661] ~= nil, "4 units at 2c against a 13c vendor price would not clear the smallest profit: that one gets the normal check, which counts the units")
+        ns.Deals.cfg.minProfit = wasMin
+        S.triggers = {}
+    end
+
+    -- a stake-out judges the smallest profit on a lot, not on a single unit
+    do
+        reset(); gold = 5000
+        local wasMin = ns.Deals.cfg.minProfit
+        ns.Deals.cfg.minProfit = 120
+        ITEMS[4306] = { "Silk Cloth", 150 }
+        S.lastRows[4306] = { rows = rows({ { 190, 56 }, { 198, 1181 }, { 199, 2166 }, { 200, 7139 }, { 201, 812 } }), at = GetTime() }
+        S:SetStake(4306); S.priority = nil
+        local max = S:StakeTerms()
+        print(("     Silk Cloth (vendor pays 1s50c, smallest profit 1s20c): the stake-out buys at %s or less, %s at a time"):format(tostring(max), tostring(S.stake and S.stake.cap)))
+        check(max and max >= 99 and max < 150, "with a 1s20c smallest profit, a Silk Cloth stake-out still buys at 99c: the profit is judged on eight units, not one")
+        S:SetStake(nil)
+        ns.Deals.cfg.minProfit = wasMin
+    end
+
+    -- side categories with nothing in them are read rarely
+    do
+        local Sw = ns.Swarm
+        local keep = { Sw.scope, Sw.units, Sw.side, Sw.sideSet, Sw.sideOwn, Sw.doneAt, Sw.sideItems, ns.peerAt }
+        Sw.scope = "money"; Sw:BuildUnits(); ns.peerAt = nil
+        local now = GetServerTime()
+        local gems, food = Sw.unitId(3, nil), Sw.unitId(0, nil)
+        Sw.doneAt = {}
+        for _, s in ipairs(Sw.side) do Sw.doneAt[s] = now - 45 end -- all read 45 seconds ago
+        Sw.sideItems = { [gems] = 0, [Sw.unitId(5, nil)] = 1, [Sw.unitId(8, nil)] = 0, [food] = 727 }
+        check(Sw:PickUnit() == food, "45 seconds on: the category with 727 items is due; the three empty ones are not")
+        Sw.doneAt[food] = now
+        Sw.myDoneClock = {}
+        check(Sw:PickUnit() == Sw.unitId(7, nil), "the empty ones do not take a request every 30 seconds any more")
+        Sw.doneAt[gems] = now - 601
+        check(Sw:PickUnit() == gems, "they are looked at again after 10 minutes, in case something was listed")
+        Sw.scope, Sw.units, Sw.side, Sw.sideSet, Sw.sideOwn, Sw.doneAt, Sw.sideItems, ns.peerAt = keep[1], keep[2], keep[3], keep[4], keep[5], keep[6], keep[7], keep[8]
     end
 
     -- five misses in a row: the item is left alone for 3 minutes

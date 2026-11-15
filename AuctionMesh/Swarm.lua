@@ -187,7 +187,9 @@ function Swarm:PickUnit()
             local c = self.claims[u]
             local claimed = c and (clock - c.at) < self.cfg.claimTTL and c.by ~= Comm.me
             local mine = self.sideOwn[u] or team
-            if mine and not claimed and now - (self.doneAt[u] or 0) >= gap + (team and self:SideOffset(u) or 0) then
+            -- a class with nothing (or one item) in it is looked at every 10 minutes, not every 30 seconds
+            local g = (self.sideItems and self.sideItems[u] and self.sideItems[u] <= 1) and max(gap, 600) or gap
+            if mine and not claimed and now - (self.doneAt[u] or 0) >= g + (team and self:SideOffset(u) or 0) then
                 local score = now - (self.doneAt[u] or 0) + random()
                 if not bestScore or score > bestScore then best, bestScore = u, score end
             end
@@ -290,6 +292,7 @@ function Swarm:Step()
         if clock - cur.at < wait or not ex.ready() then return end
         if ns.Sniper and not ns.Sniper:YieldTo("swarm") then return end
         self.resultsSeen = false
+        self.sideMark = ns.measure and ns.measure.items or 0 -- items counted so far, to tell how many this read adds
         ex.start(cur.unit)
         cur.requests = 1
         ns.lastQuery = "swarm"
@@ -315,6 +318,13 @@ function Swarm:Step()
                 -- a side class: counted and shared, but it does not set the radar's pace
                 self.sideReq = self.sideReq or {}
                 self.sideReq[cur.unit] = cur.requests or 1
+                do  -- how many items this class holds (three of four were empty in a real log, and were read every 30s all the same)
+                    local M = ns.measure
+                    local seen = M and M.items or nil
+                    if M and self.sideMark then seen = (M.items or 0) - self.sideMark end
+                    self.sideItems = self.sideItems or {}
+                    if seen then self.sideItems[cur.unit] = seen end
+                end
                 if ns.Log then ns.Log("SIDE read of class %d: %d request(s); each side class is read every %ds", floor(cur.unit / 256), cur.requests or 1, self:SideGap()) end
                 self.stats.units = self.stats.units + 1
                 self.current = nil
