@@ -494,7 +494,7 @@ function UI:RenderSnipe(short)
         text = TEAL .. "NEXT|r  " .. nextStep(self.lastDeals or {}, self.lastEntries or {}, short)
     end
     if d and AuctionMeshDB.cfg.wheel ~= false then text = text .. GREY .. "    click, or flick the mouse wheel|r" end
-    self:WheelBind(d ~= nil)
+    self:WheelBind(d ~= nil or b ~= nil) -- also for the whole of a purchase in progress
     sn.label:SetText(text)
     sn.fill:SetColorTexture(fill[1], fill[2], fill[3], 1)
     UI.outline(sn, colour)
