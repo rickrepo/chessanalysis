@@ -83,7 +83,7 @@ local Gate = { interval = 0.05, nextAt = 0, outstanding = 0, changedAt = 0, last
 ns.Gate = Gate
 
 -- True when background work must stay silent: the AuctionMesh panel is not
--- open, the mouse is on one of its Buy/Post buttons, or the game's own UI sent
+-- open, the mouse has just moved onto a row's Buy/Post button, or the game's own UI sent
 -- an auction request in the last 8s. Moving the mouse over the auction house
 -- window does NOT pause anything.
 local BLIZZ = { "ItemSellFrame", "CommoditiesSellFrame", "ItemBuyFrame", "CommoditiesBuyFrame", "WoWTokenSellFrame" }
@@ -92,8 +92,10 @@ function Gate:UserBusy()
     -- A deal has just appeared: nothing else is sent, so the auction house is
     -- free the instant you click Buy.
     if GetTime() < (self.holdUntil or 0) then return true end
+    -- The mouse on a row's Buy/Post button: quiet for the first 3 seconds only,
+    -- so a mouse left lying on a button cannot stop the radar.
     local hb = ns.UI and ns.UI.hoverBtn
-    if hb and hb.IsShown and hb:IsShown() and hb:IsMouseOver() then return true end
+    if hb and hb.IsShown and hb:IsShown() and hb:IsMouseOver() and GetTime() - (ns.UI.hoverAt or 0) < 3 then return true end
     local ah = AuctionHouseFrame
     if type(ah) ~= "table" or not (ah.IsShown and ah:IsShown()) then return false end
     -- AuctionMesh only works while its own panel is open. On the game's own

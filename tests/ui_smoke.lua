@@ -1291,10 +1291,41 @@ do
     reset(); gold = 900
     LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
     S.priority = 2770; advance(1); UI:Render()
-    check(label():find("flick the mouse wheel", 1, true), "the button says the wheel can be used")
+    check(strip(btn.hint._text):find("Roll the mouse wheel here (or anywhere), or click: it buys.", 1, true), "the box says the wheel can be used")
     UI.WheelPress(); UI.WheelPress(); advance(0.3); UI.WheelPress(); UI.WheelPress(); advance(0.5)
     check(gold == 900 - 36 and S.result.kind == "won", "a flick of the wheel alone: first notch asks the price, a later notch buys, the rest do nothing")
     AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test")
+    -- THE SNIPE BOX: keep rolling the wheel in it; the first deal that appears is bought
+    reset(); gold = 900; cfg.autoConfirm = nil
+    local flipsWere = ns.Deals.cfg.flips
+    ns.Deals.cfg.flips = false -- vendor deals only, so that nothing else in the test market is a deal
+    LIST[2770] = nil; advance(2); S.verified = {}; UI:Render()
+    check(strip(btn.hint._text):find("^SNIPE BOX: keep the mouse here and keep rolling the wheel"), "with no deal the box says what to do")
+    check(btn._scripts.OnEnter == nil and not G:UserBusy(), "the mouse resting in the box pauses nothing (it used to stop the radar)")
+    local wheel = btn._scripts.OnMouseWheel
+    local before = ns.Swarm.stats.queries
+    for _ = 1, 10 do wheel(btn, 1); advance(0.2) end
+    UI:Render()
+    print("     " .. label() .. "  |  " .. strip(btn.hint._text))
+    check(label():find("^ARMED") and strip(btn.hint._text):find("Wheel detected", 1, true), "rolling in the box with no deal: ARMED, and it says the wheel is seen")
+    check(gold == 900 and S.buying == nil, "nothing is bought while there is no deal")
+    check(ns.Swarm.stats.queries > before, "the radar keeps reading while you roll")
+    LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+    S.priority = 2770
+    local t0, got = GetTime(), nil
+    for _ = 1, 30 do -- still rolling: a notch every 0.1s
+        wheel(btn, 1); advance(0.1)
+        if S.result and S.result.kind == "won" then got = GetTime() - t0; break end
+    end
+    print(("     deal put up while rolling: bought %.1fs later, no click"):format(got or -1))
+    check(got and gold == 900 - 36, "a deal appears while you roll: it is bought by the wheel alone, without a click")
+    AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test")
+    advance(2); UI:Render()
+    check(not UI.Armed(), "the box stops being armed 1.5s after the last notch")
+    -- outside the box, with no deal, the wheel scrolls the list as before
+    check(UI.WheelPress() == false and UI.WheelPress(true) == true, "outside the box the wheel still scrolls; inside it never does")
+    UI.wheelSeen = nil
+    ns.Deals.cfg.flips = flipsWere
     -- if the game does not take the wheel as an input, it is switched off
     S.wheelAt = GetTime(); fire("ADDON_ACTION_BLOCKED", "AuctionMesh", "UNKNOWN()")
     check(cfg.wheel == false and UI.WheelPress() == false, "if the game refuses wheel inputs, the wheel is switched off and scrolls again")

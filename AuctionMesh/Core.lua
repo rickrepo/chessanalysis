@@ -440,6 +440,12 @@ function Do.FocusCode(text)
 end
 
 -- The game's addon list next to the minimap opens the panel (no command needed).
+-- The game's own Key Bindings screen (Options > Keybindings > AddOns) lists
+-- "Buy the best deal": any key bound there presses the snipe box. Not needed
+-- for the mouse wheel, which the addon handles itself.
+BINDING_HEADER_AUCTIONMESH = "AuctionMesh"
+_G["BINDING_NAME_CLICK AuctionMeshSnipeButton:LeftButton"] = "Buy the best deal"
+
 function AuctionMesh_OnAddonCompartmentClick() UI:Toggle() end
 
 SLASH_AUCTIONMESH1 = "/amesh"

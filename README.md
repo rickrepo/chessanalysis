@@ -136,7 +136,7 @@ Nothing has to be typed in chat. The Setup tab has a control for everything that
 | Self-tuning | One switch for the pace, the split of requests and the profit bar. **Forget what was learned** needs a second click |
 | Share with Claude | **Daily report** (once a day), **Log** and **Last session's log** (when something looks wrong), **Rebuild from purchases** |
 
-Hovering a button explains it. Below the controls is everything the request engine has learned.
+The heading of the Setup tab shows the installed version, e.g. `SETTINGS (AuctionMesh version 3.20.0)`. Hovering a button explains it. Below the controls is everything the request engine has learned.
 
 To track an item you bought some other way, drag it from your bags onto the panel.
 
@@ -213,6 +213,20 @@ Real reports show deals on this realm lasting 1 to 3 seconds, a few lasting 10 t
 | If that is blocked: your next input | Buys. The server needs two steps (ask the price, then buy) and the game wants a real input for each |
 
 **The big Buy button** on the Trades tab never moves and always acts on the best deal. Click it repeatedly: the first click asks for the price, clicks while the price is on its way are ignored, and the first input after it arrives buys. It never buys twice.
+
+**The snipe box.** The big button is a box you can sit in. Put the mouse in it and keep rolling the wheel:
+
+| The box shows | Meaning |
+|---|---|
+| grey `SNIPE BOX: keep the mouse here and keep rolling the wheel` | No deal. Nothing happens yet |
+| green `ARMED  the next deal is bought the moment it appears` / `Wheel detected` | The addon sees your wheel. Keep rolling |
+| the deal, then `BUYING...`, then `GOT IT` or `MISSED` | The first notch after a deal appeared asked the price; the purchase followed by itself (or with the next notch) |
+
+Because you are already rolling when the deal appears, there is no reaction time: the purchase starts within a few hundredths of a second of the deal being found. Nothing is bought while there is no deal, the box never buys the same deal twice, and the price check still applies (a deal that got dearer is not bought). Rolling inside the box never scrolls the list.
+
+The mouse resting in the box pauses nothing. It used to: the radar stood still whenever the mouse was on the Buy button, so parking the mouse there while waiting for a deal meant no deal could appear. A row's Buy or Post button still gives a short quiet moment, for at most 3 seconds.
+
+**No key binding is needed** for the wheel; the addon handles it. If you would rather use a key, the game's own Key Bindings screen (Options, Keybindings, AddOns) lists **AuctionMesh: Buy the best deal**; any key bound there presses the box.
 
 **Buy with the mouse wheel.** While a deal is on the button, rolling the mouse wheel anywhere on the panel presses Buy; one flick of the wheel is several presses, which covers both steps. With **Mouse wheel buys: on** (Setup tab, the default) the wheel does this anywhere on screen while a deal is up, and goes back to normal the moment there is none. If the game does not accept the wheel as an input, that switches itself off too.
 

@@ -425,14 +425,32 @@ end
 
 -- A notch of the mouse wheel while a deal is on the big button. Returns true
 -- if the wheel was used for buying (so it does not also scroll the list).
-function UI.WheelPress()
+-- inBox: the wheel was rolled inside the SNIPE BOX. There it never scrolls
+-- anything: with no deal up it only marks the box as armed, and the first
+-- notch after a deal appears buys it.
+function UI.WheelPress(inBox)
     if AuctionMeshDB.cfg.wheel == false or UI.tab ~= "BUY" then return false end
     local S = ns.Sniper
     local key = S:Target()
-    if not (key and (S.verified[key] or S.buying)) then return false end
+    if not (key and (S.verified[key] or S.buying)) then
+        if inBox then
+            local now = GetTime()
+            local was = UI.wheelSeen
+            UI.wheelSeen = now
+            if not was or now - was > 1 then UI:Dirty() end -- show ARMED; no redraw per notch
+            return true
+        end
+        return false
+    end
+    if inBox then UI.wheelSeen = GetTime() end
     S.wheelAt = GetTime()
     S:Press()
     return true
+end
+
+-- True while the wheel is being rolled in the snipe box (a notch in the last 1.5s).
+function UI.Armed()
+    return UI.wheelSeen ~= nil and GetTime() - UI.wheelSeen < 1.5
 end
 
 -- While a deal is on the big button, the wheel buys wherever the mouse is
@@ -456,6 +474,10 @@ end
 --   green   BUY NOW: the price is in, this click buys (two clicks in all; the
 --           game does not let an addon ask for a price without a click)
 --   grey    nothing to buy; shows what happened to the last deal for 6 seconds
+-- It is also THE SNIPE BOX: keep the mouse in it and keep rolling the wheel.
+-- Nothing happens while there is no deal; the first notch after one appears
+-- buys it, so the purchase starts within a few hundredths of a second of the
+-- deal being found, with no reaction time.
 function UI:RenderSnipe(short)
     local sn = frame.snipe
     local S = ns.Sniper
@@ -493,9 +515,19 @@ function UI:RenderSnipe(short)
     else
         text = TEAL .. "NEXT|r  " .. nextStep(self.lastDeals or {}, self.lastEntries or {}, short)
     end
-    if d and AuctionMeshDB.cfg.wheel ~= false then text = text .. GREY .. "    click, or flick the mouse wheel|r" end
     self:WheelBind(d ~= nil or b ~= nil) -- also for the whole of a purchase in progress
+    local wheel = AuctionMeshDB.cfg.wheel ~= false
+    local armed = wheel and UI.Armed()
+    if armed and not d then
+        -- rolling with nothing to buy yet: say that it is working
+        colour, fill = { 0.2, 1, 0.4 }, { 0.04, 0.14, 0.07 }
+        if not res then text = GREEN .. "ARMED|r    the next deal is bought the moment it appears" end
+    end
     sn.label:SetText(text)
+    sn.hint:SetText(not wheel and (GREY .. "Click here to buy the deal shown. (Mouse wheel buying is off: Setup tab.)|r")
+        or armed and (GREEN .. "Wheel detected. Keep rolling in this box.|r")
+        or d and (GREY .. "Roll the mouse wheel here (or anywhere), or click: it buys.|r")
+        or (GREY .. "SNIPE BOX: keep the mouse here and keep rolling the wheel. A deal is bought the moment it appears.|r"))
     sn.fill:SetColorTexture(fill[1], fill[2], fill[3], 1)
     UI.outline(sn, colour)
     -- The line under the button never leaves you guessing: the last outcome
@@ -949,7 +981,7 @@ function UI:Create()
         if btn == "WHEEL" then ns.Sniper.wheelAt = GetTime() end
         ns.Sniper:Press()
     end, "AuctionMeshSnipeButton")
-    sn:SetHeight(28)
+    sn:SetHeight(46)
     -- Buying takes two messages to the server (ask the price, then buy) and the
     -- game wants a real input for each. To make that as close to one action as
     -- possible, every kind of input counts: the press AND the release of a
@@ -958,17 +990,20 @@ function UI:Create()
     -- first notch after the answer buys.
     if sn.RegisterForClicks then sn:RegisterForClicks("AnyDown", "AnyUp") end
     sn:EnableMouseWheel(true)
-    sn:SetScript("OnMouseWheel", function() UI.WheelPress() end)
+    sn:SetScript("OnMouseWheel", function() UI.WheelPress(true) end)
     sn:SetPoint("TOPLEFT", 12, -178); sn:SetPoint("TOPRIGHT", -12, -178)
     sn.label = sn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    sn.label:SetPoint("LEFT", 10, 0); sn.label:SetPoint("RIGHT", -10, 0)
+    sn.label:SetPoint("TOPLEFT", 10, -8); sn.label:SetPoint("TOPRIGHT", -10, -8)
     sn.label:SetJustifyH("LEFT"); sn.label:SetWordWrap(false)
+    sn.hint = sn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    sn.hint:SetPoint("BOTTOMLEFT", 10, 7); sn.hint:SetPoint("BOTTOMRIGHT", -10, 7)
+    sn.hint:SetJustifyH("LEFT"); sn.hint:SetWordWrap(false)
     sn.result = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     sn.result:SetPoint("TOPLEFT", sn, "BOTTOMLEFT", 2, -4); sn.result:SetPoint("TOPRIGHT", sn, "BOTTOMRIGHT", -2, -4)
     sn.result:SetJustifyH("LEFT"); sn.result:SetWordWrap(false)
-    -- the mouse on it means a click is coming: nothing else is sent meanwhile
-    sn:SetScript("OnEnter", function(self) UI.hoverBtn = self end)
-    sn:SetScript("OnLeave", function(self) if UI.hoverBtn == self then UI.hoverBtn = nil end end)
+    -- The mouse resting in this box pauses NOTHING. (It used to: "the mouse
+    -- on it means a click is coming". With the mouse parked on the Buy button
+    -- waiting for a deal, the radar stood still and no deal could appear.)
     sn:Hide()
     frame.snipe = sn
     frame.status = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -996,7 +1031,7 @@ function UI:Create()
     local sp = CreateFrame("Frame", nil, frame)
     sp:SetPoint("TOPLEFT", 14, -40); sp:SetPoint("TOPRIGHT", -14, -40)
     sp:SetHeight(430)
-    heading(sp, 0, "SETTINGS")
+    heading(sp, 0, "SETTINGS    (AuctionMesh version " .. tostring(C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("AuctionMesh", "Version") or "?") .. ")")
     local function setting(y, text)
         local l = sp:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         l:SetPoint("TOPLEFT", 0, y)
@@ -1187,7 +1222,7 @@ function UI:Create()
         outline(r.btn, ACCENT) -- the action on a row is the primary action
         -- Mouse on a Buy/Post button = you are about to click: background work
         -- stops so the auction house is free when you do.
-        r.btn:SetScript("OnEnter", function(self) UI.hoverBtn = self end)
+        r.btn:SetScript("OnEnter", function(self) UI.hoverBtn, UI.hoverAt = self, GetTime() end)
         r.btn:SetScript("OnLeave", function(self) if UI.hoverBtn == self then UI.hoverBtn = nil end end)
         r.btn:SetPoint("RIGHT", -4, 0)
         UI.Draggable(r)
@@ -1218,6 +1253,8 @@ function UI:Create()
         if UI.notice and GetTime() >= UI.notice.till then UI.notice = nil; UI.dirty = true end
         local paused = ns.Gate:UserBusy()
         if paused ~= UI.wasPaused then UI.wasPaused = paused; UI.dirty = true end
+        local armed = UI.Armed()
+        if armed ~= UI.wasArmed then UI.wasArmed = armed; UI.dirty = true end
         -- Timers and the engine bar tick twice a second while the auction house is open.
         UI.tick = (UI.tick or 0) + 1
         if ahOpen() and UI.tick % 3 == 0 then UI.dirty = true end
@@ -1235,7 +1272,7 @@ end
 --   Bags:   the NEXT line, what to do, the list
 --   Setup:  settings and the request engine, then recent activity
 local LAYOUT = {
-    BUY = { next = -182, status = -226, statusH = 38, top = 270 },
+    BUY = { next = -182, status = -244, statusH = 38, top = 288 },
     SELL = { next = -40, status = -58, statusH = 38, top = 104 },
     HISTORY = { status = -304, statusH = 14, top = 480 },
 }
