@@ -483,6 +483,13 @@ function Seller:ScanMail()
             S.ownSoldPay = keep
         end
     end
+    do  -- kept for the snapshot: what the mailbox held when it was last read
+        local s = AuctionMeshDB.sales
+        local items = {}
+        for id, n in pairs(counts) do items[id] = n end
+        AuctionMeshDB.mailSeen = { at = GetServerTime(), mails = total or shown or 0, items = items,
+                                   gold = s and s.waiting or 0, pending = s and #(s.pending or {}) or 0 }
+    end
     -- More than ~50 mails: the client only shows part of the inbox, so we can't be sure.
     self.mailComplete = (total or shown or 0) <= (shown or 0)
 end

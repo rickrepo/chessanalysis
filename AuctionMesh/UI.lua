@@ -442,6 +442,7 @@ function UI.WheelPress(inBox)
             local was = UI.wheelSeen
             UI.wheelSeen = now
             if not was or now - was > 0.7 then
+                S.tally.armed = (S.tally.armed or 0) + 1
                 ns.Log("ARMED: the wheel is rolling in the snipe box (snipe mode: radar and alerts only)")
                 UI:Dirty() -- show ARMED; no redraw per notch
             end
@@ -972,6 +973,19 @@ function UI:Create()
         GameTooltip:Show()
     end)
     frame.pop:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- SNAPSHOT: on every tab. One short block of text to copy and paste to
+    -- Claude: gold, mailbox, auctions, bags, settings and the last snipes.
+    frame.snap = button(frame, 74, "Snapshot", function() ns.Do.Snapshot() end)
+    frame.snap:SetHeight(18)
+    frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -6, 0)
+    outline(frame.snap, ACCENT)
+    frame.snap:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+        GameTooltip:AddLine("Snapshot for Claude", 1, 1, 1)
+        GameTooltip:AddLine("Opens one short block of text: your gold, what is in the mailbox, what has sold and is on its way, what is listed and in your bags, your settings, and the last 20 snipes with how fast each input was. Copy it and paste it to Claude.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    frame.snap:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- ENGINE BAR, top right on every tab: what the request engine is doing now
     local bar = CreateFrame("Frame", nil, frame)

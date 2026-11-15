@@ -1512,6 +1512,46 @@ do
         LIST[2592] = nil; LIST[2319] = leather; cfg.autoConfirm = false
     end
 
+    -- THE SNAPSHOT: one button on every tab, one short block to paste
+    do
+        reset(); gold = 3288
+        local Se = ns.Seller
+        AuctionMeshDB.outcomes = {}
+        -- a win with the wheel 0.3s after the deal appeared, then a late click that missed
+        S.dealSeen[4306] = GetTime() - 0.3; S.wheelAt = GetTime()
+        S.verified[4306] = { key = 4306, units = 16, cost = 1600, sell = 150, profit = 800, deposit = 0, buys = {}, counts = {}, from = "me", kind = "VENDOR", commodity = true, at = GetTime(), rows = rows({ { 100, 16 }, { 196, 31 } }) }
+        ITEMS[4306] = { "Silk Cloth", 150 }
+        LIST[4306] = { { 100, 16 }, { 196, 31 }, { 197, 1967 } }
+        cfg.autoConfirm = nil
+        S:Press(4306); advance(1.2)
+        S.dealSeen[4306] = GetTime() - 6.4; S.wheelAt = nil
+        S.verified[4306] = { key = 4306, units = 2, cost = 200, sell = 150, profit = 100, deposit = 0, buys = {}, counts = {}, from = "me", kind = "VENDOR", commodity = true, at = GetTime(), rows = rows({ { 100, 2 }, { 196, 31 } }) }
+        S:Press(4306); advance(1.2)
+        S.verified[4306] = nil
+        S.ownSoldQty = { [4304] = 5 }
+        S.ownSoldPay = { { amount = 510, due = GetTime() + 236, key = 4304 }, { amount = 2272, due = GetTime() + 797, key = 4304 } }
+        ITEMS[4304] = { "Thick Leather", 75 }
+        AuctionMeshDB.mailSeen = { at = GetServerTime() - 720, mails = 3, gold = 0, pending = 2, items = { [2589] = 14 } }
+        local snap = AuctionMeshFrame.snap
+        check(snap and snap._text == "Snapshot", "a Snapshot button sits on the panel header, on every tab")
+        snap._scripts.OnClick(snap)
+        local text = AuctionMeshLogFrame.edit._text
+        for line in text:gmatch("[^\n]+") do print("     | " .. line) end
+        local function has(s) return text:find(s, 1, true) ~= nil end
+        check(AuctionMeshLogFrame:IsShown() and has("=== AUCTIONMESH SNAPSHOT v1 ===") and has("=== END OF SNAPSHOT ==="), "it opens one block of text to copy")
+        check(has("gold in hand: 16s 88c") and has("sold, gold on its way: 27s 82c  (next in 4 min)") and has("Thick Leather: 5s 10c in 4 min") and has("Thick Leather: 22s 72c in 13 min"),
+            "money: gold in hand, and each sold auction with when its gold arrives")
+        check(has("MAILBOX (as read 12 min ago): 3 mail(s), sale gold 0c, 2 sale(s) still to be paid") and has("items in it: 14 x Linen Cloth"), "the mailbox as it was last read, and how long ago")
+        check(has("smallest profit ") and has("one-click buy: works") and has("mouse wheel buys on"), "the settings, including whether one-click buying works")
+        check(has("| GOT | 0.3s | wheel | GOT IT  16 x Silk Cloth") and has("| MISSED | 6.4s | click | MISSED  Silk Cloth"),
+            "the last snipes: result, how long after the deal the input came, and whether it was the wheel or a click")
+        check(has("Silk Cloth x16 at 1s 0c each") and has("LAST PURCHASES"), "and the last purchases")
+        check(#text < 6000, ("short enough to paste in one go (%d characters)"):format(#text))
+        AuctionMeshLogFrame:Hide()
+        AuctionMeshDB.flips[4306] = nil; ns.Journal:Dropped(4306, nil, "test"); LIST[4306] = nil
+        S.ownSoldQty, S.ownSoldPay = {}, {}; AuctionMeshDB.mailSeen = nil; cfg.autoConfirm = false
+    end
+
     -- five misses in a row: the item is left alone for 3 minutes
     reset(); gold = 900
     ITEMS[4306] = { "Silk Cloth", 150 }

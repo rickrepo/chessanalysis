@@ -167,6 +167,20 @@ Vendor-price deals are shown whatever the focus, because they are guaranteed. Ev
 
 The radar's quantity drops (units leaving the whole listing) are kept separately as **churn** and shown in the report only. The first real report showed why: churn said 15,000 Heavy Leather "sold" an hour, because it includes every cancelled and re-posted auction.
 
+### Snapshot: what is happening right now, in one paste
+
+A **Snapshot** button sits on the panel's header, on every tab. It opens one short block of text (about 50 lines): click in the box, Ctrl+A, Ctrl+C, and paste it to Claude. It is the quick one; the daily report below is the long one.
+
+| Section | What it holds |
+|---|---|
+| MONEY | Gold in hand; sale gold waiting in the mailbox; every sold auction with the gold due and when; every unsold auction with your price, your cost, its age and the cheapest other listing; everything bought and not listed; the total; gold at the start of the day and profit banked |
+| MAILBOX | What it held when it was last read (items, sale gold, sales still to be paid) and how long ago that was. The mailbox can only be read while it is open |
+| SETTINGS | Smallest profit, flip margin, flips on or off, what the radar reads, laser focus, the unsold-auctions limit, mouse wheel, whether one-click buying works, self-tuning, sharing |
+| SNIPING | Got / missed / gone this session; how often the snipe box was armed and how many purchases the wheel started; deals hidden by the smallest-profit setting; muted items; the last 20 outcomes, each with **how long after the deal appeared your input came** and whether it was the wheel or a click |
+| WHY CHECKS WERE NOT DEALS | The eight most common reasons today |
+| LAST PURCHASES | The last 12, each with what became of it |
+| ENGINE | Minutes working, how often the radar read, the server's request limit, checks, deals, purchases |
+
 ### The daily report, and focus codes
 
 **Daily report** on the Setup tab opens one block of text. Select all, copy, and paste it to Claude once a day. It is about 5 to 20 thousand characters and contains:

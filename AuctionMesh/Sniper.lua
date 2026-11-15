@@ -975,6 +975,16 @@ local FLASH = { won = { 0.2, 1, 0.4 }, lost = { 1, 0.25, 0.25 }, gone = { 1, 0.6
 function Sniper:Result(kind, key, text)
     self.result = { kind = kind, key = key, text = text, at = GetTime() }
     self.tally[kind] = (self.tally[kind] or 0) + 1
+    do  -- kept for the snapshot: the last outcomes, how fast the input came and what it was
+        local list = AuctionMeshDB.outcomes or {}
+        AuctionMeshDB.outcomes = list
+        local r = self.react
+        local mine = r and r.key == key and kind ~= "gone"
+        list[#list + 1] = { t = GetServerTime(), k = kind, r = mine and r.secs or nil, v = mine and r.via or nil,
+                            m = (tostring(text):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) }
+        while #list > 40 do table.remove(list, 1) end
+        if mine then self.react = nil end
+    end
     ns.Log("RESULT %s: %s", kind, text)
     if PlaySound then pcall(PlaySound, kind == "won" and 120 or 847) end
     if UIErrorsFrame and UIErrorsFrame.AddMessage then
@@ -1047,6 +1057,14 @@ function Sniper:Buy(key)
     -- it a moment later (which this addon used to do when the auction house
     -- was busy) is blocked by the game, so those clicks were lost. If the
     -- auction house is busy the game queues the message itself.
+    do  -- how long after the deal appeared this input came, and whether it was the wheel
+        local seen = self.dealSeen and self.dealSeen[key]
+        local wheel = self.wheelAt and GetTime() - self.wheelAt < 0.05
+        if not (self.react and self.react.key == key) then -- a retry for the units left keeps the first reaction time
+            self.react = { key = key, secs = seen and (GetTime() - seen) or nil, via = wheel and "wheel" or "click" }
+        end
+        if wheel then self.tally.wheel = (self.tally.wheel or 0) + 1 end
+    end
     if deal.commodity then
         self.buying = { key = key, units = deal.units, max = deal.cost, phase = "quote", deal = deal, at = GetTime() }
         ns.Gate:Use(("buy start %dx %s, verified total %d"):format(deal.units, tostring(key), deal.cost))
@@ -1231,6 +1249,7 @@ function Sniper:OnPriceQuote(unitPrice, total)
         if AuctionMeshDB.cfg.autoConfirm ~= false then
             self.autoAt = GetTime()
             b.auto = true
+            AuctionMeshDB.cfg.autoTried = true
             ns.Log("AUTO confirm: the quote matches the deal you clicked; sending the purchase without waiting for a second click")
             self:Confirm()
         end

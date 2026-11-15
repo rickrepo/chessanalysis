@@ -405,6 +405,181 @@ end
 local function num(v) return v and tostring(floor(v + 0.5)) or "-" end
 local function pct(v) return v and ("%+d%%"):format(floor(v * 100 + 0.5)) or "-" end
 
+-- money as plain text: 1g 23s 45c
+local function coin(c)
+    if not c then return "-" end
+    c = floor(c + 0.5)
+    local neg = c < 0
+    if neg then c = -c end
+    local g, s, k = floor(c / 10000), floor(c / 100) % 100, c % 100
+    local out = (g > 0 and (g .. "g ") or "") .. ((g > 0 or s > 0) and (s .. "s ") or "") .. k .. "c"
+    return (neg and "-" or "") .. out
+end
+local function mins(secs)
+    if not secs then return "-" end
+    return secs < 90 and (floor(secs + 0.5) .. "s") or (floor(secs / 60 + 0.5) .. " min")
+end
+
+-- THE SNAPSHOT: one short block for sharing right now. Where the money is,
+-- what the mailbox held when it was last read, the settings, and what the
+-- last snipes did. The daily report is the long version.
+function Scout:Snapshot(o)
+    o = o or {}
+    local St, J, Se, S = ns.Store, ns.Journal, ns.Seller, ns.Sniper
+    local now = self.now()
+    local cfg = cfgOf()
+    local L = {}
+    local function add(...) L[#L + 1] = table.concat({ ... }, "") end
+    local gold = o.gold or 0
+
+    add("=== AUCTIONMESH SNAPSHOT v1 ===")
+    add("addon ", tostring(o.version or "?"), " | realm ", tostring(o.realm or "?"), " | server time ", date("%Y-%m-%d %H:%M", now),
+        " | this session ", mins(ns.sessionStart and (GetTime() - ns.sessionStart) or nil))
+
+    -- MONEY
+    local waiting, onway, nextIn, soldKeys = 0, 0, nil, {}
+    if Se and Se.SalesMoney then waiting, onway, nextIn, soldKeys = Se:SalesMoney() end
+    local cut = 1 - ((ns.Deals and ns.Deals.cfg.cut) or 0.05)
+    local listed, listedLines = 0, {}
+    for key, Lr in pairs(AuctionMeshDB.listed or {}) do
+        if not soldKeys[key] then
+            local net = floor((Lr.price or 0) * cut) * (Lr.qty or 0)
+            listed = listed + net
+            local low, t = St.p[key], St.t[key]
+            local fresh = t and now - t < 900
+            listedLines[#listedLines + 1] = ("  %d x %s at %s each (paid %s), listed %.1fh ago, cheapest other now %s%s"):format(Lr.qty or 0, plainName(key),
+                coin(Lr.price), coin(Lr.cost), (now - (Lr.at or now)) / 3600, fresh and coin(low) or "not known",
+                (fresh and low and low < (Lr.price or 0)) and " (UNDERCUT)" or "")
+        end
+    end
+    local held, heldLines = 0, {}
+    if Se and Se.Entries then
+        local what = { AH = "to post", VENDOR = "sell to a vendor", MAIL = "in the mailbox", HOLD = "held: market below cost" }
+        for _, e in ipairs(Se:Entries()) do
+            if e.action ~= "LISTED" then
+                local paid, sell, net = Se:Numbers(e)
+                local worth = (net or 0) * e.count
+                if e.action ~= "HOLD" then held = held + worth end
+                heldLines[#heldLines + 1] = ("  %d x %s, paid %s each, %s, worth %s when sold"):format(e.count, plainName(e.key),
+                    coin(paid), what[e.action] or tostring(e.action), coin(worth))
+            end
+        end
+    end
+    add("")
+    add("MONEY")
+    add("gold in hand: ", coin(gold))
+    local ms = AuctionMeshDB.mailSeen
+    add("sale gold waiting in the mailbox: ", coin(waiting), ms and ("  (mailbox last read " .. mins(now - ms.at) .. " ago)") or "  (mailbox not read yet)")
+    add("sold, gold on its way: ", coin(onway), nextIn and ("  (next in " .. mins(nextIn) .. ")") or "")
+    for _, r in ipairs(S and S.ownSoldPay or {}) do
+        local left = r.due - GetTime()
+        if left > 0 then add("  ", r.key and plainName(r.key) or "an auction", ": ", coin(r.amount), " in ", mins(left)) end
+    end
+    add("listed, not sold yet: ", coin(listed))
+    for _, l in ipairs(listedLines) do add(l) end
+    add("bought, not listed: ", coin(held))
+    for _, l in ipairs(heldLines) do add(l) end
+    add("TOTAL when it has all sold: ", coin(gold + waiting + onway + listed + held))
+    do
+        local r = self:Day()
+        add("gold at the start of today: ", coin(r.gold0), " | profit banked this session: ", coin((AuctionMeshDB.realized or 0) - (ns.realizedAtLogin or AuctionMeshDB.realized or 0)),
+            " | banked all-time: ", coin(AuctionMeshDB.realized or 0))
+    end
+
+    -- MAILBOX
+    add("")
+    if ms then
+        add("MAILBOX (as read ", mins(now - ms.at), " ago): ", ms.mails or 0, " mail(s), sale gold ", coin(ms.gold), ", ", ms.pending or 0, " sale(s) still to be paid")
+        local parts = {}
+        for id, n in pairs(ms.items or {}) do parts[#parts + 1] = n .. " x " .. plainName(id) end
+        table.sort(parts)
+        add("  items in it: ", #parts > 0 and table.concat(parts, ", ") or "none")
+    else
+        add("MAILBOX: not read yet (open a mailbox once)")
+    end
+
+    -- SETTINGS
+    add("")
+    add("SETTINGS")
+    add("smallest profit ", coin(cfg.minProfit), " | flip margin ", tostring(cfg.margin), "% | flips ", cfg.flips ~= false and "on" or "off (vendor deals only)",
+        " | radar reads: ", tostring(cfg.scope or "mats"), " | laser focus: ", tostring(cfg.focusMode or "off"))
+    add("unsold auctions may hold ", tostring(cfg.maxTied or 50), "% | mouse wheel buys ", cfg.wheel ~= false and "on" or "off",
+        " | one-click buy: ", cfg.autoConfirm == false and "BLOCKED by the game (second input needed)" or (cfg.autoTried and "works" or "on, not tried yet"),
+        " | self-tuning ", cfg.tune ~= false and "on" or "off", " | posting fee comes back: ", cfg.feeBack == nil and "not known yet" or tostring(cfg.feeBack))
+    if o.sharing then add("sharing: ", (tostring(o.sharing):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))) end
+
+    -- SNIPING
+    add("")
+    local t = S and S.tally or {}
+    add("SNIPING this session: ", t.won or 0, " got, ", t.lost or 0, " missed after an input, ", t.gone or 0, " gone before any input | snipe box armed ",
+        t.armed or 0, " time(s), ", t.wheel or 0, " purchase(s) started with the wheel")
+    do
+        local m = S and S.underMin
+        if m and GetTime() - m.at < 600 then
+            add("in the last 10 min ", m.n, " deal(s) were hidden by the smallest-profit setting (best: ", coin(m.best), ")")
+        end
+        local muted = {}
+        for key, till in pairs(S and S.muted or {}) do
+            if till > GetTime() then muted[#muted + 1] = plainName(key) .. " (" .. mins(till - GetTime()) .. " more)" end
+        end
+        if #muted > 0 then add("muted after 5 misses in a row: ", table.concat(muted, ", ")) end
+    end
+    add("last outcomes, newest first (time | result | input came this long after the deal appeared | input | what happened):")
+    do
+        local list = AuctionMeshDB.outcomes or {}
+        if #list == 0 then add("  none yet") end
+        for i = #list, max(1, #list - 19), -1 do
+            local e = list[i]
+            add("  ", date("%H:%M:%S", e.t), " | ", e.k == "won" and "GOT" or e.k == "lost" and "MISSED" or "GONE", " | ",
+                e.r and ("%.1fs"):format(e.r) or "-", " | ", tostring(e.v or "-"), " | ", tostring(e.m))
+        end
+    end
+
+    -- WHY NOT
+    add("")
+    add("WHY CHECKS WERE NOT DEALS today (top 8; # stands for a number):")
+    do
+        local rs = {}
+        for r, n in pairs(self.d.reasons or {}) do rs[#rs + 1] = { r = r, n = n } end
+        table.sort(rs, function(a, b) return a.n > b.n end)
+        for i = 1, min(#rs, 8) do add("  ", rs[i].n, " x ", rs[i].r) end
+        if #rs == 0 then add("  nothing recorded yet") end
+    end
+
+    -- PURCHASES
+    add("")
+    add("LAST PURCHASES, newest first (up to 12):")
+    if J then
+        local trades = J:Trades()
+        if #trades == 0 then add("  none yet") end
+        for i = 1, min(#trades, 12) do
+            local tr = trades[i]
+            local left = J.left(tr)
+            local made = J.realized(tr)
+            local state
+            if left <= 0 and (tr.sold or 0) + (tr.vend or 0) > 0 then state = "SOLD, profit " .. coin(made or 0)
+            elseif left <= 0 then state = "not found, not counted"
+            elseif (tr.listed or 0) > 0 and soldKeys[tr.key] then state = "SOLD, gold on its way"
+            elseif (tr.listed or 0) > 0 then state = ("listed at %s, not sold"):format(coin(tr.price))
+            else state = "not sold, not listed" end
+            add(("  %s x%d at %s each, %.1fh ago: %s"):format(tostring(tr.name), tr.qty, coin(tr.cost), (now - (tr.at or now)) / 3600, state))
+        end
+    end
+
+    -- ENGINE
+    add("")
+    do
+        local r = self:Day()
+        local cyc = ns.Tuner and ns.Tuner.d and ns.Tuner.d.cycle
+        add("ENGINE today: ", num(r.secs / 60), " min working, radar read ", r.sweeps or 0, " times",
+            (r.sweeps or 0) > 0 and (" (every %.1fs on average)"):format(r.secs / r.sweeps) or "",
+            cyc and (", server allows one request every %.2fs"):format(cyc) or "",
+            ", ", r.checks or 0, " item checks, ", r.deals or 0, " deals found, ", r.bought or 0, " bought, ", r.gone or 0, " gone, ", r.fails or 0, " failed")
+    end
+    add("=== END OF SNAPSHOT ===")
+    return table.concat(L, "\n")
+end
+
 -- One block of text for sharing. All money is in copper (100 = 1 silver).
 function Scout:Report(o)
     o = o or {}

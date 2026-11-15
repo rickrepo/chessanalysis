@@ -413,6 +413,16 @@ function Do.Trends(n)
 end
 
 -- The daily report: one block of text with what the addon measured, to share.
+-- The quick one: where the money is and what just happened, in about 60 lines.
+function Do.Snapshot()
+    local text = ns.Scout:Snapshot({
+        version = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or "?",
+        realm = realmKey(), gold = GetMoney(), sharing = Do.SharingText(),
+    })
+    ns.Diag:ShowText("AuctionMesh snapshot: click in the box, Ctrl+A then Ctrl+C, and paste it to Claude", text)
+    return text
+end
+
 function Do.Report()
     local errors = 0
     for line in ns.Diag:Text():gmatch("[^\n]+") do
