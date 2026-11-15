@@ -526,6 +526,7 @@ function Do.SettingsCode()
     put("spend", cfg.maxSpend or floor(Deals.cfg.maxSpend * 100 + 0.5))
     put("small", cfg.smallFlip or floor(Deals.cfg.smallFlip * 100 + 0.5))
     put("every", Sniper.FocusEvery())
+    if Sniper:StakeKey() then put("stake", Sniper:StakeKey()) end
     put("wheel", cfg.wheel ~= false and 1 or 0)
     put("tune", cfg.tune ~= false and 1 or 0)
     do
@@ -622,6 +623,13 @@ function Do.Import(text)
             n = clamp(n, 0, 50)
             cfg.smallFlip, Deals.cfg.smallFlip = n, n / 100
             note("a small flip is always allowed up to", old .. "%", n .. "%")
+        elseif k == "stake" and n then
+            local old = Sniper:StakeKey()
+            n = floor(n)
+            if (old or 0) ~= n then
+                Sniper:SetStake(n > 0 and n or nil)
+                changes[#changes + 1] = n > 0 and ("stake-out set on " .. nameOf(n)) or "stake-out ended"
+            end
         elseif k == "every" and n then
             local old = Sniper.FocusEvery()
             cfg.focusEvery = clamp(n, 20, 300)

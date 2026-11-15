@@ -1734,6 +1734,61 @@ do
         UI:FitHeader()
     end
 
+    -- STAKE-OUT: one item watched by asking its price on every wheel notch
+    do
+        reset(); gold = 5000; cfg.autoConfirm = nil
+        local leather = LIST[2319]; LIST[2319] = nil
+        ITEMS[2838] = { "Heavy Stone", 15 }
+        LIST[2838] = { { 300, 75 }, { 320, 44 }, { 325, 149 }, { 327, 44 }, { 329, 25 } }
+        ns.Deals.cfg.requireTurnover = false
+        UI.tab = "BUY"; UI.sel = 2838; UI:ToggleDrawer(true)
+        local dbtn = AuctionMeshDrawer.stake
+        check(dbtn:IsShown() and dbtn._text == "Stake out this item", "the drawer of an item has a Stake out button")
+        dbtn._scripts.OnClick(dbtn)
+        check(S:StakeKey() == 2838 and cfg.stake == 2838 and dbtn._text == "Stop the stake-out", "one click sets the stake-out on Heavy Stone")
+        UI.sel = nil; UI:ToggleDrawer(false)
+        advance(2); S.verified = {} -- its listing is read first
+        local max = S:StakeTerms()
+        print(("     Heavy Stone, market 3s00c: the stake-out buys at %s or less, up to %s at a time"):format(tostring(max), tostring(S.stake.cap)))
+        check(max and max >= 150 and max < 260 and S.stake.kind == "FLIP", "the buying price comes from the normal deal rules and the item's own listing")
+        UI:Render()
+        check(label():find("^STAKE%-OUT READY    Heavy Stone: buys at ") and strip(btn.hint._text):find("^Roll the wheel in this box to run the stake%-out"), "the snipe box shows the stake-out and what it waits for")
+        -- rolling with nothing cheap: every notch that the auction house allows asks the price; nothing is bought
+        local wheel = btn._scripts.OnMouseWheel
+        local radar0, starts0 = ns.Swarm.stats.queries, 0
+        for i = 1, #sent do if sent[i] == "start2838" then starts0 = starts0 + 1 end end
+        for _ = 1, 30 do wheel(btn, 1); advance(0.1) end
+        local starts = 0
+        for i = 1, #sent do if sent[i] == "start2838" then starts = starts + 1 end end
+        UI:Render()
+        print("     " .. label())
+        check(S.stake.asked >= 3 and gold == 5000 and S.stake.lastPrice == 300, ("3 seconds of rolling: the price was asked %d times (3s00c each time), nothing bought"):format(S.stake.asked))
+        check(ns.Swarm.stats.queries == radar0, "the radar sends nothing while the stake-out runs")
+        check(label():find("^STAKE%-OUT    Heavy Stone: buys at ") and label():find("last price 3s00c", 1, true), "the box shows the last price the server gave")
+        -- three cheap units are listed
+        LIST[2838] = { { 203, 3 }, { 300, 75 }, { 320, 44 }, { 325, 149 }, { 327, 44 }, { 329, 25 } }
+        local t0, first = GetTime(), nil
+        for _ = 1, 60 do
+            wheel(btn, 1); advance(0.1)
+            if not first and gold < 5000 then first = GetTime() - t0 end
+        end
+        print(("     3 units listed at 2s03c: first one bought %.1fs later; %d bought in all for %d"):format(first or -1, S.stake.bought, 5000 - gold))
+        check(first and first <= 1.0, "the first cheap unit is bought within a second of being listed, with no radar read and no item check")
+        check(S.stake.bought == 3 and gold == 5000 - 609, "all three cheap units are bought (one, then two at the same price), and not one dear unit")
+        check(AuctionMeshDB.flips[2838] and AuctionMeshDB.flips[2838].units == 3, "they are in your holdings like any other purchase")
+        check(S.stake.q == 1 and S.stake.cheap == nil, "after that the price is 3s00c again: back to asking for one")
+        -- the settings code carries it; a code can end it
+        check(ns.Do.SettingsCode():find(";stake=2838", 1, true), "the settings code holds the stake-out")
+        ns.Do.Import("AMS1:stake=0")
+        check(S:StakeKey() == nil and S.stake == nil, "a code (or the drawer button) ends it")
+        radar0 = ns.Swarm.stats.queries
+        for _ = 1, 20 do wheel(btn, 1); advance(0.1) end
+        check(ns.Swarm.stats.queries > radar0, "with no stake-out, rolling is the normal snipe mode again: the radar reads")
+        AuctionMeshDB.flips[2838] = nil; ns.Journal:Dropped(2838, nil, "test"); LIST[2838] = nil; LIST[2319] = leather
+        UI.wheelSeen = nil; cfg.autoConfirm = false
+        UI:Render()
+    end
+
     -- five misses in a row: the item is left alone for 3 minutes
     reset(); gold = 900
     ITEMS[4306] = { "Silk Cloth", 150 }

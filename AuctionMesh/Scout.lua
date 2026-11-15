@@ -534,6 +534,11 @@ function Scout:Snapshot(o)
         table.sort(parts)
         if #parts > 0 then add("ignored items: ", table.concat(parts, ", ")) end
     end
+    if S and S.StakeKey and S:StakeKey() then
+        local st = S.stake or {}
+        add("stake-out: ", plainName(S:StakeKey()), "(", S:StakeKey(), "), ", st.max and ("buys at " .. coin(st.max) .. " or less") or ("waiting: " .. tostring(st.why or "reading its market first")),
+            " | this session: asked ", st.asked or 0, " time(s), bought ", st.bought or 0, st.lastPrice and (" | last price " .. coin(st.lastPrice)) or "")
+    end
     if ns.Auto then
         local lines = ns.Auto:Lines(6)
         add("auto-adjust (", cfg.tune ~= false and "on" or "off", "): ", #lines == 0 and "no changes yet" or "last changes, newest first")

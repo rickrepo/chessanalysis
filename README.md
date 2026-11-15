@@ -204,6 +204,7 @@ Claude reads it in your Snapshot and sends back a changed one. On the Setup tab,
 | `ignore=+2287,-2589` | Items never to show deals for; `-` takes one off the list |
 | `tied=50`, `spend=35`, `small=15` | The capital limits, in percent: unsold auctions, one flip, the always-allowed small flip |
 | `every=60` | With laser focus on, how often each focus item's full listing is re-read, in seconds (20 to 300). Each re-read is one request the radar does not get; flips straight from the radar need a listing read in the last two minutes |
+| `stake=2838` / `stake=0` | Sets a stake-out on one item, or ends it |
 | `wheel=1`, `tune=1` | Mouse wheel buying; auto-adjust |
 
 * A code need not carry everything: `AMS1:min=60;watch=+2592` changes those two things and nothing else.
@@ -293,6 +294,22 @@ The mouse resting in the box pauses nothing. It used to: the radar stood still w
 | Wait before your request may be sent | about 0.5s | none (nothing was sent in between) |
 | Your reaction | 1 to 10 seconds in the logs | the next wheel notch |
 | Price request, then purchase | about 0.15s + 0.5s | the same: the game's own two steps |
+
+**Stake-out: one item, watched by asking its price.** With the wheel rolling and a reaction time of zero, a real session still lost 12 of 23 deals: the game makes every request wait about half a second for the one before it, and the normal path has three or four of them (radar read, item check, price request, purchase). For one item that keeps being listed cheap, the first links can go:
+
+1. Click the item's row, then **Stake out this item** at the bottom of the drawer.
+2. Roll the wheel in the snipe box. Every notch the auction house allows asks the server what one unit of that item costs now. The box shows `STAKE-OUT  Heavy Stone: buys at 2s 36c or less  last price 3s 00c  asked 15, bought 0`.
+3. When the answer is at or under the buying price, the purchase follows at once.
+
+| | |
+|---|---|
+| The buying price | Not typed in and not a guess: the dearest price at which one unit is still a deal by your normal rules (flip margin, smallest profit, capital limits), worked out from the item's full listing. The listing is re-read once a minute while the stake-out runs |
+| More than one unit | After a purchase the next request asks for two, then four, up to eight, and buys them only if every one is at the price just paid. Any other answer puts it back to one, so a dear unit is never bought along with cheap ones |
+| What it costs | The radar is off while you roll: every request is a price request for that one item. Stop rolling and the radar is back within 3 seconds |
+| Ending it | **Stop the stake-out** in the same place, or `stake=0` in a settings code. `stake=2838` in a code sets it |
+| When it will not run | `STAKE-OUT WAITING` with the reason: the listing has not been read yet, or no price would be a deal right now (for example your money is in unsold auctions) |
+
+This has not run in the real game yet. What it saves is the radar read and the item check: about half a second against a deal shown straight from the radar, about a second and a half against one that needed an item check.
 
 **No key binding is needed** for the wheel; the addon handles it. If you would rather use a key, the game's own Key Bindings screen (Options, Keybindings, AddOns) lists **AuctionMesh: Buy the best deal**; any key bound there presses the box.
 

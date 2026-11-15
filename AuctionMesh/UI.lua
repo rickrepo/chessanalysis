@@ -443,9 +443,11 @@ function UI.WheelPress(inBox)
             UI.wheelSeen = now
             if not was or now - was > 0.7 then
                 S.tally.armed = (S.tally.armed or 0) + 1
-                ns.Log("ARMED: the wheel is rolling in the snipe box (snipe mode: radar and alerts only)")
+                ns.Log("ARMED: the wheel is rolling in the snipe box (%s)", S:StakeKey() and "stake-out: every notch asks the staked item's price" or "snipe mode: radar and alerts only")
                 UI:Dirty() -- show ARMED; no redraw per notch
             end
+            S.wheelAt = now
+            S:StakeNotch() -- with an item staked out, this notch asks its price
             return true
         end
         return false
@@ -526,7 +528,19 @@ function UI:RenderSnipe(short)
         -- Nothing but sniping in this box. (Chores such as "visit a mailbox"
         -- used to be shown here; they are on the Bags tab, whose label counts them.)
         local m = S.underMin
-        if m and GetTime() - m.at < 600 and m.best >= 50 and m.best < ns.Deals.cfg.minProfit then
+        local sk = S:StakeKey()
+        if sk then
+            -- the stake-out: what it is waiting for, and what the server last said
+            local max, why = S:StakeTerms()
+            local st = S.stake
+            if max then
+                local seen = (st.lastPrice and st.lastAt and GetTime() - st.lastAt < 30) and ("    last price " .. short(st.lastPrice)) or ""
+                text = (S:SnipeMode() and (GREEN .. "STAKE-OUT|r") or (TEAL .. "STAKE-OUT READY|r")) .. "    " .. S.nameOf(sk) .. ": buys at " .. short(max) .. " or less"
+                    .. seen .. GREY .. ("    asked %d, bought %d|r"):format(st.asked or 0, st.bought or 0)
+            else
+                text = ORANGE .. "STAKE-OUT WAITING|r    " .. S.nameOf(sk) .. ": " .. tostring(why or "reading its market first")
+            end
+        elseif m and GetTime() - m.at < 600 and m.best >= 50 and m.best < ns.Deals.cfg.minProfit then
             text = ORANGE .. ("%d deal%s hidden by your %s minimum profit (best: + %s). Lower it on the Setup tab.|r"):format(
                 m.n, m.n == 1 and "" or "s", short(ns.Deals.cfg.minProfit), short(m.best))
         else
@@ -539,10 +553,12 @@ function UI:RenderSnipe(short)
     if armed and not d then
         -- rolling with nothing to buy yet: say that it is working
         colour, fill = { 0.2, 1, 0.4 }, { 0.04, 0.14, 0.07 }
-        if not res then text = GREEN .. "ARMED|r    the next deal is bought the moment it appears    " .. GREY .. "radar only: nothing else is being sent|r" end
+        if not res and not S:StakeKey() then text = GREEN .. "ARMED|r    the next deal is bought the moment it appears    " .. GREY .. "radar only: nothing else is being sent|r" end
     end
     sn.label:SetText(text)
     sn.hint:SetText(not wheel and (GREY .. "Click here to buy the deal shown. (Mouse wheel buying is off: Setup tab.)|r")
+        or (armed and S:StakeKey()) and (GREEN .. "Rolling: every notch asks the server this item's price and buys if it is low. The radar is off meanwhile.|r")
+        or (S:StakeKey() and not d) and (GREY .. "Roll the wheel in this box to run the stake-out. Stop it in the drawer (click the item).|r")
         or armed and (GREEN .. "Rolling. Keep going: it stops being armed when the wheel stops.|r")
         or d and (GREY .. "Roll the mouse wheel here (or anywhere), or click: it buys.|r")
         or (GREY .. "SNIPE BOX, not armed: put the mouse here and keep rolling the wheel. A deal is bought the moment it appears.|r"))
@@ -1792,6 +1808,28 @@ function UI:CreateDrawer()
     end)
     d.remove:SetPoint("BOTTOMRIGHT", -12, 26)
     d.remove:Hide()
+    -- STAKE-OUT: watch this one item by asking its price on every wheel notch
+    d.stake = button(d, 170, "", function()
+        if not UI.sel then return end
+        local S = ns.Sniper
+        if S:StakeKey() == UI.sel then
+            S:SetStake(nil)
+            UI:Notice("Stake-out ended. The radar is back to reading everything.", true)
+        else
+            S:SetStake(UI.sel)
+            UI:Notice("Stake-out set on " .. S.nameOf(UI.sel) .. ". Roll the wheel in the snipe box: every notch asks its price and buys if it is low. The radar is off while you roll.", true)
+        end
+        UI:Render()
+    end)
+    d.stake:SetPoint("BOTTOMLEFT", 12, 26)
+    d.stake:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+        GameTooltip:AddLine("Stake-out", 1, 1, 1)
+        GameTooltip:AddLine("For one item that keeps being listed cheap. While you roll the wheel in the snipe box, every notch asks the server what one unit costs and buys it the moment that is a deal by your normal rules. This is about a second faster than the radar. Nothing else is watched while you roll.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    d.stake:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    d.stake:Hide()
     d:EnableMouseWheel(true)
     d:SetScript("OnMouseWheel", function(_, delta)
         UI.dscroll = math.max(0, (UI.dscroll or 0) - (delta or 0) * 4)
@@ -1865,6 +1903,12 @@ function UI:RenderDrawer(entries)
         d.remove:SetText((self.removeUntil and GetTime() < self.removeUntil) and "Click again to remove" or "Stop tracking this item")
     end
     d.focus:SetShown(self.sel ~= nil)
+    d.stake:SetShown(self.sel ~= nil)
+    if self.sel then
+        local on = ns.Sniper:StakeKey() == self.sel
+        d.stake:SetText(on and "Stop the stake-out" or "Stake out this item")
+        outline(d.stake, on and ACCENT or LINE)
+    end
     if self.sel then d.focus:SetText(ns.Scout:InList(self.sel) and "Remove from my focus" or "Add to my focus list") end
     for i = 1, DLINES do
         local w, ln = d.lines[i], (i <= vis) and lines[i + off] or nil

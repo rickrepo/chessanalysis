@@ -449,6 +449,131 @@ function Sniper:HoldFor()
     return Sniper.hold
 end
 
+---------------------------------------------------------------- stake-out
+-- ONE ITEM, WATCHED BY ASKING ITS PRICE. For every other deal the path is:
+-- radar read -> (item check) -> price request -> purchase, and the game makes
+-- each request wait about half a second for the one before it. With the wheel
+-- rolling and a reaction time of zero, a real session still lost 12 of 23
+-- deals in that chain. For one chosen item the chain can lose its first
+-- links: every notch of the wheel sends the price request itself ("what does
+-- one unit cost now?"), and when the answer is low enough the purchase
+-- follows at once. A cheap listing is then bought about a second sooner.
+--
+-- The price it buys at is not a guess: it is the dearest price at which one
+-- unit is still a deal by the normal rules (margin, smallest profit, your
+-- capital limits), worked out from the item's full listing, which is re-read
+-- once a minute while the stake-out runs. After a purchase it asks for two
+-- units, then four, up to eight, and buys them only if every one is at the
+-- price just paid; any other answer puts it back to one.
+--
+-- The radar is off while a stake-out runs: every request is a price request.
+local STAKE_FRESH, STAKE_CAP = 60, 8
+
+function Sniper:StakeKey()
+    local k = AuctionMeshDB.cfg.stake
+    return (type(k) == "number" and k > 0) and k or nil
+end
+
+-- key = nil ends the stake-out
+function Sniper:SetStake(key)
+    local b = self.buying
+    if b and b.stake and b.phase == "quote" then
+        pcall(C_AuctionHouse.CancelCommoditiesPurchase)
+        self.buying = nil
+    end
+    key = (type(key) == "number" and key > 0) and key or nil
+    AuctionMeshDB.cfg.stake = key
+    self.stake = key and { key = key, asked = 0, bought = 0, q = 1 } or nil
+    if key then self.priority = key end -- read its market now
+    dirty()
+end
+
+-- The dearest price at which one unit is still a deal, or nil and the reason.
+function Sniper:StakeTerms()
+    local key = self:StakeKey()
+    if not key then self.stake = nil; return nil end
+    local st = self.stake
+    if not st or st.key ~= key then st = { key = key, asked = 0, bought = 0, q = 1 }; self.stake = st end
+    local last = self.lastRows and self.lastRows[key]
+    if not last or #last.rows == 0 then st.max = nil; return nil, "reading its market first" end
+    local gold = GetMoney()
+    if st.termsAt == last.at and st.termsGold == gold then return st.max, st.why end
+    st.termsAt, st.termsGold = last.at, gold
+    local opts, cfg = self:DealOptions(key, true), self:CfgFor(key)
+    local why
+    local function dealAt(p, n)
+        local rows = { { price = p, qty = n } }
+        for _, r in ipairs(last.rows) do
+            if r.price > p then rows[#rows + 1] = { price = r.price, qty = r.qty } end
+        end
+        if #rows < 2 then return nil end
+        local d, _, w = Deals.evaluate(rows, opts, cfg)
+        if d and d.units >= n and d.cost == p * n then return d end
+        why = w or why
+        return nil
+    end
+    local lo, hi, best, bestDeal = 1, last.rows[#last.rows].price, nil, nil
+    while lo <= hi do
+        local mid = floor((lo + hi) / 2)
+        local d = dealAt(mid, 1)
+        if d then best, bestDeal, lo = mid, d, mid + 1 else hi = mid - 1 end
+    end
+    if not best then
+        st.max = nil
+        st.why = why and (tostring(why):gsub("%$(%d+)", function(c) return plain(tonumber(c)) end)) or "no price would be a deal right now"
+        return nil, st.why
+    end
+    st.max, st.kind, st.sell, st.why = best, bestDeal.kind, bestDeal.sell, nil
+    st.each = bestDeal.kind == "VENDOR" and (bestDeal.sell - best) or (floor(bestDeal.sell * (1 - Deals.cfg.cut)) - best)
+    st.cap = 1
+    for _, n in ipairs({ STAKE_CAP, 4, 2 }) do
+        if dealAt(best, n) then st.cap = n; break end
+    end
+    ns.Log("STAKE-OUT terms for %s: buys at %d or less (%s, sells at %d), up to %d at a time; listing read %.0fs ago",
+        tostring(key), best, tostring(st.kind), st.sell, st.cap, GetTime() - last.at)
+    return best
+end
+
+-- True while the stake-out is the thing running: an item is chosen, its terms
+-- are known and the wheel is rolling in the snipe box.
+function Sniper:Staking()
+    local st = self.stake
+    return st ~= nil and st.max ~= nil and self:StakeKey() == st.key and self:SnipeMode()
+end
+
+-- One notch of the wheel in the snipe box, with no deal on it. Returns true
+-- when the stake-out used it.
+function Sniper:StakeNotch()
+    if not self:StakeKey() then return false end
+    local max = self:StakeTerms()
+    local st = self.stake
+    if not max then
+        if st and not (self.lastRows and self.lastRows[st.key]) then self.priority = self.priority or st.key end
+        return false
+    end
+    local b = self.buying
+    if b then
+        if b.stake and b.phase == "confirm" then self:Confirm() end -- one-click buying is blocked on this client: this notch is the purchase
+        return true
+    end
+    if self.searching then return true end -- its listing is being re-read
+    local now = GetTime()
+    if now - self.lastRows[st.key].at > STAKE_FRESH then return true end -- due for a re-read: the next free request is that
+    local gold = GetMoney()
+    if gold < max then st.why = "not enough gold for one unit"; return true end
+    local q = max == 0 and 1 or math.max(1, min(st.q or 1, st.cap or 1, floor(gold / max)))
+    local deal = { key = st.key, kind = st.kind, units = q, cost = q * max, sell = st.sell, profit = q * (st.each or 0), deposit = 0,
+                   buys = {}, counts = {}, commodity = true, instant = true, stake = true, from = "me", at = now,
+                   rowsText = "stake-out: price asked directly" }
+    self.buying = { key = st.key, units = q, max = q * max, phase = "quote", deal = deal, at = now, stake = true }
+    self.react = { key = st.key, secs = 0, via = "stake-out" }
+    st.asked = st.asked + 1
+    ns.Gate:Use(("stake-out price request %dx %s (buys at %d or less each)"):format(q, tostring(st.key), max))
+    C_AuctionHouse.StartCommoditiesPurchase(st.key, q)
+    self:ArmPurchaseTimeout(4)
+    return true
+end
+
 -- SNIPE MODE: you are rolling the wheel in the snipe box (a notch in the last
 -- 3 seconds). Every request then goes to the radar and to alerts: no routine
 -- item checks, no side classes, no housekeeping. A routine check costs one
@@ -837,6 +962,7 @@ function Sniper:Busy() return self.searching ~= nil or self.buying ~= nil end
 
 function Sniper:YieldTo() -- called by the scanner before each of its queries
     if self:Busy() then return false end
+    if self:Staking() then return false end -- a stake-out is running: every request is a price request
     if ns.Seller and ns.Seller:Busy() then return false end
     if self.priority then return false end
     if self.triggers and #self.triggers > 0 then return false end -- an alert is waiting: the radar waits
@@ -889,6 +1015,13 @@ function Sniper:Tick()
     end
     if self:Busy() or not ns.Gate:Ready() then return end
     if ns.Seller and ns.Seller:Busy() then return end
+    if self:Staking() then
+        -- only one other request is made while a stake-out runs: its listing, once a minute, to keep the buying price current
+        local st = self.stake
+        local last = self.lastRows and self.lastRows[st.key]
+        if not last or now - last.at > STAKE_FRESH then self:Search(st.key, "list") end
+        return
+    end
     -- AN ALERT NEVER WAITS. A real log showed alerts sitting 3 to 5 seconds
     -- behind a radar read, a housekeeping query and a re-check, on a realm
     -- where deals last 2. With an alert pending, nothing else gets a turn.
@@ -1282,6 +1415,19 @@ function Sniper:OnPriceQuote(unitPrice, total)
     local b = self.buying
     if not b or b.phase ~= "quote" then return end
     ns.Log("QUOTE %s: %s total vs verified %s", tostring(b.key), tostring(total), tostring(b.max))
+    if b.stake then
+        -- a stake-out's price request: buy if it is low enough, otherwise ask again on the next notch
+        local st = self.stake
+        if st then st.lastPrice, st.lastAt = (b.units > 0 and floor(total / b.units + 0.5)) or unitPrice, GetTime() end
+        local cheap = total <= b.max and total <= GetMoney()
+        -- more than one unit asked for: every one must be at the price just paid, so no dear unit is bought with them
+        if cheap and b.units > 1 and not (st and st.cheap and total <= b.units * st.cheap) then cheap = false end
+        if not cheap then
+            if st then st.q, st.cheap = 1, nil end
+            self.buying = nil
+            return dirty()
+        end
+    end
     if total <= b.max and total <= GetMoney() then
         b.phase, b.total, b.at = "confirm", total, GetTime()
         self:ArmPurchaseTimeout(25) -- time to press Buy again before the price is dropped
@@ -1393,6 +1539,17 @@ function Sniper:OnPurchase(ok, why)
         if self.dealSeen then self.dealSeen[b.key] = nil end
         if self.streak then self.streak[b.key] = 0 end
         if ns.Sync and ns.Sync.Bought then ns.Sync:Bought(b.key, b.units, b.units > 0 and floor(spent / b.units + 0.5) or 0) end
+        if b.stake then
+            -- the profit at the price really paid, and the next request asks for twice as many at that price
+            b.deal.profit = b.deal.kind == "VENDOR" and (b.units * b.deal.sell - spent) or (b.units * floor(b.deal.sell * (1 - Deals.cfg.cut)) - spent)
+            b.deal.units = b.units
+            local st = self.stake
+            if st then
+                st.bought = st.bought + b.units
+                st.cheap = floor(spent / math.max(1, b.units) + 0.5)
+                st.q = min((st.q or 1) * 2, STAKE_CAP)
+            end
+        end
         self:Result("won", b.key, ("GOT IT  %d x %s for %s. Worth + %s when sold."):format(b.units, nameOf(b.key), plain(spent),
             plain(math.max(0, floor((b.deal.profit or 0) * b.units / math.max(1, b.deal.units or b.units))))))
         self.bought[b.key] = (self.bought[b.key] or 0) + b.units
@@ -1410,7 +1567,11 @@ function Sniper:OnPurchase(ok, why)
             (why == "price no longer available" or why == "server refused the purchase") and "someone was faster" or tostring(why or "refused")))
     end
     self.verified[b.key] = nil
-    self.priority = b.key -- re-check: there may be more
+    if b.stake then
+        if not ok and self.stake then self.stake.q, self.stake.cheap = 1, nil end
+    else
+        self.priority = b.key -- re-check: there may be more
+    end
     self.buying = nil
     ns.Gate.holdUntil = nil
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
