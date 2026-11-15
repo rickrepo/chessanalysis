@@ -116,6 +116,17 @@ print("posting")
 check(D.postPrice({ { price = 80, qty = 5 } }, 20, 79) == 79, "undercuts the cheapest competitor by 1c")
 check(D.postPrice({ { price = 120, qty = 5 } }, 20, 79) == 119, "competitor higher than planned: take the extra profit")
 check(D.postPrice({}, 20, 79) == 79, "no competition: planned price")
+do  -- a few cheap units under the market are not the market (9 Heavy Stone at 2s25c under 3s24c, from a real log)
+    local stone = { { price = 225, qty = 9 }, { price = 324, qty = 59 }, { price = 325, qty = 183 }, { price = 327, qty = 44 }, { price = 329, qty = 25 }, { price = 330, qty = 77 } }
+    local p, why = D.postPrice(stone, 203, 293)
+    print("     " .. tostring(p) .. " (" .. tostring(why) .. ")")
+    check(p == 323 and tostring(why):find("the 9 cheaper units will be bought first", 1, true), "9 cheap Heavy Stone under a 3s24c market: yours are priced at 3s23c, not 2s24c")
+    -- cheap units that are close to the market, or that are many, are real competition
+    check(D.postPrice({ { price = 310, qty = 9 }, { price = 324, qty = 59 }, { price = 325, qty = 183 }, { price = 327, qty = 44 } }, 203, 293) == 309,
+        "a row 4% under the market is competition: undercut it")
+    check(D.postPrice({ { price = 225, qty = 120 }, { price = 324, qty = 59 }, { price = 325, qty = 183 }, { price = 327, qty = 44 } }, 203, 293) == 224,
+        "120 units at the low price are the market now: undercut them")
+end
 local p, why = D.postPrice({ { price = 20, qty = 5 } }, 30, 79)
 check(p == nil and why:find("below break%-even"), "market below cost: wait, never sell at a loss")
 check(D.postPrice({ { price = 80, qty = 5 } }, 50, 79, nil, 20) == 79 and D.postPrice({ { price = 80, qty = 5 } }, 60, 79, nil, 20) == nil, "floor covers cost + deposit + cut")

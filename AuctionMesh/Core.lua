@@ -184,7 +184,13 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             -- password stay saved, so switching it back on is one click.
             db.cfg.share = false
         end
-        db.cfg.v = 9
+        if (db.cfg.v or 0) < 10 then
+            -- The pause between requests had been raised by errors that belonged
+            -- to failed purchases, not to the pace. Start again from no pause.
+            local g = r.tune and r.tune.gap
+            if g then g.i, g.clean, g.sinceFail, g.stats, g.trial = 1, 0, 1000, {}, nil; ns.Tuner:Apply() end
+        end
+        db.cfg.v = 10
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)

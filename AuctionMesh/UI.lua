@@ -572,7 +572,11 @@ function UI:RenderBar()
     elseif not ns.Sniper.active then paused = "Idle" end
     local st = ns.Tuner:State(paused)
     local bar = frame.bar
-    local w = floor(math.max(0, math.min(1, st.fill)) * (BAR_W - 2) + 0.5)
+    if not self.barWidth or self.barWidth < 60 or frame.snap:GetLeft() ~= self.fitAt then
+        self.fitAt = frame.snap:GetLeft()
+        self:FitHeader() -- the window was resized or moved since the bar was last fitted
+    end
+    local w = floor(math.max(0, math.min(1, st.fill)) * ((self.barWidth or BAR_W) - 2) + 0.5)
     bar.fill:SetShown(w > 0)
     bar.fill:SetWidth(math.max(1, w))
     if st.mode == "try" then bar.fill:SetColorTexture(1, 0.55, 0.25, 1)
@@ -903,13 +907,24 @@ UI.selectTab = selectTab
 UI.outline = outline
 
 -- a "label ........ amount" line
-local function ledgerRow(parent, y, font)
+-- A label on the left and a value on the right that can never overlap,
+-- whatever the panel's width or the font's size: text that does not fit is
+-- cut off with "...".
+--   labelW = nil  the value keeps its own width, the label gets what is left
+--   labelW = n    the label is n wide, the value gets what is left
+local function ledgerRow(parent, y, font, labelW)
     local l = parent:CreateFontString(nil, "OVERLAY", font or "GameFontHighlightSmall")
     l:SetPoint("TOPLEFT", 0, y)
-    l:SetJustifyH("LEFT")
+    l:SetJustifyH("LEFT"); l:SetWordWrap(false)
     local v = parent:CreateFontString(nil, "OVERLAY", font or "GameFontHighlightSmall")
     v:SetPoint("TOPRIGHT", 0, y)
-    v:SetJustifyH("RIGHT")
+    v:SetJustifyH("RIGHT"); v:SetWordWrap(false)
+    if labelW then
+        l:SetWidth(labelW)
+        v:SetPoint("TOPLEFT", labelW + 8, y)
+    else
+        l:SetPoint("RIGHT", v, "LEFT", -8, 0)
+    end
     return { label = l, value = v }
 end
 
@@ -1017,7 +1032,7 @@ function UI:Create()
     frame.bar = bar
     frame.barText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     frame.barText:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -3)
-    frame.barText:SetWidth(420)
+    frame.barText:SetWidth(BAR_W)
     frame.barText:SetJustifyH("RIGHT"); frame.barText:SetWordWrap(false)
 
     -- NEXT STEP: one plain instruction, always the most profitable thing to do now
@@ -1083,9 +1098,13 @@ function UI:Create()
     local function setting(y, text)
         local l = sp:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         l:SetPoint("TOPLEFT", 0, y)
-        l:SetJustifyH("LEFT")
+        l:SetJustifyH("LEFT"); l:SetWordWrap(false)
         l:SetText(text)
         return l
+    end
+    -- the label of a row ends where the row's leftmost control begins
+    local function upTo(label, control)
+        label:SetPoint("RIGHT", control, "LEFT", -8, 0)
     end
     local function box(w, numeric, letters, suffix, onDone)
         local e = CreateFrame("EditBox", nil, sp, "InputBoxTemplate")
@@ -1115,13 +1134,14 @@ function UI:Create()
     local ROW = 22
     local function y(n) return -20 - (n - 1) * ROW end
 
-    setting(y(1), "Smallest profit worth showing a deal for")
+    local L1 = setting(y(1), "Smallest profit worth showing a deal for")
     frame.minC = box(30, true, 3, "c", function() UI:ApplyMinProfit() end)
     frame.minC:SetPoint("TOPRIGHT", -12, y(1) + 5)
     frame.minS = box(30, true, 3, "s", function() UI:ApplyMinProfit() end)
     frame.minS:SetPoint("RIGHT", frame.minC, "LEFT", -18, 0)
+    upTo(L1, frame.minS)
 
-    setting(y(2), "Profit a flip must leave after the auction house cut")
+    local L2 = setting(y(2), "Profit a flip must leave after the auction house cut")
     sp.margin = box(30, true, 2, "%", function() ns.Do.Margin(tonumber(sp.margin:GetText())) end)
     sp.margin:SetPoint("TOPRIGHT", -12, y(2) + 5)
     sp.wheel = tip(button(sp, 150, "", function()
@@ -1131,42 +1151,48 @@ function UI:Create()
             or "Mouse wheel buys: off. The wheel scrolls and zooms as usual; click the Buy button.", true)
     end), "Buying needs two inputs (ask the price, then buy). With this on, each notch of the mouse wheel is an input while a deal is on the big button, so one flick does both. The wheel goes back to scrolling and zooming as soon as there is no deal.")
     sp.wheel:SetPoint("RIGHT", sp.margin, "LEFT", -18, 0)
+    upTo(L2, sp.wheel)
 
-    setting(y(3), "What to look for")
+    local L3 = setting(y(3), "What to look for")
     sp.flips = tip(button(sp, 170, "", function() UI:SetVendorOnly(ns.Deals.cfg.flips) end),
         "Vendor deals are guaranteed profit: buy, sell to any vendor. Flips are resold on the auction house and are not guaranteed.")
     sp.flips:SetPoint("TOPRIGHT", 0, y(3) + 5)
     sp.tied = tip(button(sp, 190, "", function() ns.Do.MaxTied() end),
         "The most of your money that may sit in auctions that have NOT SOLD yet. Gold from auctions that have sold is on its way and does not count. One flip never takes more than 35% of the gold in hand, and a small flip (15% of it) is always allowed. Click to change: 30%, 50%, 70%, 100%.")
     sp.tied:SetPoint("RIGHT", sp.flips, "LEFT", -6, 0)
+    upTo(L3, sp.tied)
 
-    setting(y(4), "What the radar reads")
+    local L4 = setting(y(4), "What the radar reads")
     sp.scope = tip(button(sp, 170, "", function() ns.Do.Scope() end),
         "Click to change. Crafting materials is the fastest. Reading more of the auction house makes each round slower.")
     sp.scope:SetPoint("TOPRIGHT", 0, y(4) + 5)
+    upTo(L4, sp.scope)
 
-    setting(y(5), "Laser focus: look for flips only on")
+    local L5 = setting(y(5), "Laser focus: look for flips only on")
     sp.focus = tip(button(sp, 250, "", function() ns.Do.FocusMode() end),
         "Click to change.\nOff: every material is watched.\nPrime items: the addon picks the items measured to sell fastest with the most gold moving, and re-reads each one about once a minute.\nMy own list: items you added in the drawer, or a focus code.\nVendor-price deals are always shown, whatever the focus.")
     sp.focus:SetPoint("TOPRIGHT", 0, y(5) + 5)
+    upTo(L5, sp.focus)
 
-    setting(y(6), "Import: paste what Claude sent, then Apply")
+    local L6 = setting(y(6), "Import: paste what Claude sent, then Apply")
     sp.apply = tip(button(sp, 50, "Apply", function()
         if ns.Do.Import(sp.code:GetText()) then sp.code:SetText("") end
     end), "Paste a settings code (it starts with AMS1:) or a focus code (AMF1:), or the whole message it came in: the code is found in the text. Apply sets everything in it and says exactly what changed: smallest profit, flip margin, what the radar reads, laser focus, items added to or removed from your watch list, a smallest profit for single items, items to ignore. Sharing is never changed by a code. Your current code is in the Snapshot.")
     sp.apply:SetPoint("TOPRIGHT", 0, y(6) + 5)
     sp.code = box(196, false, 4000)
     sp.code:SetPoint("RIGHT", sp.apply, "LEFT", -8, 0)
+    upTo(L6, sp.code)
 
-    setting(y(7), "The panel")
+    local L7 = setting(y(7), "The panel")
     sp.dock = tip(button(sp, 170, "", function() ns.Do.Dock(AuctionMeshDB.cfg.dock == false) end),
         "Inside the auction house window, or as a window of its own that you can drag anywhere.")
     sp.dock:SetPoint("TOPRIGHT", 0, y(7) + 5)
     sp.auto = tip(button(sp, 150, "", function() ns.Do.Auto(not AuctionMeshDB.cfg.autoOpen) end),
         "On: the panel opens and starts reading prices when you open the auction house. Off: click the AuctionMesh tab under the auction house window.")
     sp.auto:SetPoint("RIGHT", sp.dock, "LEFT", -6, 0)
+    upTo(L7, sp.auto)
 
-    setting(y(8), "Share prices with friends: channel name, password")
+    local L8 = setting(y(8), "Share with friends: channel, password")
     sp.join = tip(button(sp, 50, "Join", function() ns.Do.Channel(sp.chan:GetText(), sp.pass:GetText()) end),
         "Everyone in your group types the same channel name and password. The channel is hidden and only carries addon data.")
     sp.join:SetPoint("TOPRIGHT", 0, y(8) + 5)
@@ -1174,6 +1200,7 @@ function UI:Create()
     sp.pass:SetPoint("RIGHT", sp.join, "LEFT", -8, 0)
     sp.chan = box(90, false, 20)
     sp.chan:SetPoint("RIGHT", sp.pass, "LEFT", -10, 0)
+    upTo(L8, sp.chan)
 
     sp.share = setting(y(9), "")
     sp.guild = tip(button(sp, 110, "Use my guild", function() ns.Do.Guild() end),
@@ -1188,7 +1215,7 @@ function UI:Create()
     sp.share:SetPoint("RIGHT", sp.shareOn, "LEFT", -8, 0)
     sp.share:SetWordWrap(false)
 
-    setting(y(10), "Auto-adjust: pace, profit bar, smallest profit, quiet time")
+    local L10 = setting(y(10), "Auto-adjust (pace, smallest profit, quiet time)")
     sp.forget = tip(button(sp, 170, "Forget what was learned", function()
         -- two clicks, so it can't happen by accident
         if UI.forgetUntil and GetTime() < UI.forgetUntil then
@@ -1202,8 +1229,9 @@ function UI:Create()
     sp.forget:SetPoint("TOPRIGHT", 0, y(10) + 5)
     sp.tune = button(sp, 110, "", function() ns.Do.Tuning(not ns.Tuner.cfg.enabled) end)
     sp.tune:SetPoint("RIGHT", sp.forget, "LEFT", -6, 0)
+    upTo(L10, sp.tune)
 
-    setting(y(11), "Share with Claude")
+    local L11 = setting(y(11), "Share with Claude")
     sp.restore = tip(button(sp, 150, "Rebuild from purchases", function() ns.Seller:Restore() end),
         "Rebuilds the Bags list from the last 3 days of recorded purchases, for items that are still in your bags. To track anything else, drag it from your bags onto this panel.")
     sp.restore:SetPoint("TOPRIGHT", 0, y(11) + 5)
@@ -1214,11 +1242,12 @@ function UI:Create()
     sp.report = tip(button(sp, 100, "Daily report", function() ns.Do.Report() end),
         "One block of text to copy and paste to Claude once a day: what sold, what was found, what was missed, which items move the most gold, and how the engine is doing. It is what Claude needs to tell you where to focus.")
     sp.report:SetPoint("RIGHT", log, "LEFT", -6, 0)
+    upTo(L11, sp.report)
     outline(sp.report, ACCENT)
 
     heading(sp, y(12) - 18, "REQUEST ENGINE: WHAT IT HAS LEARNED")
     sp.rows = {}
-    for i = 1, 8 do sp.rows[i] = ledgerRow(sp, y(12) - 34 - (i - 1) * 15) end
+    for i = 1, 8 do sp.rows[i] = ledgerRow(sp, y(12) - 34 - (i - 1) * 15, nil, 170) end
     sp:Hide()
     frame.setup = sp
 
@@ -1412,7 +1441,6 @@ function UI:Place()
         frame.tabBuy:SetPoint("TOPLEFT", 12, -8)
         frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -12, -6)
         frame.pop:SetText("Pop out"); frame.pop:Show()
-        frame.bar:SetPoint("TOPRIGHT", -84, -9)
     else
         frame:SetParent(UIParent)
         frame:SetScale(0.9)
@@ -1424,11 +1452,40 @@ function UI:Place()
         -- "Dock" only makes sense while the auction house is open
         frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -34, -6)
         frame.pop:SetText("Dock"); frame.pop:SetShown(ahOpen() and true or false)
-        frame.bar:SetPoint("TOPRIGHT", ahOpen() and -104 or -34, -9)
+        -- with no Dock button the Snapshot button takes its place
+        frame.snap:ClearAllPoints()
+        if ahOpen() then frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -6, 0) else frame.snap:SetPoint("TOPRIGHT", -34, -6) end
         local pos = AuctionMeshDB.cfg.pos
         if pos then frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else frame:SetPoint("CENTER", 0, 40) end
     end
+    if dock then frame.snap:ClearAllPoints(); frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -6, 0) end
     self.docked = dock
+    self:FitHeader()
+end
+
+-- The engine bar and its line of text live in the space between the tabs and
+-- the Snapshot button, and are sized to it: on a narrow panel they shrink, and
+-- when there is no room at all they are hidden rather than drawn over the
+-- buttons. (The bar had a fixed place and a fixed 420-wide text, which ran
+-- over the Snapshot button and the Setup tab.)
+function UI:FitHeader()
+    if not frame then return end
+    local bar, txt = frame.bar, frame.barText
+    bar:ClearAllPoints()
+    bar:SetPoint("RIGHT", frame.snap, "LEFT", -10, 3)
+    local function num(v) return type(v) == "number" and v or nil end
+    local left = num(frame.tabHist.GetRight and frame.tabHist:GetRight())
+    local right = num(frame.snap.GetLeft and frame.snap:GetLeft())
+    local room = (left and right) and (right - left - 24) or BAR_W
+    local w = math.max(0, math.min(BAR_W, floor(room)))
+    self.barWidth = w
+    if w < 60 then
+        bar:Hide(); txt:Hide()
+    else
+        bar:Show(); txt:Show()
+        bar:SetWidth(w)
+        txt:SetWidth(w)
+    end
 end
 
 ---------------------------------------------------------------- detail drawer
@@ -1761,8 +1818,25 @@ function UI:PlaceDrawer()
     local d, h = frame.drawer, frame.handle
     local open = AuctionMeshDB.cfg.drawer == true
     d:SetShown(open)
+    -- On a screen with no room to the right of the panel the drawer opens on
+    -- the left instead of running off the edge.
+    local left = false
+    do
+        local r, sw = frame.GetRight and frame:GetRight(), UIParent and UIParent.GetWidth and UIParent:GetWidth()
+        local fs, us = frame.GetEffectiveScale and frame:GetEffectiveScale(), UIParent and UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()
+        if type(r) == "number" and type(sw) == "number" and type(fs) == "number" and type(us) == "number" and us > 0 then
+            left = (r + DRAWER_W + 24) * fs > sw * us
+        end
+    end
+    d:ClearAllPoints()
+    if left then
+        d:SetPoint("TOPRIGHT", frame, "TOPLEFT", -1, 0); d:SetPoint("BOTTOMRIGHT", frame, "BOTTOMLEFT", -1, 0)
+    else
+        d:SetPoint("TOPLEFT", frame, "TOPRIGHT", 1, 0); d:SetPoint("BOTTOMLEFT", frame, "BOTTOMRIGHT", 1, 0)
+    end
+    self.drawerLeft = left
     h:ClearAllPoints()
-    h:SetPoint("TOPLEFT", open and d or frame, "TOPRIGHT", 0, -40)
+    h:SetPoint("TOPLEFT", (open and not left) and d or frame, "TOPRIGHT", 0, -40)
     h:SetText(open and "<\n\nH\nI\nD\nE" or ">\n\nD\nE\nT\nA\nI\nL\nS")
 end
 

@@ -347,6 +347,24 @@ function Deals.postPrice(rows, cost, target, cfg, deposit)
     if not lowest then
         return max(Deals.round(target, cfg), floorP), "no competition"
     end
+    -- A FEW CHEAP UNITS UNDER THE MARKET ARE NOT THE MARKET. They are deals,
+    -- and are bought within seconds; pricing under them gives the same
+    -- discount away on everything you post. (A real log: 9 Heavy Stone were
+    -- on offer at 2s25c under a market of 3s24c. The addon priced yours at
+    -- 2s24c and they sold at once, for about a silver less each than the
+    -- market paid.) So leading rows that are 10% or more under the wall and
+    -- hold no more than a tenth of its depth are skipped.
+    do
+        local wi, wall, depth = Deals.wall(rows, cfg)
+        if wi and wi > 1 then
+            local thin = 0
+            for i = 1, wi - 1 do thin = thin + rows[i].qty end
+            if rows[wi - 1].price <= wall * 0.90 and thin <= depth * 0.10 then
+                local p = Deals.round(wall - cfg.undercut, cfg)
+                if p >= floorP then return p, ("undercut the market at %d (the %d cheaper unit%s will be bought first)"):format(wall, thin, thin == 1 and "" or "s") end
+            end
+        end
+    end
     local p = Deals.round(lowest - cfg.undercut, cfg)
     if p >= floorP then return p, "undercut" end
     if lowest >= floorP then return lowest, "match" end

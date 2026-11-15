@@ -220,7 +220,7 @@ local function onEvent(_, event, ...)
     elseif event == "UI_ERROR_MESSAGE" then
         local _, msg = ...
         if not isAHError(msg) and not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
-        if isAHError(msg) then Gate:Penalize(tostring(msg)) end
+        if isAHError(msg) and GetTime() >= (Gate.ignoreErrorUntil or 0) then Gate:Penalize(tostring(msg)) end
     elseif event == "AUCTION_HOUSE_SHOW_ERROR" and GetTime() < (Gate.ignoreErrorUntil or 0) then
         -- follows our own cancelled purchase: log it, no back-off
     elseif event == "PLAYER_MONEY" then

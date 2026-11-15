@@ -298,6 +298,17 @@ The mouse resting in the box pauses nothing. It used to: the radar stood still w
 
 **Buy with the mouse wheel.** While a deal is on the button, rolling the mouse wheel anywhere on the panel presses Buy; one flick of the wheel is several presses, which covers both steps. With **Mouse wheel buys: on** (Setup tab, the default) the wheel does this anywhere on screen while a deal is up, and goes back to normal the moment there is none. If the game does not accept the wheel as an input, that switches itself off too.
 
+What the sixth real log showed (version 3.26), with the wheel in use (reaction time 0.0 seconds, 11 got and 12 missed):
+
+| The log showed | Change |
+|---|---|
+| **The wheel works.** 27 purchases were started by the wheel, the first within 20 milliseconds of a deal being found | Confirmed in the real game |
+| After a purchase the server refused (someone else got the units between the price and the buy), the game's error message for it was read as "the server is refusing requests". The radar stopped for 5 seconds, twice, and the pause between all requests went from 0 to 0.5 seconds: the radar then read every 1.13 seconds instead of every 0.70 | An error in the seconds after a purchase belongs to that purchase. No stop, no longer pause. The pause that had been learned this way is reset once |
+| 9 Heavy Stone were on offer at 2s 25c under a market of 3s 24c. The addon priced yours 1c under them, at 2s 24c; they sold at once, about a silver each under the market | A few cheap units under the market are deals, not the market: rows 10% or more under the wall that hold no more than a tenth of its depth are skipped when pricing, so those would have been posted at 3s 23c |
+| The engine bar ran over the Snapshot button and the Setup tab; Setup labels ran under their controls | The bar sits between the tabs and the Snapshot button and shrinks to the room there is (hidden if there is none). Every label and row is cut off with "..." rather than overlapping. The drawer opens on the left when there is no room on the right |
+
+What is left of a miss now is the game's own timing: from the radar seeing a listing, the price request can go half a second later, and the purchase half a second after the price. Someone whose radar read lands a moment earlier gets there first.
+
 What the fifth real log showed (version 3.21):
 
 | The log showed | Change |

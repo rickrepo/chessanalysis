@@ -1152,6 +1152,13 @@ function Sniper:Confirm()
     b.phase, b.moneyBefore, b.at = "wait", GetMoney(), GetTime()
     self:ArmPurchaseTimeout()
     ns.Gate:Use(("buy confirm %dx %s total %s"):format(b.units, tostring(b.key), tostring(b.total)))
+    -- An error in the next seconds belongs to this purchase (someone else got
+    -- the units first), not to the pace of requests. A real log showed it being
+    -- read as "the server refused a request": the radar stopped for 5 seconds
+    -- after each of two failed purchases, and the pause between all requests
+    -- was raised from 0 to 0.5 seconds, so the radar read every 1.13 seconds
+    -- instead of every 0.70 from then on.
+    ns.Gate.ignoreErrorUntil = GetTime() + 4
     C_AuctionHouse.ConfirmCommoditiesPurchase(b.key, b.units)
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
 end
@@ -1395,6 +1402,7 @@ function Sniper:OnPurchase(ok, why)
         end
     else
         ns.Log("PURCHASE FAILED %s: %s", tostring(b.key), tostring(why))
+        ns.Gate.ignoreErrorUntil = GetTime() + 3 -- the game's error message for it follows; it is not about pace
         if ns.Scout then ns.Scout:Fail(b.key, why) end
         if self.dealSeen then self.dealSeen[b.key] = nil end
         say(("|cffff4040Purchase NOT completed:|r %s (%s). Nothing was recorded."):format(nameOf(b.key), why or "refused"))

@@ -1688,6 +1688,52 @@ do
         UI.tab = "BUY"; UI.notice = nil; UI:Render()
     end
 
+    -- A FAILED PURCHASE IS NOT A PACE PROBLEM (two 5-second radar stops and a slower radar in a real log)
+    do
+        reset(); gold = 5000; cfg.autoConfirm = nil
+        local T, G2 = ns.Tuner, ns.Gate
+        ITEMS[2838] = { "Heavy Stone", 15 }
+        LIST[2838] = { { 203, 3 }, { 300, 75 }, { 320, 44 }, { 325, 149 }, { 327, 44 } }
+        S.verified[2838] = { key = 2838, units = 3, cost = 609, sell = 294, profit = 228, deposit = 0, buys = {}, counts = {}, from = "me", kind = "FLIP", commodity = true, at = GetTime(),
+                             rows = rows({ { 203, 3 }, { 300, 75 } }) }
+        local realConfirm = C_AuctionHouse.ConfirmCommoditiesPurchase
+        C_AuctionHouse.ConfirmCommoditiesPurchase = function()
+            C_Timer.After(0.2, function() fire("COMMODITY_PURCHASE_FAILED") end)
+            C_Timer.After(0.45, function() fire("AUCTION_HOUSE_SHOW_ERROR", 10) end) -- the game's "internal auction error" for it
+        end
+        local gapWas, errWas = T.d.gap.i, G2.errors
+        S:Press(2838); advance(1.5)
+        C_AuctionHouse.ConfirmCommoditiesPurchase = realConfirm
+        check(S.result and S.result.kind == "lost", "the server refuses the purchase: reported as MISSED")
+        check(G2.errors == errWas and T.d.gap.i == gapWas and (G2.nextAt or 0) < GetTime() + 1,
+            "the error message that follows is not counted against the pace: no 5-second stop, no longer pause between requests")
+        -- an error with no purchase near it still counts
+        advance(5)
+        fire("AUCTION_HOUSE_SHOW_ERROR", 10)
+        check(G2.errors > errWas, "an error that follows no purchase is still treated as the server pushing back")
+        G2.nextAt, G2.penaltyUntil, G2.errors = 0, 0, errWas
+        T.d.gap.i = gapWas
+        LIST[2838] = nil; S.verified[2838] = nil; cfg.autoConfirm = false
+    end
+
+    -- THE HEADER BAR FITS THE SPACE IT HAS
+    do
+        local f = AuctionMeshFrame
+        local realR, realL = rawget(f.tabHist, "GetRight"), rawget(f.snap, "GetLeft")
+        rawset(f.tabHist, "GetRight", function() return 300 end)
+        rawset(f.snap, "GetLeft", function() return 640 end)
+        UI:FitHeader()
+        check(UI.barWidth == 230 and f.bar._shown ~= false, "wide panel: the engine bar is its full width, between the tabs and the Snapshot button")
+        rawset(f.snap, "GetLeft", function() return 440 end)
+        UI:FitHeader()
+        check(UI.barWidth == 116, "narrower panel: the bar and its text shrink to the room there is (116)")
+        rawset(f.snap, "GetLeft", function() return 350 end)
+        UI:FitHeader()
+        check(UI.barWidth < 60 and f.bar._shown == false and f.barText._shown == false, "no room at all: the bar is hidden instead of being drawn over the buttons")
+        rawset(f.tabHist, "GetRight", realR); rawset(f.snap, "GetLeft", realL)
+        UI:FitHeader()
+    end
+
     -- five misses in a row: the item is left alone for 3 minutes
     reset(); gold = 900
     ITEMS[4306] = { "Silk Cloth", 150 }
