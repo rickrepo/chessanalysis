@@ -83,50 +83,37 @@ The bar at the top right is on every tab.
 | teal | `Tuned: 1.6 requests a second, 94% in use` | Nothing being tried; the bar is how much of the request budget is in use |
 | empty | `Paused while you click` / `Idle: the auction house is closed` | Nothing is being sent |
 
-### Details: the drawer on the right
+### The ledger: the drawer on the right
 
-A slim **DETAILS** handle sits on the panel's right edge. Clicking it slides a second panel out to the right (click again to hide it). The mouse wheel scrolls it.
+A slim **DETAILS** handle sits on the panel's right edge. Clicking it slides a second panel out to the right (click again to hide it). The mouse wheel scrolls it. It is a ledger: one line per purchase, and nothing else.
 
 ```
- ALL TRADES
- Bought so far                              3 trades, 2s 76c spent
- Finished / still open                                      2 / 1
- Profit made on what has sold                           + 3s 43c
- Profit if everything open sells                        + 3s 18c
- OPEN (1)
- Linen Cloth x6                                         9 min ago
- Bought at 20c each                                     - 1s 20c
- On the auction house: 6 at 77c each                    + 4s 38c
- Profit if this sells                                   + 3s 18c
- DO    Someone lists at 70c. Cancel yours (the game's Auctions
-       tab) and post again at 69c: still + 2s 70c. The posting
-       fee is paid again.
- FINISHED (2)
- Copper Ore x12                                        23 min ago
- Bought at 3c each                                          - 36c
- Sold 12 to a vendor at 5c each                             + 60c
- Profit made                                                + 24c
+ LEDGER
+ Paid for everything bought                             - 2s 76c
+ Came back from what sold                               + 4s 99c
+ Sold, gold on its way                                  + 3s 80c
+ ----------------------------------------------------------------
+ You are up                                               6s 03c
+ 1 purchase not sold yet: 1s 20c still to come back
+ WHAT YOU BOUGHT, NEWEST FIRST (4)
+ Test Ore x5  at 40c                 SOLD, gold coming  + 1s 80c
+ Linen Cloth x6  at 20c                   NOT SOLD  down 1s 20c
+ Linen Cloth x6  at 20c                          SOLD  + 3s 19c
+ Copper Ore x12  at 3c                             SOLD  + 24c
 ```
 
-* **Every purchase is one trade**, followed to its end: bought, listed (at what price), sold (what the buyer really paid, from the sale invoice), sold to a vendor, expired, or removed. Two purchases of the same item are matched oldest first.
-* **Profit made** is only on units that have actually sold. **Profit if this sells** is what the rest brings at the listed or live price, after the cut.
-* **One recommendation per open trade**, marked `DO` (act now), `WAIT` or `CHECK`:
-
-| Where the item is | Recommendation |
+| The right-hand side says | Meaning |
 |---|---|
-| In the mailbox | Visit a mailbox to collect it |
-| In your bags, vendor deal | Sell to any vendor, with the guaranteed profit |
-| In your bags, flip, price checked | Post N at the live price, with the profit after the cut and how many sell an hour |
-| In your bags, market below your cost | Hold: what selling under the cheapest listing would lose, and the 24h price change |
-| Listed, nobody cheaper | Wait, with how many sell an hour and when the auction runs out |
-| Listed, undercut by 3% or less | Wait: the cheaper units sell first |
-| Listed, undercut by more, repost still clears your minimum profit | Cancel and post again at 1c under, with the profit that leaves. The posting fee is paid again |
-| Listed, undercut by more, repost not worth it | Wait: says what going under would leave |
-| No longer listed | Sold (invoice seen, gold on its way), or "sold or expired, a mailbox visit tells which" |
+| green `SOLD  + 3s 19c` | Sold. The profit really made: what the buyer paid, minus the cut, minus what you paid (red if it was a loss) |
+| orange `SOLD, gold coming  + 1s 80c` | It sold on the auction house and the gold is on its way (the hour's wait). The profit that is coming |
+| red `NOT SOLD  down 1s 20c` | Not sold yet. You are down what you paid for it until it sells |
+| red `3 NOT SOLD  down 60c` | Part of it sold; 3 units have not |
+| grey `not found, not counted` | The units were not found in your bags, mailbox or auctions |
 
-* The drawer has three views, **Trades | Activity | Market**. Activity is the log of everything that happened to your gold and items; Market lists the biggest 24-hour price moves and what sells fastest.
-* The Market view starts with the **prime items** (see Laser focus below).
-* **Click any item row** in the main panel and the drawer shows that item alone: cheapest listing and its age, market price from the full listing, 24h change, units sold per hour, what buyers really paid, vendor price, why the last check was or wasn't a deal, then your trades in it. **Trades** goes back.
+* **You are up / down** is everything that came back (plus sold gold on its way) minus everything paid.
+* The drawer has two views, **Ledger | Market**. Market starts with the **prime items** (see Laser focus below), then the biggest 24-hour price moves and what sells fastest.
+* **Click any item row** in the main panel and the drawer shows that item alone: cheapest listing and its age, market price, 24h change, units sold per hour, what buyers really paid, vendor price, why the last check was or wasn't a deal, then each of your trades in it in full, with one recommendation (`DO`, `WAIT` or `CHECK`) for what you still hold. **Ledger** goes back.
+* **Stop tracking this item** is a button at the bottom of that one-item view, and asks for a second click. (A right-click on a row used to remove it, which was too easy to do by accident; a right-click now does the same as a left-click.)
 
 The addon never cancels an auction itself; a "cancel and post again" recommendation is something you do in the game's own Auctions tab.
 
@@ -139,7 +126,9 @@ Nothing has to be typed in chat. The Setup tab has a control for everything that
 | Smallest profit worth showing a deal for | Two boxes, silver and copper. Smaller deals are hidden |
 | Profit a flip must leave after the auction house cut | A percentage box. Self-tuning nudges it from how trades turn out |
 | What to look for | Vendor deals + flips, or vendor deals only (every deal guaranteed) |
-| What the radar reads | Click to change: crafting materials (fastest), all money-makers, whole auction house |
+| Buy with the mouse wheel | On or off. On: while a deal is showing, rolling the wheel anywhere presses Buy |
+| Flips may tie up | The most of your money that may sit in auctions that have not sold: 30%, 50%, 70% or 100% |
+| What the radar reads | Click to change: crafting materials only, all money-makers, whole auction house. Materials are read about every second in all three |
 | Laser focus | Click to change: off, prime items (picked from measured activity), or my own list |
 | Focus code | A box and **Apply**, for a code you were given (see below) |
 | The panel | Inside the auction house window or a window of its own; opens by itself on or off |
@@ -220,9 +209,22 @@ Real reports show deals on this realm lasting 1 to 3 seconds, a few lasting 10 t
 | A deal is confirmed | If the first page of the listing already proves the deal, it acts on it at once instead of fetching the rest |
 | The same instant | The panel redraws immediately, a sound plays, and the radar goes **silent for 6 seconds** so the auction house is free for your click |
 | Your first click | Asks the server for the price, **inside that click**. If the auction house is busy the game queues it itself |
-| Your next click | Buys. Two clicks is the minimum: this game refuses a price request that does not come directly from a click |
+| The price arrives (about 0.15s later) | If it is what the deal showed or less, the addon **sends the purchase itself**: one click buys. Whether this game accepts a purchase that does not come from a click is not known; it is tried once, and if the game blocks it the addon switches it off and says so |
+| If that is blocked: your next input | Buys. The server needs two steps (ask the price, then buy) and the game wants a real input for each |
 
-**The big Buy button** on the Trades tab never moves and always acts on the best deal. Click it repeatedly: the first click asks for the price, clicks while the price is on its way are ignored, and the first click after it arrives buys. It never buys twice.
+**The big Buy button** on the Trades tab never moves and always acts on the best deal. Click it repeatedly: the first click asks for the price, clicks while the price is on its way are ignored, and the first input after it arrives buys. It never buys twice.
+
+**Buy with the mouse wheel.** While a deal is on the button, rolling the mouse wheel anywhere on the panel presses Buy; one flick of the wheel is several presses, which covers both steps. With **Mouse wheel buys: on** (Setup tab, the default) the wheel does this anywhere on screen while a deal is up, and goes back to normal the moment there is none. If the game does not accept the wheel as an input, that switches itself off too.
+
+What the fourth real log changed (version 3.19):
+
+| The log showed | Change |
+|---|---|
+| 24 Wool Cloth at 1s; a quote for 16 came back as 6 at 1s plus 10 dearer. The deal was dropped as missed | The quote says how many cheap units are left. The deal is offered again at once for those: `6 of 16 still there` |
+| Silk Cloth at 1s was missed four times in a row | After 3 misses in a row on one item, that item is muted for 10 minutes: someone faster is on it, and each try costs requests and your attention |
+| Crafting materials were read every 6 seconds with the radar idle half the time (scope set to the wider one, work split with a friend) | Materials are always read back to back, about every 0.65 seconds, by every player. The other classes are side reads |
+| A vendor-price alert waited 3 seconds because the game refreshed its own list of your auctions | That pause is 1 second, not 2 |
+| Six flips in four minutes were skipped as "money tied up", among them 45 Wool Cloth at 32c under a 1s 68c market. All of that money had already sold | Sold gold on its way no longer counts against the limit (see Capital) |
 
 What the third real log changed (version 3.17), all aimed at the seconds before your click:
 
@@ -233,6 +235,8 @@ What the third real log changed (version 3.17), all aimed at the seconds before 
 | Every vendor deal cost a 0.65 second item check before it was shown | When a price falls under vendor price and N units appeared since the last radar read, the deal is shown for N units at once. Your first click asks the server what N units cost; Buy is only offered if that is exactly N x the price seen |
 | "Not buyable" appeared again, for units another buyer was taking | That guess is gone. Your own auctions are known from the server's list. After a miss the same units are ignored for 4 seconds (the listing goes on showing sold units for a moment); a repeat miss at the same price waits four times longer each time, up to 10 minutes |
 | The game's list of sold auctions gives the amount paid and the time until pay-out | "Sold: still on its way" uses those figures directly, so the total matches the game's Auctions tab |
+
+**If a friend got it.** When you miss a deal and a friend on the channel bought it, the result says so: `MISSED ... Bob got it`. The gold stayed in the team.
 
 **Who spotted it.** Every deal says `spotted by you` (your own radar) or `spotted by a friend` (it arrived over the channel from a friend's radar). A friend's deal is one they saw first and can click first; the label is on the big button, on the row, in the tooltip, and in the daily report.
 
@@ -282,7 +286,9 @@ So the addon treats your gold as the scarce thing:
 | Rule | What it does |
 |---|---|
 | One flip takes at most 35% of the gold in hand | 50s in hand: a 20s pile of Earthroot is bought for 17s 50c, not all of it |
-| Flips stop when 50% of all your money is in auctions and unpaid sales | The Trades tab says `Flips paused: 36s 54c of your 58s 09c is in auctions and unpaid sales (limit 50%). Next pay-out in 29 min.` |
+| Big flips stop when 50% of all your money is in auctions that have **not sold** | The Trades tab says `Big flips paused: 36s 48c of your 58s 03c is in auctions that have not sold (limit 50%).` |
+| Gold from auctions that have sold does not count against that limit | It is certain and arrives within the hour. (It used to count, which skipped good flips while you were simply waiting to be paid) |
+| A small flip is always allowed: up to 15% of the gold in hand | 7s 39c in hand: a 62c Heavy Stone worth + 2s is still bought |
 | Vendor deals are never limited | Their gold is back in minutes, with no cut and no fee |
 | Under 5 silver in all, neither limit applies | There is nothing to split |
 
@@ -326,12 +332,8 @@ A purchase that cannot be found in your bags or mailbox is kept on the list and 
 
 ### Your auctions and banked profit
 
-* An auction you post is shown on the Trades tab under **LISTED** with its quantity, cost, your price and expected profit. It moves under **STUCK LISTINGS** when the latest radar read saw someone cheaper, and under **ENDED, CHECK A MAILBOX** when it is no longer among your auctions.
+* An auction you post is shown on the Trades tab under **LISTED** with its quantity, cost, your price and expected profit. It moves under **STUCK LISTINGS** when the latest radar read saw someone cheaper, and under **ENDED, CHECK A MAILBOX** when it is no longer among your auctions. An auction that has **sold** is listed under **SOLD, GOLD ON ITS WAY** with `Sold: gold arrives in 16 min` (it used to be shown as stuck and undercut while its gold was on the way, because the cheaper listings the radar saw were other people's).
 * **Banked so far** (bottom of the Trades tab) is profit actually made: vendor sales, plus auction sales once you collect the gold (sale price minus the auction house cut minus what you paid).
-
-### Recent activity (drawer, Activity view)
-
-Everything that happened to your gold and items, newest first: "Bought: 7 x … for 1s 40c", "Collected from mailbox: 7 x … is now in your bags", "Posted 1x Wool Cloth at 1s 60c", "Sold: …", and purchases that did not complete.
 
 ### Deals (Trades tab)
 
@@ -400,13 +402,13 @@ The auction house offers two kinds of search, and they cost the same one request
 
 AuctionMesh uses the cheap, wide one as its radar and spends the narrow one only where it pays:
 
-1. **Sweep.** It re-reads the whole crafting-materials class every 8 to 20 seconds (the interval follows the sweep's measured cost).
+1. **Sweep.** It re-reads the whole crafting-materials class back to back: one request, about every 0.65 seconds. This is so whatever **What the radar reads** is set to; the other classes of a wider setting are side reads, each every 30 seconds (slower for the whole auction house, so that they never take more than a quarter of the requests).
 2. **Trigger.** A full item search is queued only when the sweep shows something: the lowest price is at or under vendor price, is 20% or more under the known market price, or fell 15% or more since the last sweep.
 3. **Confirm.** One item search loads the full listing and the deal rules decide.
 4. **Volume for free.** A drop in an item's listed quantity between two sweeps means units were bought, so every material's trading volume is measured without extra requests.
 5. **Routine.** Each of the 50 watched staples also gets one full look every 5 minutes to keep its market price current.
 
-Compared with re-reading 50 items one by one, this covers every crafting material and uses fewer requests. It should also spot a new cheap listing within one sweep instead of one round. With friends on the same channel the sweep is shared: each category is read by one of you.
+Compared with re-reading 50 items one by one, this covers every crafting material and uses fewer requests. It should also spot a new cheap listing within one sweep instead of one round. **With friends on the channel.** One request already reads every crafting material, so splitting that between two players gains nothing and only adds waiting: each of you reads materials yourself, back to back, and those reads are not broadcast. What a team adds is ground. Reagents, consumables, gems and enhancements are each read once every 30 seconds by whichever of you gets there first, and the result is shared, so those deals are seen without slowing anyone's main radar. Deals a friend's radar found are labelled as theirs, and a purchase by a friend is announced to the team.
 
 The game's full-download scan (one request for the entire auction house, allowed once per 15 minutes) is not used.
 
@@ -489,7 +491,7 @@ Everything you bought is listed here, with what you paid, what it sells for, the
 | **Ready to post** | Press **Post** (or **Post next**). The price is 1 step under the cheapest other seller, and never below what you paid plus the deposit plus the 5% cut. It posts everything of that item in one click. |
 | **Waiting: market is below your cost** | Nothing is posted, because that would lose money. It re-checks every 10 minutes. |
 
-The game requires one click or key press per auction. For speed, make a macro `/click AuctionMeshPostButton` and tap it. An item only leaves the list once your bags show it really went. Right-click a row to remove it. Drag an item from your bags onto the window to add it by hand.
+The game requires one click or key press per auction. For speed, make a macro `/click AuctionMeshPostButton` and tap it. An item only leaves the list once your bags show it really went. To remove an item, click its row and press **Stop tracking this item** in the drawer. Drag an item from your bags onto the window to add it by hand.
 
 AuctionMesh only works while its own panel is open. When you switch to the game's own auction screens it sends nothing at all, so it never changes what those screens show. Moving the mouse over the auction house window doesn't pause anything; it only waits briefly while your mouse is on a Buy or Post button, and for 8 seconds after you use one of the game's own auction buttons.
 

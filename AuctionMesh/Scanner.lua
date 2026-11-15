@@ -61,6 +61,10 @@ function Scanner:OnBrowse(results, reset)
         local r = results[i]
         if r.itemKey then observeMin(batch, keyOf(r.itemKey), r.minPrice, r.totalQuantity) end
     end
+    -- The main radar reads the same class on every friend's client, about
+    -- once a second: broadcasting it would only flood the channel. Side
+    -- classes and anything you browse yourself are shared.
+    local quiet = ns.Swarm and ns.Swarm.Quiet and ns.Swarm:Quiet() or false
     for key, v in pairs(batch) do
         local prev = browseMin[key]
         if prev then
@@ -70,7 +74,7 @@ function Scanner:OnBrowse(results, reset)
         -- One category query just told us the lowest price and quantity of this
         -- item. The sniper decides from that whether a full look is worth a request.
         if ns.Sniper and ns.Sniper.OnSweep then ns.Sniper:OnSweep(key, v[1], v[2]) end
-        Sync:Observe(key, v[1], v[2])
+        Sync:Observe(key, v[1], v[2], nil, quiet)
     end
 end
 

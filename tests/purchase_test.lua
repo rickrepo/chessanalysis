@@ -19,7 +19,7 @@ C_AuctionHouse = {
     ConfirmCommoditiesPurchase = function() sent[#sent + 1] = "confirm" end,
     CancelCommoditiesPurchase = function() end,
 }
-AuctionMeshDB = {}
+AuctionMeshDB = { cfg = { autoConfirm = false } } -- these tests walk the two steps by hand
 local ns = {
     Print = function(m) printed[#printed + 1] = m end, Log = function() end,
     Gate = { Ready = function() return true end, ReadyForUser = function() return true end, UserBusy = function() return false end, Use = function() end },

@@ -80,7 +80,9 @@ end
 ---------------------------------------------------------------- live path
 
 -- Records one observation from our own scanning. Returns true if net-new.
-function Sync:Observe(key, price, qty, t)
+-- quiet = keep it, but do not broadcast it (a reading every friend's own
+-- radar makes for itself is not worth the channel's one message a second)
+function Sync:Observe(key, price, qty, t, quiet)
     self.stats.observed = self.stats.observed + 1
     t = t or self.serverTime()
     local op, oq, ot = Store:Get(key)
@@ -92,6 +94,7 @@ function Sync:Observe(key, price, qty, t)
     end
     if not Store:Put(key, price, qty, t) then return false end
     self.stats.netNew = self.stats.netNew + 1
+    if quiet then return true end
     if not self.pending[key] then
         self.pending[key] = true
         self.npending = self.npending + 1
@@ -305,6 +308,20 @@ function Sync:OnPresence(msg, sender)
             C_Timer.After(0.3 + math.random() * 1.2, function() Sync:Beacon(false) end)
         end
     end
+end
+
+-- "B <item> <units> <price each>": one of us bought a deal.
+function Sync:Bought(key, units, unit)
+    if not Comm:Route() then return end
+    Comm:Enqueue(Comm.CONTROL, "B" .. Codec.uint(Codec.zig(key)) .. Codec.uint(units) .. Codec.uint(unit))
+end
+function Sync:OnBought(msg, sender)
+    local z, pos = Codec.readUInt(msg, 2)
+    local units, unit
+    units, pos = Codec.readUInt(msg, pos)
+    unit = Codec.readUInt(msg, pos)
+    if not z or not units or not unit then return end
+    if ns.Sniper and ns.Sniper.OnFriendBought then ns.Sniper:OnFriendBought(Codec.unzig(z), units, unit, sender) end
 end
 
 -- Everyone heard from recently, most recent first: { name, at, ver }.
@@ -566,5 +583,6 @@ function Sync:Tidy()
 end
 
 OPS[80] = function(self, msg, sender) self:OnPresence(msg, sender) end -- 'P'
+OPS[66] = function(self, msg, sender) self:OnBought(msg, sender) end -- 'B'
 
 return Sync

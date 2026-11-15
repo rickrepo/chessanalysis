@@ -259,9 +259,9 @@ function Do.Scope(v)
     Swarm.units = {}
     if Swarm.active then Swarm:BuildUnits() end
     Sniper.lastBg = 0
-    UI:Notice(v == "all" and "The radar now reads the whole auction house (slower to come round)."
-        or v == "money" and "The radar now reads trade goods, reagents, consumables, gems and enhancements."
-        or "The radar now reads crafting materials only (fastest).", true)
+    UI:Notice(v == "all" and "Crafting materials are still read about every second. Every other category is read in turn, about once a minute or slower."
+        or v == "money" and "Crafting materials are still read about every second. Reagents, consumables, gems and enhancements are each read every 30 seconds."
+        or "The radar reads crafting materials only, about every second.", true)
 end
 
 function Do.Dock(on)

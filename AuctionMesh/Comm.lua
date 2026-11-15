@@ -58,10 +58,22 @@ local function wake()
 end
 
 function Comm:Enqueue(lane, item)
+    -- Nothing is queued while nobody can hear it. (It used to pile up: in a
+    -- test run 35 notes and 260 price updates were waiting when a channel was
+    -- finally joined, and went out, stale, ahead of everything current.)
+    if not self:Route() then return false end
     local q = lanes[lane]
     q.tail = q.tail + 1
     q[q.tail] = item
+    -- live traffic that the channel cannot carry fast enough is dropped oldest first
+    if lane == self.LIVE then
+        while q.tail - q.head + 1 > 60 do
+            q[q.head] = nil
+            q.head = q.head + 1
+        end
+    end
     wake()
+    return true
 end
 
 function Comm:LaneSize(lane)

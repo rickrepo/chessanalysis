@@ -152,6 +152,7 @@ AuctionMeshDB.cfg.minProfit, ns.Deals.cfg.minProfit = 20, 20 -- the walkthrough 
 -- One-click buying and holding fire have their own section at the end.
 S.hold = 0
 ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1 -- the capital limits have their own section at the end
+AuctionMeshDB.cfg.autoConfirm = false -- the walkthrough drives the two-input path; one-input buying has its own section
 ns.Deals.cfg.requireTurnover = false -- the fake auction house has no other buyers until the "volume" section
 local function rowsText()
     local out = {}
@@ -321,12 +322,38 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
     C_AuctionHouse.GetOwnedAuctionInfo = function() return { itemKey = { itemID = 2589 }, status = 1, quantity = 6, buyoutAmount = 462, timeLeftSeconds = 960 } end
     S:ReadOwned(); UI:Render()
     print("     " .. lg.rows[3].label._text .. " | " .. val(lg.rows[3]))
+    do  -- a sold auction is not "stuck": it sits under its own heading with the time its gold arrives
+        ns.Store.p[2589], ns.Store.t[2589] = 70, GetServerTime() -- other people list cheaper now; that no longer matters
+        UI:Render()
+        local hd = heads()
+        print("     sections: " .. table.concat(hd, " / "))
+        local row
+        for _, l in ipairs(rowsText()) do if l:find("Linen Cloth x6") then row = l end end
+        print("     " .. tostring(row))
+        check(hd[3] == "SOLD, GOLD ON ITS WAY (1)" and row and row:find("Sold: gold arrives in 16 min", 1, true) and row:find("/ SOLD |", 1, true),
+            "a sold auction is listed under SOLD, GOLD ON ITS WAY with its pay-out time, not under stuck or undercut")
+        ns.Store.p[2589] = 78
+    end
     check(val(lg.rows[3]) == "+ 4s38c  next 16 min" and val(lg.rows[4]) == "-" and val(lg.total) == strip(ns.Seller.short(GetMoney() + 438)),
         "an auction the game lists as sold moves to 'Sold: still on its way', with the game's own amount and pay-out time, without a mailbox visit")
     advance(970); UI:Render()
     check(val(lg.rows[2]) == "+ 4s38c" and val(lg.rows[3]) == "-", "once its pay-out time has passed it counts as waiting in the mailbox")
     C_AuctionHouse.GetNumOwnedAuctions = function() return 0 end
     S.ownSoldQty, S.ownSoldPay = {}, {}
+    -- right-click no longer removes anything
+    do
+        local row
+        for i = 1, #frames do local f = frames[i]; if rawget(f, "detail") and f._shown and rawget(f, "item") and f.item.key == 2589 then row = f end end
+        if row then
+            row._scripts.OnMouseUp(row, "RightButton")
+            check(AuctionMeshDB.listed[2589] ~= nil and UI.sel == 2589, "a right-click on a row removes nothing; it opens the item's details like any click")
+            local rm = AuctionMeshDrawer.remove
+            check(rm:IsShown() and rm._text == "Stop tracking this item", "removing is a button in the drawer")
+            rm._scripts.OnClick(rm)
+            check(AuctionMeshDB.listed[2589] ~= nil and rm._text == "Click again to remove", "and it asks for a second click")
+            UI.removeUntil = nil; UI.sel = nil; UI:ToggleDrawer(false)
+        end
+    end
     S.own, S.ownRead = ownWas, readWas
     UI.tab = "SELL"; UI:Render()
     check(not lg:IsShown(), "the Bags tab has no MONEY section")
@@ -496,9 +523,7 @@ check(seen["Bought:"] and seen["Collected from mailbox:"] and seen["Posted"] and
 for i = 1, math.min(4, #hist) do print("     " .. strip(hist[i].m)) end
 UI.tab = "BUY"
 UI:ToggleDrawer(true)
-AuctionMeshDrawer.views.activity._scripts.OnClick(AuctionMeshDrawer.views.activity)
-check(UI.drawerLines[1].head == ("RECENT ACTIVITY (%d)"):format(#hist) and strip(UI.drawerLines[2].l):find(strip(hist[1].m):sub(1, 20), 1, true),
-    "the drawer's Activity view lists it, newest first")
+check(AuctionMeshDrawer.views.activity == nil and AuctionMeshDrawer.views.trades._text == "Ledger", "the drawer has two views, Ledger and Market (the long activity list is gone)")
 AuctionMeshDrawer.views.market._scripts.OnClick(AuctionMeshDrawer.views.market)
 do
     local hs = {}
@@ -724,11 +749,30 @@ do
     check(AuctionMeshDrawer:IsShown() and AuctionMeshDB.cfg.drawer == true, "the handle on the right edge opens the drawer")
     local lines = UI.drawerLines
     dump(lines)
-    check(has(lines, "^ALL TRADES") and has(lines, "^OPEN %(") and has(lines, "^FINISHED %("), "drawer lists totals, open trades and finished trades")
-    check(has(lines, "Copper Ore x12") and has(lines, "Bought at 3c each | %- 36c") and has(lines, "Sold 12 to a vendor at 5c each | %+ 60c") and has(lines, "Profit made | %+ 24c"),
-        "vendor trade: bought 12 at 3c, sold to a vendor at 5c, profit + 24c")
-    check(has(lines, "Sold 6 at 77c each, after the cut | %+ 4s39c") and has(lines, "Profit made | %+ 3s19c"),
-        "auction trade: what the buyer really paid (from the invoice) and the profit made")
+    check(has(lines, "^LEDGER") and has(lines, "^Paid for everything bought | %- ") and has(lines, "^Came back from what sold | %+ ") and (has(lines, "^You are up | ") or has(lines, "^You are down | ")),
+        "the drawer is a ledger: paid, came back, and whether you are up or down")
+    check(has(lines, "^Copper Ore x12  at 3c | SOLD  %+ 24c$"), "one line per purchase: 12 Copper Ore at 3c, sold, + 24c")
+    check(has(lines, "^Linen Cloth x6  at 20c | SOLD  %+ 3s19c$"), "an auction sale shows the profit really made (from the invoice): + 3s19c")
+    do  -- something bought and not sold shows as money you are down
+        local t = J:Bought(7777, "Test Ore", "FLIP", 5, 40, 80)
+        UI:Render()
+        check(has(UI.drawerLines, "^Test Ore x5  at 40c | NOT SOLD  down 2s00c$") and has(UI.drawerLines, "2 purchases not sold yet: 3s20c still to come back"),
+            "a purchase that has not sold says NOT SOLD and how much you are down")
+        -- sold on the auction house, gold not paid out yet
+        t.listed, t.price = 5, 80
+        S.ownSoldQty = { [7777] = 5 }
+        UI:Render()
+        check(has(UI.drawerLines, "^Test Ore x5  at 40c | SOLD, gold coming  %+ 1s80c$") and has(UI.drawerLines, "^Sold, gold on its way | %+ 3s80c$"),
+            "once it sells and the gold is on its way it says so, with the profit that is coming (5 x 76c - 2s00c)")
+        S.ownSoldQty = {}
+        for i = #J.list, 1, -1 do if J.list[i] == t then table.remove(J.list, i) end end
+        UI:Render()
+    end
+    -- the full story of one item is still there when you click the item
+    UI.sel = 2589; UI:Render()
+    check(has(UI.drawerLines, "Sold 6 at 77c each, after the cut | %+ 4s39c") and has(UI.drawerLines, "Profit made | %+ 3s19c"),
+        "clicking an item still shows its trades in full: what the buyer paid and the profit made")
+    UI.sel = nil; UI:Render()
     local s = J:Totals()
     check(s.trades >= 3 and s.finished >= 2, ("journal totals: %d trades, %d finished, %d open"):format(s.trades, s.finished, s.open))
     UI:ToggleDrawer(false)
@@ -975,7 +1019,9 @@ do
     S:OnSweep(5555, 2, 1254)
     check(S.verified[5555] and S.verified[5555].instant, "second instant deal on screen")
     press(); advance(0.3)
-    check(gold == 900 and S.result and S.result.kind == "lost" and S.verified[5555] == nil, "radar said 21 but only 5 were left: the quote is higher, nothing is bought, reported as MISSED")
+    check(gold == 900 and S.verified[5555] and S.verified[5555].units == 5 and S.verified[5555].cost == 10 and not (S.result and S.result.kind == "lost"),
+        "radar said 21 but only 5 were left: the quote says so, nothing is bought yet, and the deal becomes those 5")
+    S.verified[5555] = nil
     -- who spotted it
     reset(); gold = 900; S.cool = {}
     LIST[5555] = { { 2, 21 }, { 22, 138 }, { 23, 1095 } }
@@ -1059,7 +1105,7 @@ do
     advance(2.5); UI:Render()
     print("     " .. strip(sp.share._text))
     check(strip(sp.share._text):find("^Joined channel 'GoldCrew7'. Nobody else has answered %(asked %d+s ago%)"), "joined, nobody there: says joined, and that nobody has answered")
-    advance(1)
+    advance(6)
     local rollCall
     for i = before + 1, #sentAddon do if sentAddon[i]:sub(1, 1) == "P" then rollCall = sentAddon[i] end end
     check(rollCall ~= nil, "joining sends a roll call on the channel")
@@ -1076,7 +1122,7 @@ do
     before = #sentAddon
     Sync.answeredAt = nil
     fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, "P" .. ns.Codec.uint(1) .. ns.Codec.uint(31500) .. ns.Codec.uint(1), "CHANNEL", "Bob-Realm")
-    advance(3)
+    advance(8)
     local answered
     for i = before + 1, #sentAddon do if sentAddon[i]:sub(1, 1) == "P" then answered = true end end
     check(answered, "when a friend asks who is there, this addon answers")
@@ -1147,12 +1193,22 @@ do
     S.ownSoldQty, S.own, S.ownRead = { [2449] = 16 }, {}, true
     S.ownSoldPay = { { amount = 3654, due = GetTime() + 29 * 60 } }
     local c = S:Capital()
-    check(c.gold == 2155 and c.tied == 3654 and c.paused == true and c.room == 0, "21s55c in hand, 36s54c sold and not paid out: flips are paused")
+    check(c.gold == 2155 and c.tied == 3654 and c.paused == false and c.room == 2904,
+        "21s55c in hand, 36s54c sold and on its way: that gold is certain, so flips are NOT paused")
+    do
+        local o = S:DealOptions(2589, true)
+        check(o.tied == 0 and o.coming == 3654, "the deal rules are told: nothing at risk, 36s54c coming")
+    end
+    -- the same money in auctions that have NOT sold is at risk: big flips stop
+    S.ownSoldQty, S.ownSoldPay = {}, {}
+    AuctionMeshDB.listed = { [2449] = { qty = 16, price = 240, cost = 125, at = GetServerTime() } }
+    c = S:Capital()
+    check(c.listed == 3648 and c.paused == true and c.room == 0, "21s55c in hand, 36s48c in auctions that have not sold: big flips are paused")
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
     local st = strip(AuctionMeshFrame.status._text)
     print("     " .. (st:match("^[^\n]+") or ""))
-    check(st:find("^Flips paused: 36s54c of your 58s09c is in auctions and unpaid sales %(limit 50%%%). Next pay%-out in 29 min. Vendor deals are still shown."),
-        "the Trades tab says so, with the time of the next pay-out")
+    check(st:find("^Big flips paused: 36s48c of your 58s03c is in auctions that have not sold %(limit 50%%%). Small flips and vendor deals are still shown."),
+        "the Trades tab says so")
     UI.tab = "HISTORY"; UI:Render()
     local sp = AuctionMeshFrame.setup
     check(sp.tied._text == "Flips may tie up: 50%", "Setup shows the limit")
@@ -1160,13 +1216,180 @@ do
     check(cfg.maxTied == 70 and math.abs(ns.Deals.cfg.maxTied - 0.70) < 1e-9 and sp.tied._text == "Flips may tie up: 70%" and S:Capital().paused == false,
         "one click raises it to 70%: flips are allowed again")
     ns.Do.MaxTied(50)
+    AuctionMeshDB.listed = {}
+    S.ownSoldQty = { [2449] = 16 }
+    S.ownSoldPay = { { amount = 3654, due = GetTime() + 29 * 60 } }
     -- the pay-out time passes: the gold is in the mailbox, and the panel says to collect it
     advance(30 * 60)
+    S.verified = {}
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
     print("     " .. strip(AuctionMeshSnipeButton.label._text))
     check(strip(AuctionMeshSnipeButton.label._text):find("^NEXT  Collect 36s54c at a mailbox: sale gold has arrived."), "when a pay-out is due the next step is to collect it")
     S.ownSoldPay, S.ownSoldQty = {}, {}
     ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1
+end
+
+print("one input to buy, the wheel, small flips, friends")
+do
+    local G, cfg, Sw = ns.Gate, AuctionMeshDB.cfg, ns.Swarm
+    local btn = AuctionMeshSnipeButton
+    local function label() return strip(btn.label._text) end
+    local function reset()
+        S.verified, S.checkedAt, S.triggers, S.sweep, S.dealSeen, S.floor, S.cool, S.muted, S.streak = {}, {}, {}, {}, {}, {}, {}, {}, {}
+        S.buying, S.searching, S.result, S.lastEval, S.priority = nil, nil, nil, nil, nil
+        G.holdUntil, G.outstanding, G.nextAt, G.penaltyUntil, G.userUntil = nil, 0, 0, 0, 0
+    end
+    UI.tab = "BUY"; UI.notice = nil
+    AuctionMeshDB.flips, AuctionMeshDB.listed = {}, {}
+    -- one click, where the game allows a purchase that is not sent from a click
+    reset(); gold = 900; cfg.autoConfirm = nil
+    ITEMS[2770] = { "Copper Ore", 5 }
+    LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+    S.priority = 2770; advance(1)
+    btn._scripts.OnClick(btn); advance(1)
+    check(gold == 900 - 36 and S.result and S.result.kind == "won", "ONE click: the price came back as shown, so the purchase was sent without a second click")
+    AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test")
+    -- where the game blocks that: it is switched off, and the next input confirms
+    reset(); gold = 900
+    LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+    S.priority = 2770; advance(1)
+    local realConfirm = C_AuctionHouse.ConfirmCommoditiesPurchase
+    C_AuctionHouse.ConfirmCommoditiesPurchase = function() fire("ADDON_ACTION_BLOCKED", "AuctionMesh", "UNKNOWN()") end
+    btn._scripts.OnClick(btn); advance(0.4)
+    C_AuctionHouse.ConfirmCommoditiesPurchase = realConfirm
+    check(cfg.autoConfirm == false and S.buying and S.buying.phase == "confirm" and gold == 900, "the game blocked it: one-click is switched off for good, the deal waits for a second input")
+    check(label():find("^BUY NOW"), "the button says BUY NOW")
+    -- that second input can be a notch of the mouse wheel
+    check(UI.WheelPress() == true, "a notch of the mouse wheel counts as the second input")
+    advance(0.5)
+    check(gold == 900 - 36 and S.result.kind == "won", "bought with one click and one wheel notch")
+    AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test")
+    LIST[2770] = nil; S.verified = {}; S.buying = nil
+    check(UI.WheelPress() == false, "with no deal on the button the wheel scrolls as usual")
+    -- the wheel can do both steps
+    reset(); gold = 900
+    LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+    S.priority = 2770; advance(1); UI:Render()
+    check(label():find("flick the mouse wheel", 1, true), "the button says the wheel can be used")
+    UI.WheelPress(); UI.WheelPress(); advance(0.3); UI.WheelPress(); UI.WheelPress(); advance(0.5)
+    check(gold == 900 - 36 and S.result.kind == "won", "a flick of the wheel alone: first notch asks the price, a later notch buys, the rest do nothing")
+    AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test")
+    -- if the game does not take the wheel as an input, it is switched off
+    S.wheelAt = GetTime(); fire("ADDON_ACTION_BLOCKED", "AuctionMesh", "UNKNOWN()")
+    check(cfg.wheel == false and UI.WheelPress() == false, "if the game refuses wheel inputs, the wheel is switched off and scrolls again")
+    cfg.wheel = nil
+    LIST[2770] = nil
+
+    -- a small flip is allowed even when most of the money is out of reach (the 62c Heavy Stone from the real log)
+    ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 0.35, 0.50
+    local function rows(t) local r = {}; for i, x in ipairs(t) do r[i] = { price = x[1], qty = x[2] } end return r end
+    local d = ns.Deals.evaluate(rows({ { 62, 1 }, { 302, 605 }, { 303, 153 }, { 304, 49 } }), { budget = 739, gold = 739, tied = 7506, commodity = true, rate = 5000 })
+    check(d and d.units == 1 and d.cost == 62, "7s39c in hand, 75s out of reach: a 62c flip worth +2s is still offered")
+    local d2, _, why = ns.Deals.evaluate(rows({ { 150, 10 }, { 302, 605 }, { 303, 153 }, { 304, 49 } }), { budget = 739, gold = 739, tied = 7506, commodity = true, rate = 5000 })
+    check(d2 == nil or d2.cost <= 110, "but not one that would take more than 15% of the gold in hand")
+    ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1
+
+    -- the wider scope keeps crafting materials on the fast radar (a real log: materials read every 6s, radar idle half the time)
+    do
+        local Sw = ns.Swarm
+        local keep = { Sw.scope, Sw.units, Sw.side, Sw.sideSet, Sw.sideOwn, Sw.doneAt, ns.peerAt }
+        Sw.scope = "money"; Sw:BuildUnits()
+        check(#Sw.units == 1 and Sw.units[1] == Sw.unitId(7, nil) and Sw:Solo(),
+            "scope 'money': crafting materials are still the one-request radar, read back to back")
+        check(#Sw.side == 4 and Sw.sideOwn[Sw.unitId(0, nil)] and Sw.sideOwn[Sw.unitId(5, nil)] and Sw.sideOwn[Sw.unitId(3, nil)] and Sw.sideOwn[Sw.unitId(8, nil)],
+            "reagents, consumables, gems and enhancements are side reads")
+        ns.peerAt = nil; Sw.doneAt = {}
+        local u = Sw:PickUnit()
+        check(u and Sw.sideSet[u], "alone: a side class that is due is read by you")
+        for _, s in ipairs(Sw.side) do Sw.doneAt[s] = GetServerTime() end
+        Sw.myDoneClock = {}
+        check(Sw:PickUnit() == Sw.unitId(7, nil) and Sw:SideGap() == 30, "then it is back to materials; each side class comes round every 30s")
+        Sw.scope = "mats"; Sw:BuildUnits()
+        check(#Sw.units == 1 and #Sw.side == 4 and next(Sw.sideOwn) == nil and Sw:PickUnit() == Sw.unitId(7, nil),
+            "scope 'materials', alone: no side reads at all")
+        Sw.scope = "all"; Sw:BuildUnits()
+        print(("     whole auction house: %d side classes, each read every %ds"):format(#Sw.side, Sw:SideGap()))
+        check(#Sw.units == 1 and #Sw.side >= 14 and Sw:SideGap() > 30, "scope 'everything': materials stay fast, the other classes take at most a quarter of the requests")
+        Sw.scope, Sw.units, Sw.side, Sw.sideSet, Sw.sideOwn, Sw.doneAt, ns.peerAt = keep[1], keep[2], keep[3], keep[4], keep[5], keep[6], keep[7]
+    end
+
+    -- part of a deal is taken by someone else: what is left is offered at once (Wool Cloth in the real log)
+    local dl = { units = 16, cost = 1600, sell = 145, kind = "FLIP", rows = rows({ { 100, 24 }, { 148, 33 }, { 154, 93 } }) }
+    local left, cost = S.Remaining(dl, 16, 2080)
+    check(left == 6 and cost == 600, "quote for 16 came back as 6 at 1s00c + 10 at 1s48c: 6 are still there")
+    check(S.Remaining(dl, 16, 2464) == nil, "quote entirely at the next prices: nothing is left, that is a real miss")
+    reset(); gold = 5000; cfg.autoConfirm = false
+    ITEMS[2592] = { "Wool Cloth", 33 }
+    LIST[2592] = { { 100, 16 }, { 148, 33 }, { 154, 93 }, { 155, 138 }, { 160, 159 } }
+    ns.Deals.cfg.requireTurnover = false
+    S.priority = 2592; advance(1)
+    local dv = S.verified[2592]
+    check(dv and dv.units == 16, "16 Wool Cloth at 1s on offer")
+    LIST[2592] = { { 100, 6 }, { 148, 33 }, { 154, 93 }, { 155, 138 }, { 160, 159 } } -- someone takes 10 of them
+    btn._scripts.OnClick(btn); advance(0.4); UI:Render()
+    print("     " .. label())
+    dv = S.verified[2592]
+    check(dv and dv.units == 6 and dv.cost == 600 and dv.leftOf == 16 and not (S.result and S.result.kind == "lost"), "someone took 10 while you clicked: the deal becomes the 6 that are left, not a miss")
+    check(label():find("Wool Cloth x6 (6 of 16 still there)", 1, true), "the button says 6 of 16 are still there")
+    btn._scripts.OnClick(btn); advance(0.4); btn._scripts.OnClick(btn); advance(0.6)
+    check(gold == 5000 - 600 and AuctionMeshDB.flips[2592] and AuctionMeshDB.flips[2592].units == 6, "two more inputs and the 6 are bought")
+    AuctionMeshDB.flips[2592] = nil; ns.Journal:Dropped(2592, nil, "test"); LIST[2592] = nil
+
+    -- three misses in a row: the item is left alone for 10 minutes
+    reset(); gold = 900
+    ITEMS[4306] = { "Silk Cloth", 150 }
+    for i = 1, 3 do
+        S.cool = {}
+        S.buying = { key = 4306, units = 3, max = 300, phase = "quote", at = GetTime(), deal = { units = 3, cost = 300, sell = 150, kind = "VENDOR", instant = true, next = 188 } }
+        S:OnPriceQuote(188, 564)
+    end
+    print("     " .. strip(S.result.text))
+    check(S:Muted(4306) and S.result.text:find("Third miss in a row", 1, true), "Silk Cloth missed three times running: muted for 10 minutes, and the panel says why")
+    S.ownSweep = { [4306] = { q = 100, p = 190, at = GetTime() - 0.7 } }
+    S:OnSweep(4306, 100, 103)
+    check(S.verified[4306] == nil, "while muted, its deals are not shown")
+    S.muted = {}
+
+    -- a friend's purchase is announced
+    reset()
+    S.result = { kind = "lost", key = 2589, text = "MISSED  Linen Cloth: someone was faster.", at = GetTime() }
+    local msgB
+    local oldRoute = ns.Comm.Route
+    ns.Comm.Route = function() return "CHANNEL", 5 end
+    local before = #sentAddon
+    ns.Sync:Bought(2589, 13, 2); advance(8)
+    ns.Comm.Route = oldRoute
+    for i = before + 1, #sentAddon do if sentAddon[i]:sub(1, 1) == "B" then msgB = sentAddon[i] end end
+    check(msgB ~= nil, "a purchase is announced to friends")
+    S.result.at = GetTime()
+    fire("CHAT_MSG_ADDON", ns.Comm.PREFIX_LIVE, msgB, "CHANNEL", "Datacus-Realm")
+    print("     " .. strip(S.result.text))
+    check(S.result.text:find("Your friend Datacus got it.", 1, true), "a deal you missed that a friend got says so")
+
+    -- team side reads: other classes are read for the team, the main radar is not slowed
+    Sw.scope = "mats"; Sw:BuildUnits()
+    check(#Sw.units == 1 and #Sw.side == 4, "crafting materials stay the main radar; consumables, gems, reagents and enhancements are side classes")
+    Sw.unitReq = { [Sw.units[1]] = 1 }; Sw.claims = {}; Sw.doneAt = {}
+    Sw.myDoneClock = { [Sw.units[1]] = Sw.clock() }
+    ns.peerAt = nil
+    check(Sw:PickUnit() == nil, "alone: no side reads (the radar has just read, nothing else is due)")
+    ns.peerAt = Sw.clock()
+    local u1 = Sw:PickUnit()
+    check(u1 ~= nil and Sw.sideSet[u1], "with a friend connected: a side class is due")
+    Sw.claims[u1] = { by = "Friend-Realm", at = Sw.clock() }
+    local u2 = Sw:PickUnit()
+    check(u2 ~= nil and u2 ~= u1 and Sw.sideSet[u2], "a class a friend has claimed is left to them; another one is taken")
+    for _, su in ipairs(Sw.side) do Sw.doneAt[su] = Sw.serverTime() end
+    Sw.claims = {}
+    check(Sw:PickUnit() == nil, "all side classes read in the last 30 seconds: back to the main radar only")
+    Sw.current = { unit = Sw.units[1], phase = "query" }
+    check(Sw:Quiet() == true, "the main radar's reading is not broadcast (every friend reads it themselves)")
+    Sw.current = { unit = Sw.side[1], phase = "query" }
+    check(Sw:Quiet() == false, "a side class reading is shared with the team")
+    Sw.current = nil
+    Sw.myDoneClock[Sw.units[1]] = Sw.clock() - 1
+    check(Sw:PickUnit() == Sw.units[1], "the main radar is due again after 0.4 seconds, as before")
+    cfg.autoConfirm = false
 end
 
 print(("\n%d passed, %d failed"):format(pass, fail))

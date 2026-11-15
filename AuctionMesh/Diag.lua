@@ -231,7 +231,16 @@ local function onEvent(_, event, ...)
     elseif (event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN") and (...) ~= ADDON then
         return
     elseif event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
-        -- ours: logged below; nothing is switched off because of it
+        -- ours. If it follows the one-click purchase attempt, that feature is switched off.
+        local S = ns.Sniper
+        if S and S.autoAt and GetTime() - S.autoAt < 0.5 then S.autoAt = nil; S:AutoBlocked() end
+        if S and S.wheelAt and GetTime() - S.wheelAt < 0.5 then
+            -- a mouse-wheel input was not accepted as a real input: stop using the wheel
+            S.wheelAt = nil
+            AuctionMeshDB.cfg.wheel = false
+            Log("WHEEL buying is blocked by the game: switched off")
+            if ns.UI then ns.UI:Notice("This game does not accept the mouse wheel for buying. Click the Buy button instead.", true); ns.UI:Dirty() end
+        end
     end
     -- Search result events are frequent: log them briefly.
     Log("EVENT %s(%s) outstanding=%d", event, args(...), Gate.outstanding)
@@ -257,7 +266,9 @@ function Diag:Init()
                 local ours = (Gate.usedAt == GetTime()) or name:find("^Cancel") or name:find("^Confirm")
                 -- Reading lists (the game's Auctions tab does this by itself) only
                 -- needs a short pause; buying, selling and cancelling get 8 seconds.
-                local pause = (name:find("^Query") or name:find("Browse") or name:find("^Refresh")) and 2 or 8
+                -- (It was 2 seconds: in a real log the game refreshed its own list
+                -- of your auctions and a vendor-price alert waited 3 seconds for it.)
+                local pause = (name:find("^Query") or name:find("Browse") or name:find("^Refresh")) and 1 or 8
                 if not ours then Gate.userUntil = math.max(Gate.userUntil or 0, GetTime() + pause) end
                 Log("CALL %s(%s) ready=%s%s", name, args(...), tostring(C_AuctionHouse.IsThrottledMessageSystemReady()),
                     ours and "" or ("  [you / game UI: background paused %ds]"):format(pause))

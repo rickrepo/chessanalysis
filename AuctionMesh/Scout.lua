@@ -459,7 +459,7 @@ function Scout:Report(o)
 
     if ns.Sniper and ns.Sniper.Capital then
         local c = ns.Sniper:Capital()
-        add(("capital: gold %d, out of reach %d (listed %d, sold not paid out %d, sale gold in mailbox %d); flips may tie up %d%%, room left %d; next pay-out in %s"):format(
+        add(("capital: gold %d, out of reach %d (listed %d, sold not paid out %d, sale gold in mailbox %d); unsold auctions may hold %d%%, room left %d; next pay-out in %s"):format(
             c.gold, c.tied, c.listed, c.onway, c.waiting, floor(ns.Deals.cfg.maxTied * 100 + 0.5), c.room, c.nextIn and (floor(c.nextIn / 60) .. " min") or "-"))
     end
 

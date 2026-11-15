@@ -48,6 +48,7 @@ local function newPeer(name)
     ns.Swarm.clock = function() return NOW end
     ns.Swarm.serverTime = Sync.serverTime
     sentLog[name] = {}
+    Comm.Route = function() return "CHANNEL", 1 end -- every simulated player is on the channel
     Comm.RawSend = function(self, prefix, msg)
         assert(#msg <= 255, "message too long: " .. #msg)
         assert(not msg:find("%z"), "NUL byte in message")

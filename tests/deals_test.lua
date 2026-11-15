@@ -236,9 +236,19 @@ do
     print("     " .. tostring(d and ("buys " .. d.units .. " for " .. d.cost) or why))
     check(d and d.units == 14 and d.cost == 1750 and d.partial == 2, "50s in hand: one flip takes at most 35% (17s50c), so 14 of the 16 are bought, not all 20s worth")
     d, _, why = ev(book(16), { budget = 2155, gold = 2155, tied = 3847 })
-    print("     " .. tostring(why))
-    check(d == nil and why == "flip skipped: $3847 of your money is in auctions and unpaid sales already (limit 50%)",
-        "21s55c in hand and 38s47c in unpaid sales: no flip at all until some of it pays out")
+    print("     " .. tostring(d and ("buys " .. d.units .. " for " .. d.cost) or why))
+    check(d and d.units == 2 and d.cost == 250,
+        "21s55c in hand and 38s47c in auctions that have not sold: only a small flip (up to 15% of the gold in hand, 3s23c) is still taken")
+    D.cfg.smallFlip = 0
+    d, _, why = ev(book(16), { budget = 2155, gold = 2155, tied = 3847 })
+    check(d == nil and why == "flip skipped: $3847 of your money is in auctions that have not sold yet (limit 50%)",
+        "without the small-flip allowance there is no flip at all until some of it sells")
+    D.cfg.smallFlip = 0.15
+    -- sold and waiting for the pay-out is not money at risk (the real case: 14s39c in hand, 69s76c sold, 45 Wool Cloth at 32c)
+    d = ev({ { price = 32, qty = 45 }, { price = 141, qty = 19 }, { price = 142, qty = 66 }, { price = 166, qty = 39 }, { price = 168, qty = 4200 }, { price = 169, qty = 1018 } },
+        { budget = 1439, gold = 1439, tied = 0, coming = 6976 })
+    print("     " .. tostring(d and ("buys " .. d.units .. " for " .. d.cost) or "nothing"))
+    check(d and d.units == 15 and d.cost == 480, "69s76c sold and on its way does not block flips: 15 Wool Cloth at 32c are bought (35% of the gold in hand)")
     d = ev(book(4), { budget = 2155, gold = 2155, tied = 1000 })
     check(d and d.units == 4 and d.cost == 500, "10s tied up of 31s55c: a 5s flip still fits under the 50% limit")
     d = ev(book(16), { budget = 2155, gold = 2155, tied = 1000 })

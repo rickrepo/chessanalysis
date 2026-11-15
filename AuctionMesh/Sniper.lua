@@ -185,9 +185,15 @@ end
 function Sniper:DealOptions(key, commodity)
     local avg, n = Store.a[key], Store.an[key]
     local feePer, feeMin = self.depositInfo(key, commodity)
+    -- at risk: auctions that have not sold. coming: sold, gold on its way (certain).
+    local atRisk, coming = 0, 0
+    if ns.Seller and ns.Seller.Tied then
+        local _, _, listed, onway, waiting = ns.Seller:Tied()
+        atRisk, coming = listed or 0, (onway or 0) + (waiting or 0)
+    end
     return {
         budget = self:Budget(), gold = GetMoney(), commodity = commodity,
-        tied = ns.Seller and ns.Seller.Tied and (ns.Seller:Tied()) or 0,
+        tied = atRisk, coming = coming,
         vendor = self.vendorOf(key),
         avg = (avg and n and n >= Deals.cfg.minSamples) and avg or nil,
         deposit = feePer, depositMin = feeMin,
@@ -223,6 +229,9 @@ function Sniper:Evaluate(key, rows, commodity)
     self:Turnover(key, rows)
     local deal, wall, reason = Deals.evaluate(rows, self:DealOptions(key, commodity))
     if wall then Sync:ObserveFair(key, wall) end
+    if deal and self:Muted(key) then
+        deal, reason = nil, "its deals were taken within a second three times in a row: not shown for 10 minutes"
+    end
     if self.buying and self.buying.key == key then
         -- never replace a deal while its purchase is in flight
     elseif deal then
@@ -324,7 +333,7 @@ function Sniper:InstantVendor(key, price, qty, v, prev)
     if gold < 500 then need = min(need, max(10, floor(gold * 0.10))) end
     if profit < need then return false end
     local deal = { kind = "VENDOR", units = n, cost = n * price, deposit = 0, profit = profit, sell = v, buys = {}, counts = {},
-                   commodity = true, key = key, instant = true, from = "me", rowsText = ("radar: %d new at %d"):format(n, price),
+                   commodity = true, key = key, instant = true, from = "me", next = prev.p, rowsText = ("radar: %d new at %d"):format(n, price),
                    -- trusted for 8 seconds only; then the item gets its full look like any other
                    at = now - VERIFIED_TTL + 8 }
     self.verified[key] = deal
@@ -391,6 +400,7 @@ function Sniper:OnSweep(key, price, qty, shared)
     local market = (ft and GetServerTime() - ft <= 1800) and Store.fp[key] or nil
     if ns.Scout then ns.Scout:Read(key, price, market) end -- counted for every item, affordable or not
     if price > self:Budget() then return end
+    if self:Muted(key) then return end -- three misses in a row: left alone for 10 minutes
     local why
     local v = self.vendorOf(key)
     if v and price <= floor(v / (1 + Deals.cfg.vendorMargin)) then
@@ -852,7 +862,8 @@ function Sniper:Capital()
     local gold = GetMoney()
     local tied, nextIn, listed, onway, waiting = 0, nil, 0, 0, 0
     if ns.Seller and ns.Seller.Tied then tied, nextIn, listed, onway, waiting = ns.Seller:Tied() end
-    local room = floor((gold + tied) * Deals.cfg.maxTied) - tied
+    -- only auctions that have not sold count against the limit: sold gold is certain
+    local room = floor((gold + tied) * Deals.cfg.maxTied) - listed
     if gold + tied < Deals.cfg.smallPurse then room = gold end -- a tiny purse is not split
     return { gold = gold, tied = tied, worth = gold + tied, room = math.max(0, room), paused = Deals.cfg.flips and room <= 0,
              nextIn = nextIn, listed = listed, onway = onway, waiting = waiting }
@@ -888,6 +899,32 @@ function Sniper:Result(kind, key, text)
     end
     ns.Gate.holdUntil = nil
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
+end
+
+-- The game refused a purchase that was not sent from a click: back to two inputs.
+function Sniper:AutoBlocked()
+    AuctionMeshDB.cfg.autoConfirm = false
+    local b = self.buying
+    if b and b.auto and b.phase == "wait" then b.phase, b.auto = "confirm", nil end -- your next click or wheel notch confirms
+    ns.Log("AUTO confirm is blocked by the game: switched off; a second click (or a wheel flick) confirms")
+    if ns.UI then
+        ns.UI:Notice("The game requires a second input to buy. Flick the mouse wheel or click again: BUY NOW.", true)
+        if ns.UI.Now then ns.UI:Now() end
+    end
+end
+
+-- A friend's addon reports a purchase: shown, so a deal you missed that went to
+-- a friend is not mistaken for one lost to a stranger.
+function Sniper:OnFriendBought(key, units, unit, who)
+    local name = tostring(who or "A friend"):match("^[^-]+") or "A friend"
+    local text = ("%s bought %d x %s at %s each."):format(name, units, nameOf(key), plain(unit))
+    ns.Log("FRIEND %s", text)
+    local r = self.result
+    if r and r.key == key and r.kind ~= "won" and GetTime() - r.at < 15 then
+        r.text = r.text .. (" Your friend %s got it."):format(name)
+        r.friend = name
+    end
+    if ns.UI then ns.UI:Notice("|cff4ddbc2" .. text .. "|r", true) end
 end
 
 -- EVERY click on a deal's Buy button comes here. It is safe to spam: a click
@@ -978,6 +1015,76 @@ function Sniper:Confirm()
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
 end
 
+-- WHAT IS LEFT. The server's quote is higher than the deal expected, so some
+-- of the cheap units are gone. They are always taken cheapest first, so the
+-- quote says exactly how many: it is the cost of the same number of units
+-- with the first j units of the price ladder removed. Find that j, and the
+-- deal becomes "the cheap units that are still there" instead of a miss.
+-- (In a real log 24 Wool Cloth at 1s were on offer, the quote for 16 came back
+-- as 6 x 1s00c + 10 x 1s48c, and the addon reported MISSED with 6 still there.)
+-- Returns units left, their cost, and the ladder without the units that went.
+function Sniper.Remaining(deal, units, total)
+    local rows = deal.rows
+    if not rows and deal.instant and deal.next and units > 0 then
+        -- a radar deal has no listing: its ladder is "N at the new price, then the old cheapest price"
+        rows = { { price = floor(deal.cost / units), qty = units }, { price = deal.next, qty = 1e6 } }
+    end
+    if not rows or units <= 0 then return nil end
+    -- cost of `n` units after skipping the `j` cheapest; nil if the ladder is too short
+    local function costFrom(j, n)
+        local c = 0
+        for i = 1, #rows do
+            local q = rows[i].qty
+            if j >= q then j = j - q else
+                local take = min(q - j, n)
+                c, n, j = c + take * rows[i].price, n - take, 0
+                if n == 0 then return c end
+            end
+        end
+        return nil
+    end
+    -- the dearest unit the deal meant to buy
+    local pmax, seen = rows[1].price, 0
+    for i = 1, #rows do
+        seen = seen + rows[i].qty
+        pmax = rows[i].price
+        if seen >= units then break end
+    end
+    -- as many as all the cheap units may have gone (the cheap pile can be bigger than what the deal meant to buy)
+    local cheap = 0
+    for i = 1, #rows do if rows[i].price <= pmax then cheap = cheap + rows[i].qty end end
+    for j = 1, min(cheap, 100000) do
+        local c = costFrom(j, units)
+        if not c then return nil end
+        if c == total then
+            local left, cost, skip, ladder = 0, 0, j, {}
+            for i = 1, #rows do
+                local q = rows[i].qty
+                if skip >= q then skip = skip - q else
+                    q = q - skip; skip = 0
+                    ladder[#ladder + 1] = { price = rows[i].price, qty = q }
+                    if rows[i].price <= pmax and left < units then
+                        local take = min(q, units - left)
+                        left, cost = left + take, cost + take * rows[i].price
+                    end
+                end
+            end
+            return left, cost, ladder
+        elseif c > total then
+            return nil -- the quote fits no number of missing units: the listing changed in some other way
+        end
+    end
+    return nil
+end
+
+-- Deals of an item that keep being taken before a click can land are not
+-- worth the attention (or the seconds the radar stays quiet for them).
+-- Three misses in a row mutes the item for 10 minutes.
+function Sniper:Muted(key)
+    local m = self.muted and self.muted[key]
+    return m ~= nil and GetTime() < m
+end
+
 function Sniper:OnPriceQuote(unitPrice, total)
     local b = self.buying
     if not b or b.phase ~= "quote" then return end
@@ -985,8 +1092,47 @@ function Sniper:OnPriceQuote(unitPrice, total)
     if total <= b.max and total <= GetMoney() then
         b.phase, b.total, b.at = "confirm", total, GetTime()
         self:ArmPurchaseTimeout(25) -- time to press Buy again before the price is dropped
+        -- ONE CLICK, IF THE GAME ALLOWS IT. You clicked Buy on this deal and the
+        -- server's price is what the deal showed (or less), so the purchase is
+        -- sent straight away instead of waiting for a second click. Whether the
+        -- game accepts a purchase that is not sent from a click is not known
+        -- for this client: it is tried once. If the game blocks it, this is
+        -- switched off for good and the second click (or a flick of the mouse
+        -- wheel) confirms, as before.
+        if AuctionMeshDB.cfg.autoConfirm ~= false then
+            self.autoAt = GetTime()
+            b.auto = true
+            ns.Log("AUTO confirm: the quote matches the deal you clicked; sending the purchase without waiting for a second click")
+            self:Confirm()
+        end
     else
         ns.Log("QUOTE MISMATCH %s: wanted %d units; deal was built at %s", tostring(b.key), b.units, tostring(b.deal.rowsText))
+        -- Are some of the cheap units still there? Then that is the deal now.
+        local left, leftCost, ladder = Sniper.Remaining(b.deal, b.units, total)
+        if left and left > 0 and left < b.units then
+            local d = {}
+            for k2, v2 in pairs(b.deal) do d[k2] = v2 end
+            d.units, d.cost, d.rows, d.at, d.leftOf = left, leftCost, ladder, GetTime(), b.units
+            d.rowsText = ladder and self.RowsText(ladder) or d.rowsText
+            if d.kind == "VENDOR" then
+                d.profit = left * d.sell - leftCost
+            else
+                d.profit = left * floor(d.sell * (1 - Deals.cfg.cut)) - leftCost - (Deals.cfg.depositIsCost and (d.deposit or 0) or 0)
+            end
+            if d.instant then d.at = GetTime() - VERIFIED_TTL + 8 end
+            local need = d.kind == "VENDOR" and 10 or Deals.cfg.minProfit
+            if d.profit >= need and leftCost <= GetMoney() then
+                ns.Log("QUOTE says %d of the %d cheap units are still there (cost %d, profit %d): offered again at once", left, b.units, leftCost, d.profit)
+                ns.Gate.ignoreErrorUntil = GetTime() + 2
+                C_Timer.After(0.4, function() if not Sniper.buying then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end end)
+                self.verified[b.key] = d
+                self.buying = nil
+                if Sniper.hold > 0 then ns.Gate.holdUntil = GetTime() + Sniper.hold end
+                if ns.UI then ns.UI:Notice(("Someone took %d of them. %s%d are still there: click Buy again.|r"):format(b.units - left, "|cff33ff66", left), true) end
+                if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
+                return
+            end
+        end
         -- The quote is higher than the listing showed: someone else bought the
         -- cheap units first. The listing itself can go on showing them for a
         -- moment after they are gone (a real log showed 26, then 6, units
@@ -1011,8 +1157,18 @@ function Sniper:OnPriceQuote(unitPrice, total)
         self.checkedAt[b.key] = GetTime() - TRIGGER_MIN + min(TRIGGER_MIN, self.cool[b.key].till - GetTime()) -- the radar may raise it again once the cooldown is over
         self.buying = nil
         if self.dealSeen then self.dealSeen[b.key] = nil end
-        self:Result("lost", b.key, ("MISSED  %s: someone was faster. It now costs %s for %d. Nothing spent.%s"):format(nameOf(b.key), plain(total), b.units,
-            b.deal.from == "friend" and " (A friend's radar saw this one first.)" or ""))
+        self.streak = self.streak or {}
+        self.streak[b.key] = (self.streak[b.key] or 0) + 1
+        local muted = ""
+        if self.streak[b.key] >= 3 then
+            self.muted = self.muted or {}
+            self.muted[b.key] = GetTime() + 600
+            self.streak[b.key] = 0
+            muted = " Third miss in a row on this item: its deals are taken faster than a click can land, so it is not shown for 10 minutes."
+            ns.Log("MUTED %s for 10 minutes: three misses in a row", tostring(b.key))
+        end
+        self:Result("lost", b.key, ("MISSED  %s: someone was faster. It now costs %s for %d. Nothing spent.%s%s"):format(nameOf(b.key), plain(total), b.units,
+            b.deal.from == "friend" and " (A friend's radar saw this one first.)" or "", muted))
     end
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
 end
@@ -1034,6 +1190,8 @@ function Sniper:OnPurchase(ok, why)
         recordFlip(d, b.units, spent, why)
         if ns.Scout then ns.Scout:Bought(b.key, b.units, spent) end
         if self.dealSeen then self.dealSeen[b.key] = nil end
+        if self.streak then self.streak[b.key] = 0 end
+        if ns.Sync and ns.Sync.Bought then ns.Sync:Bought(b.key, b.units, b.units > 0 and floor(spent / b.units + 0.5) or 0) end
         self:Result("won", b.key, ("GOT IT  %d x %s for %s. Worth + %s when sold."):format(b.units, nameOf(b.key), plain(spent),
             plain(math.max(0, floor((b.deal.profit or 0) * b.units / math.max(1, b.deal.units or b.units))))))
         self.bought[b.key] = (self.bought[b.key] or 0) + b.units
@@ -1079,7 +1237,8 @@ function Sniper:ReadOwned()
             -- real log: 10 sold at 172 each is listed as 1720) and the seconds
             -- until it is paid out.
             if a.itemKey then soldQty[a.itemKey.itemID] = (soldQty[a.itemKey.itemID] or 0) + (a.quantity or 1) end
-            soldPay[#soldPay + 1] = { amount = floor((a.buyoutAmount or 0) * (1 - Deals.cfg.cut)), due = GetTime() + (a.timeLeftSeconds or 3600) }
+            soldPay[#soldPay + 1] = { amount = floor((a.buyoutAmount or 0) * (1 - Deals.cfg.cut)), due = GetTime() + (a.timeLeftSeconds or 3600),
+                                      key = a.itemKey and a.itemKey.itemID or nil }
         end
         if a and a.itemKey and not sold then
             local id = a.itemKey.itemID

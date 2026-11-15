@@ -860,6 +860,13 @@ function Seller:Advice(e)
     -- LISTED
     local L = e.listed
     local price = L.price or 0
+    do  -- sold and waiting to be paid: say so whatever else the listing looks like
+        local _, _, nextIn, soldKeys = self:SalesMoney()
+        if soldKeys[key] then
+            return "Sold. The gold arrives by mail" .. (nextIn and (" in about %d min"):format(max(1, floor(nextIn / 60 + 0.5))) or "")
+                .. " (the auction house pays out an hour after a sale). Nothing to do until then.", "wait"
+        end
+    end
     if e.live == 0 then
         local _, _, nextIn, soldKeys = self:SalesMoney()
         if soldKeys[key] then

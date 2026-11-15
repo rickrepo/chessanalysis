@@ -141,6 +141,9 @@ local STATE = {
     MAIL = function(e) return BLUE .. (e.seen and "In your mailbox" or "In your mailbox (not checked yet)") .. "|r", nil end,
     HOLD = function() return RED .. "Waiting: market is below your cost|r", ahOpen() and "Re-check" or nil end,
     LISTED = function(e)
+        if e.sold then
+            return GREEN .. (e.soldIn and ("Sold: gold arrives in %d min"):format(math.max(1, floor(e.soldIn / 60 + 0.5))) or "Sold: gold is on its way") .. "|r", nil
+        end
         if e.live == 0 then return GREEN .. "Sold or expired: check your mailbox|r", nil end
         if e.undercut then return ORANGE .. "Listed, but someone is cheaper|r", nil end
         return GREY .. "Listed for sale|r", nil
@@ -161,7 +164,7 @@ local function fillSell(r, e, short)
     r.c[1]:SetText(tostring(e.count))
     r.c[2]:SetText(paid and short(paid) or (ORANGE .. "?|r"))
     r.c[3]:SetText(short(sell) .. ((e.f.kind == "FLIP" and not live and e.action ~= "LISTED") and (GREY .. "*|r") or ""))
-    r.c[4]:SetText(e.action == "LISTED" and (e.live == 0 and (GREEN .. "SOLD?|r") or e.undercut and (ORANGE .. "UNDERCUT|r") or (GREY .. "LISTED|r"))
+    r.c[4]:SetText(e.action == "LISTED" and (e.sold and (GREEN .. "SOLD|r") or e.live == 0 and (GREEN .. "SOLD?|r") or e.undercut and (ORANGE .. "UNDERCUT|r") or (GREY .. "LISTED|r"))
         or e.action == "AH" and (ready and (GOLD .. "READY|r") or (GREY .. "pricing|r"))
         or e.action == "VENDOR" and (GREEN .. "VENDOR|r") or e.action == "MAIL" and (CYAN .. "MAIL|r") or (RED .. "WAIT|r"))
     if profit and e.action ~= "HOLD" then
@@ -218,8 +221,8 @@ local function buyStatus(n)
     end
     if cap.paused then
         -- your money is out of reach: say so, and when some of it comes back
-        table.insert(lines, 1, ("%sFlips paused:|r %s of your %s is in auctions and unpaid sales (limit %d%%).%s Vendor deals are still shown."):format(
-            ORANGE, ns.Seller.short(cap.tied), ns.Seller.short(cap.worth), floor(ns.Deals.cfg.maxTied * 100 + 0.5),
+        table.insert(lines, 1, ("%sBig flips paused:|r %s of your %s is in auctions that have not sold (limit %d%%).%s Small flips and vendor deals are still shown."):format(
+            ORANGE, ns.Seller.short(cap.listed), ns.Seller.short(cap.worth), floor(ns.Deals.cfg.maxTied * 100 + 0.5),
             cap.nextIn and (" Next pay-out in %s."):format(cap.nextIn >= 90 and (floor(cap.nextIn / 60 + 0.5) .. " min") or (floor(cap.nextIn) .. "s")) or ""))
     end
     -- line 2: last result
@@ -316,14 +319,28 @@ local function buildList(tab, deals, entries)
         if #deals == 0 then
             list[#list + 1] = { note = ahOpen() and "None right now. A sound plays when one appears." or "Open the auction house to look for deals." }
         end
-        local stuck, ended, ok = {}, {}, {}
+        local stuck, ended, ok, sold = {}, {}, {}, {}
+        local _, _, _, soldKeys = ns.Seller:SalesMoney()
+        local S = ns.Sniper
         for _, e in ipairs(entries) do
             if e.action == "LISTED" then
-                e.undercut = undercut(e)
-                local t = e.live == 0 and ended or e.undercut and stuck or ok
+                -- An auction that has SOLD is waiting for its gold, not stuck: the
+                -- cheaper listings the radar sees now are other people's. (It was
+                -- shown under "stuck, undercut" while its gold was on the way.)
+                e.sold = soldKeys[e.key] == true
+                e.soldIn = nil
+                if e.sold then
+                    for _, r in ipairs(S.ownSoldPay or {}) do
+                        local left = r.due - GetTime()
+                        if r.key == e.key and left > 0 and (not e.soldIn or left < e.soldIn) then e.soldIn = left end
+                    end
+                end
+                e.undercut = not e.sold and undercut(e)
+                local t = e.sold and sold or e.live == 0 and ended or e.undercut and stuck or ok
                 t[#t + 1] = e
             end
         end
+        if #sold > 0 then section(list, "SOLD, GOLD ON ITS WAY", CAPS.entry, sold) end
         if #stuck > 0 then section(list, "STUCK LISTINGS", CAPS.entry, stuck) end
         if #ended > 0 then section(list, "ENDED, CHECK A MAILBOX", CAPS.entry, ended) end
         if #ok > 0 then section(list, "LISTED", CAPS.entry, ok) end
@@ -405,6 +422,33 @@ function UI.backIn(d)
     return mins >= 120 and ("%.1f hours"):format(mins / 60) or ("1h %02dm"):format(math.max(0, floor(mins - 60 + 0.5)))
 end
 
+-- A notch of the mouse wheel while a deal is on the big button. Returns true
+-- if the wheel was used for buying (so it does not also scroll the list).
+function UI.WheelPress()
+    if AuctionMeshDB.cfg.wheel == false or UI.tab ~= "BUY" then return false end
+    local S = ns.Sniper
+    local key = S:Target()
+    if not (key and (S.verified[key] or S.buying)) then return false end
+    S.wheelAt = GetTime()
+    S:Press()
+    return true
+end
+
+-- While a deal is on the big button, the wheel buys wherever the mouse is
+-- (over the game world too), not only over the panel.
+function UI:WheelBind(on)
+    on = on and AuctionMeshDB.cfg.wheel ~= false or false
+    if on == (self.wheelBound or false) then return end
+    if InCombatLockdown and InCombatLockdown() then return end
+    self.wheelBound = on
+    if on and SetOverrideBindingClick then
+        SetOverrideBindingClick(frame, true, "MOUSEWHEELUP", "AuctionMeshSnipeButton", "WHEEL")
+        SetOverrideBindingClick(frame, true, "MOUSEWHEELDOWN", "AuctionMeshSnipeButton", "WHEEL")
+    elseif ClearOverrideBindings then
+        ClearOverrideBindings(frame)
+    end
+end
+
 -- THE BIG BUY BUTTON (Trades tab). It never moves and always acts on the best
 -- deal, so it can be clicked without looking for a row, and clicked repeatedly.
 --   teal    a deal: the first click asks the server for the price
@@ -417,7 +461,7 @@ function UI:RenderSnipe(short)
     local show = self.tab == "BUY"
     sn:SetShown(show)
     frame.next:SetShown(self.tab == "SELL")
-    if not show then return end
+    if not show then self:WheelBind(false); return end
     local key = S:Target()
     local d = key and S.verified[key]
     local last = S.result -- stays on the panel until the next outcome
@@ -429,7 +473,8 @@ function UI:RenderSnipe(short)
         local units, total = S.NextBuy(d)
         local back = d.kind == "VENDOR" and " (guaranteed; gold back at the next vendor)"
             or (" (gold back in about %s)"):format(UI.backIn(d))
-        local what = ("%s x%d    pay %s    make + %s%s    %s"):format(S.nameOf(d.key), units, short(total), short(d.profit), back,
+        local what = ("%s x%d%s    pay %s    make + %s%s    %s"):format(S.nameOf(d.key), units,
+            d.leftOf and (ORANGE .. (" (%d of %d still there)|r"):format(units, d.leftOf)) or "", short(total), short(d.profit), back,
             d.from == "friend" and (ORANGE .. "spotted by a friend|r") or (TEAL .. "spotted by you|r"))
         if S:OneClick(key) then
             text, colour, fill = GREEN .. "BUY NOW|r    " .. what, { 0.2, 1, 0.4 }, { 0.05, 0.22, 0.10 }
@@ -447,6 +492,8 @@ function UI:RenderSnipe(short)
     else
         text = TEAL .. "NEXT|r  " .. nextStep(self.lastDeals or {}, self.lastEntries or {}, short)
     end
+    if d and AuctionMeshDB.cfg.wheel ~= false then text = text .. GREY .. "    click, or flick the mouse wheel|r" end
+    self:WheelBind(d ~= nil)
     sn.label:SetText(text)
     sn.fill:SetColorTexture(fill[1], fill[2], fill[3], 1)
     UI.outline(sn, colour)
@@ -494,6 +541,7 @@ function UI:RenderSetup()
     sp.dock:SetText(cfg.dock ~= false and "Inside the auction house" or "A window of its own")
     sp.auto:SetText(cfg.autoOpen and "Opens by itself: on" or "Opens by itself: off")
     sp.tune:SetText(ns.Tuner.cfg.enabled and "Self-tuning: on" or "Self-tuning: off")
+    sp.wheel:SetText(cfg.wheel == false and "Mouse wheel buys: off" or "Mouse wheel buys: on")
     do
         local _, flist = ns.Sniper:FocusSet()
         local mode = cfg.focusMode or "off"
@@ -685,7 +733,7 @@ local function rowEnter(self)
             GameTooltip:AddLine(RED .. p.hold .. "|r")
         end
         if item.f.proof then GameTooltip:AddLine(GREEN .. "Purchase confirmed: " .. item.f.proof .. "|r") end
-        GameTooltip:AddLine(GREY .. "Click: details and what to do. Right-click: remove from this list|r")
+        GameTooltip:AddLine(GREY .. "Click: details and what to do|r")
     else
         local d = item
         if d.kind == "FLIP" then
@@ -717,9 +765,9 @@ end
 
 local function rowMouseUp(self, button)
     if GetCursorInfo() then return ns.Seller.AcceptDrop() end
-    if button == "RightButton" and self.item and self.item.action then return ns.Seller:Untrack(self.item.key) end
-    -- left click: this item's details in the drawer
-    if self.item and self.item.key and button ~= "RightButton" then
+    -- a click (either button) opens this item's details in the drawer; nothing
+    -- is removed by a stray right-click any more
+    if self.item and self.item.key then
         UI.sel, UI.dscroll = self.item.key, 0
         UI:ToggleDrawer(true)
     end
@@ -819,6 +867,7 @@ function UI:Create()
     -- the mouse wheel scrolls the list
     frame:EnableMouseWheel(true)
     frame:SetScript("OnMouseWheel", function(_, delta)
+        if UI.WheelPress() then return end -- a deal is up: the wheel buys instead of scrolling
         UI.scroll = UI.scroll or {}
         UI.scroll[UI.tab] = math.max(0, (UI.scroll[UI.tab] or 0) - (delta or 0) * 3)
         UI:Render()
@@ -891,8 +940,20 @@ function UI:Create()
     frame.next:SetJustifyH("LEFT"); frame.next:SetWordWrap(false)
 
     -- THE BIG BUY BUTTON: fixed place, always the best deal, safe to spam
-    local sn = button(frame, 100, "", function() ns.Sniper:Press() end, "AuctionMeshSnipeButton")
+    local sn = button(frame, 100, "", function(_, btn)
+        if btn == "WHEEL" then ns.Sniper.wheelAt = GetTime() end
+        ns.Sniper:Press()
+    end, "AuctionMeshSnipeButton")
     sn:SetHeight(28)
+    -- Buying takes two messages to the server (ask the price, then buy) and the
+    -- game wants a real input for each. To make that as close to one action as
+    -- possible, every kind of input counts: the press AND the release of a
+    -- click are each an input, and so is every notch of the mouse wheel. One
+    -- flick of the wheel sends a burst: the first notch asks the price, the
+    -- first notch after the answer buys.
+    if sn.RegisterForClicks then sn:RegisterForClicks("AnyDown", "AnyUp") end
+    sn:EnableMouseWheel(true)
+    sn:SetScript("OnMouseWheel", function() UI.WheelPress() end)
     sn:SetPoint("TOPLEFT", 12, -178); sn:SetPoint("TOPRIGHT", -12, -178)
     sn.label = sn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     sn.label:SetPoint("LEFT", 10, 0); sn.label:SetPoint("RIGHT", -10, 0)
@@ -975,13 +1036,20 @@ function UI:Create()
     setting(y(2), "Profit a flip must leave after the auction house cut")
     sp.margin = box(30, true, 2, "%", function() ns.Do.Margin(tonumber(sp.margin:GetText())) end)
     sp.margin:SetPoint("TOPRIGHT", -12, y(2) + 5)
+    sp.wheel = tip(button(sp, 150, "", function()
+        local cfg = AuctionMeshDB.cfg
+        cfg.wheel = cfg.wheel == false
+        UI:Notice(cfg.wheel and "Mouse wheel buys: while a deal is on the big button, a flick of the wheel asks the price and buys."
+            or "Mouse wheel buys: off. The wheel scrolls and zooms as usual; click the Buy button.", true)
+    end), "Buying needs two inputs (ask the price, then buy). With this on, each notch of the mouse wheel is an input while a deal is on the big button, so one flick does both. The wheel goes back to scrolling and zooming as soon as there is no deal.")
+    sp.wheel:SetPoint("RIGHT", sp.margin, "LEFT", -18, 0)
 
     setting(y(3), "What to look for")
     sp.flips = tip(button(sp, 170, "", function() UI:SetVendorOnly(ns.Deals.cfg.flips) end),
         "Vendor deals are guaranteed profit: buy, sell to any vendor. Flips are resold on the auction house and are not guaranteed.")
     sp.flips:SetPoint("TOPRIGHT", 0, y(3) + 5)
     sp.tied = tip(button(sp, 190, "", function() ns.Do.MaxTied() end),
-        "Sale gold takes an hour to arrive, so gold in a flip is out of reach for an hour or more. This is the most of your money that flips may tie up at once; the rest stays free for vendor deals, which pay back in minutes. Click to change: 30%, 50%, 70%, 100%.")
+        "The most of your money that may sit in auctions that have NOT SOLD yet. Gold from auctions that have sold is on its way and does not count. One flip never takes more than 35% of the gold in hand, and a small flip (15% of it) is always allowed. Click to change: 30%, 50%, 70%, 100%.")
     sp.tied:SetPoint("RIGHT", sp.flips, "LEFT", -6, 0)
 
     setting(y(4), "What the radar reads")
@@ -1384,18 +1452,7 @@ function UI:DrawerLines(entries)
     end
     local key = self.sel
     local view = self.dview or "trades"
-    if not key and view == "activity" then
-        -- everything that happened to your gold and items, newest first
-        local h = AuctionMeshDB.history or {}
-        out[#out + 1] = { head = ("RECENT ACTIVITY (%d)"):format(#h) }
-        if #h == 0 then out[#out + 1] = { l = GREY .. "Nothing yet.|r" } end
-        for _, it in ipairs(h) do
-            for i, l in ipairs(wrap(it.m, 62)) do
-                out[#out + 1] = { l = l, r = i == 1 and (GREY .. ago(it.t) .. "|r") or nil, wide = true }
-            end
-        end
-        return out
-    elseif not key and view == "market" then
+    if not key and view == "market" then
         -- what the price history and the volume measurements say
         -- where the money moves: the prime items, with the reason each one is prime
         local set, flist, ftext = S:FocusSet()
@@ -1467,31 +1524,59 @@ function UI:DrawerLines(entries)
         for _, t in ipairs(trades) do tradeLines(out, t, byKey, short) end
         return out
     end
-    -- EVERYTHING: totals, open trades, finished trades
-    local s = J:Totals()
+    -- THE LEDGER: one line per purchase. What was bought and at what price on
+    -- the left; on the right what became of it: the profit if it sold, or how
+    -- much you are down while it has not. Nothing else. (Click an item on the
+    -- left of the panel for the full story of one item.)
     local trades = J:Trades()
-    local open, done, expect = {}, {}, 0
+    local _, _, _, soldKeys = Se:SalesMoney()
+    local cut = ns.Deals.cfg.cut
+    local spent, back, coming, out_, waiting = 0, 0, 0, 0, 0
+    local rows = {}
     for _, t in ipairs(trades) do
-        if J.left(t) > 0 then open[#open + 1] = t else done[#done + 1] = t end
-    end
-    for _, e in ipairs(entries) do
-        local paid, _, net = Se:Numbers(e)
-        if paid and e.action ~= "HOLD" and not (e.action == "LISTED" and e.live == 0) then
-            local each = e.action == "LISTED" and floor((e.listed.price or 0) * (1 - ns.Deals.cfg.cut)) or net
-            expect = expect + (each - paid) * e.count
+        local left, done, lost = J.left(t), (t.sold or 0) + (t.vend or 0), t.lost or 0
+        local l = ("%s x%d"):format(tostring(t.name), t.qty) .. (t.cost and (GREY .. "  at " .. short(t.cost) .. "|r") or "")
+        local r
+        if not t.cost then
+            r = GREY .. "price paid not known|r"
+        else
+            local counted = t.qty - lost
+            spent = spent + t.cost * counted
+            back = back + (t.got or 0) - (t.feeLost or 0)
+            local listed = math.min(t.listed or 0, left)
+            if left <= 0 and done > 0 then
+                local p = J.realized(t) or 0
+                r = (p >= 0 and GREEN or RED) .. "SOLD  " .. signed(p, short) .. "|r"
+            elseif left <= 0 then
+                r = GREY .. "not found, not counted|r"
+            elseif listed > 0 and soldKeys[t.key] then
+                -- sold on the auction house, the gold is still on its way
+                local net = floor((t.price or 0) * (1 - cut)) * listed
+                local p = (t.got or 0) + net - t.cost * counted - (t.feeLost or 0)
+                coming = coming + net
+                r = ORANGE .. "SOLD, gold coming  " .. signed(p, short) .. "|r"
+            else
+                local down = t.cost * left
+                out_, waiting = out_ + down, waiting + 1
+                r = RED .. (done > 0 and ("%d NOT SOLD"):format(left) or "NOT SOLD") .. "  down " .. short(down) .. "|r"
+            end
         end
+        rows[#rows + 1] = { l = l, r = r, ledger = true, trade = t }
     end
-    out[#out + 1] = { head = "ALL TRADES" }
-    out[#out + 1] = { l = "Bought so far", r = ("%d trade%s, %s spent"):format(s.trades, s.trades == 1 and "" or "s", short(s.spent)) }
-    out[#out + 1] = { l = "Finished / still open", r = ("%d / %d"):format(s.finished, s.open) }
-    out[#out + 1] = { l = "Profit made on what has sold", r = (s.profit >= 0 and GREEN or RED) .. signed(s.profit, short) .. "|r" }
-    out[#out + 1] = { l = "Profit if everything open sells", r = (expect >= 0 and ORANGE or RED) .. signed(expect, short) .. "|r" }
-    out[#out + 1] = { head = ("OPEN (%d)"):format(#open) }
-    if #open == 0 then out[#out + 1] = { l = GREY .. "Nothing open. Buy a deal on the Trades tab.|r" } end
-    for _, t in ipairs(open) do tradeLines(out, t, byKey, short) end
-    out[#out + 1] = { head = ("FINISHED (%d)"):format(#done) }
-    if #done == 0 then out[#out + 1] = { l = GREY .. "Nothing has sold yet.|r" } end
-    for _, t in ipairs(done) do tradeLines(out, t, byKey, short) end
+    local now = back - spent
+    out[#out + 1] = { head = "LEDGER" }
+    out[#out + 1] = { l = "Paid for everything bought", r = "- " .. short(spent) }
+    out[#out + 1] = { l = "Came back from what sold", r = GREEN .. "+ " .. short(back) .. "|r" }
+    if coming > 0 then out[#out + 1] = { l = "Sold, gold on its way", r = ORANGE .. "+ " .. short(coming) .. "|r" } end
+    out[#out + 1] = { rule = true }
+    out[#out + 1] = { l = WHITE .. (now + coming >= 0 and "You are up" or "You are down") .. "|r",
+        r = (now + coming >= 0 and GREEN or RED) .. short(math.abs(now + coming)) .. "|r" }
+    if waiting > 0 then
+        out[#out + 1] = { l = GREY .. ("%d purchase%s not sold yet: %s still to come back|r"):format(waiting, waiting == 1 and "" or "s", short(out_)) }
+    end
+    out[#out + 1] = { head = ("WHAT YOU BOUGHT, NEWEST FIRST (%d)"):format(#rows) }
+    if #rows == 0 then out[#out + 1] = { l = GREY .. "Nothing yet. Buy a deal on the Trades tab.|r" } end
+    for _, r in ipairs(rows) do out[#out + 1] = r end
     return out
 end
 
@@ -1505,10 +1590,10 @@ function UI:CreateDrawer()
     d.art:SetAllPoints()
     d.art:SetColorTexture(0.045, 0.05, 0.06, 0.97)
     outline(d, LINE)
-    -- three views: your trades, the activity log, the market
+    -- two views: the ledger of what you bought, and the market
     d.views = {}
     local prev
-    for _, v in ipairs({ { "trades", "Trades" }, { "activity", "Activity" }, { "market", "Market" } }) do
+    for _, v in ipairs({ { "trades", "Ledger" }, { "market", "Market" } }) do
         local b = button(d, 70, v[2], function() UI.sel, UI.dview, UI.dscroll = nil, v[1], 0; UI:Render() end)
         if prev then b:SetPoint("LEFT", prev, "RIGHT", 6, 0) else b:SetPoint("TOPLEFT", 12, -8) end
         d.views[v[1]] = b
@@ -1542,6 +1627,20 @@ function UI:CreateDrawer()
     end)
     d.focus:SetPoint("TOPRIGHT", -12, -8)
     d.focus:Hide()
+    -- stop tracking an item (it used to be a right-click on the row, which was too easy to do by accident)
+    d.remove = button(d, 150, "", function()
+        if not UI.sel then return end
+        if UI.removeUntil and GetTime() < UI.removeUntil then
+            UI.removeUntil = nil
+            ns.Seller:Untrack(UI.sel)
+            UI.sel = nil
+        else
+            UI.removeUntil = GetTime() + 5
+        end
+        UI:Render()
+    end)
+    d.remove:SetPoint("BOTTOMRIGHT", -12, 26)
+    d.remove:Hide()
     d:EnableMouseWheel(true)
     d:SetScript("OnMouseWheel", function(_, delta)
         UI.dscroll = math.max(0, (UI.dscroll or 0) - (delta or 0) * 4)
@@ -1556,7 +1655,7 @@ function UI:CreateDrawer()
     h:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Details")
-        GameTooltip:AddLine("Every trade from purchase to sale, its profit,\nand what to do with what you hold.", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("The ledger: what you bought, what you paid,\nand the profit, or how much you are down until it sells.", 0.8, 0.8, 0.8)
         GameTooltip:Show()
     end)
     h:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1591,6 +1690,12 @@ function UI:RenderDrawer(entries)
     local off = math.max(0, math.min(self.dscroll or 0, #lines - vis))
     self.dscroll = off
     for name, b in pairs(d.views) do outline(b, (not self.sel and (self.dview or "trades") == name) and ACCENT or LINE) end
+    do
+        local tracked = false
+        if self.sel then for _, e in ipairs(entries) do if e.key == self.sel then tracked = true end end end
+        d.remove:SetShown(tracked)
+        d.remove:SetText((self.removeUntil and GetTime() < self.removeUntil) and "Click again to remove" or "Stop tracking this item")
+    end
     d.focus:SetShown(self.sel ~= nil)
     if self.sel then d.focus:SetText(ns.Scout:InList(self.sel) and "Remove from my focus" or "Add to my focus list") end
     for i = 1, DLINES do
@@ -1599,7 +1704,7 @@ function UI:RenderDrawer(entries)
             w.label:SetText(""); w.value:SetText(""); w.rule:Hide()
         else
             w.rule:SetShown(ln.rule == true)
-            w.label:SetWidth(ln.r and (DRAWER_W - 24 - (ln.wide and 70 or 130)) or (DRAWER_W - 24))
+            w.label:SetWidth(ln.r and (DRAWER_W - 24 - (ln.wide and 70 or ln.ledger and 170 or 130)) or (DRAWER_W - 24))
             w.label:SetText(ln.head and (GREY .. ln.head .. "|r") or ln.l or "")
             w.value:SetText(ln.r or "")
         end
@@ -1626,7 +1731,7 @@ function UI:Open(tab)
 end
 
 function UI:Close()
-    if frame then frame:Hide() end
+    if frame then self:WheelBind(false); frame:Hide() end
     if self.ahTab then selectTab(self.ahTab, false) end
 end
 
