@@ -150,7 +150,16 @@ local STATE = {
             return GREEN .. (e.soldIn and ("Sold: gold arrives in %d min"):format(math.max(1, floor(e.soldIn / 60 + 0.5))) or "Sold: gold is on its way") .. "|r", nil
         end
         if e.live == 0 then return GREEN .. "Sold or expired: check your mailbox|r", nil end
-        if e.undercut then return ORANGE .. "Listed, but someone is cheaper|r", nil end
+        if e.undercut then
+            -- CANCEL, to post it again under the cheaper seller. Two clicks on
+            -- the same button: "Cancel", then "Sure?".
+            local Se = ns.Seller
+            if Se.cancelling and Se.cancelling.key == e.key then return GOLD .. "Cancelling...|r", nil end
+            local can = ahOpen() and #Se:Cancellable(e.key) > 0
+            local arm = Se.cancelArm
+            local armed = arm and arm.key == e.key and GetTime() - arm.at < 5
+            return ORANGE .. "Listed, but someone is cheaper|r", can and (armed and "Sure?" or "Cancel") or nil
+        end
         return GREY .. "Listed for sale|r", nil
     end,
 }
@@ -165,7 +174,7 @@ local function fillSell(r, e, short)
     local text, button = STATE[e.action](e, ready, busy)
     if Se.posting and Se.posting.key == e.key then text = GOLD .. "Posting...|r" end
     -- why the last press of Post did nothing, right next to the button
-    local why = e.action == "AH" and Se:NoteFor(e.key)
+    local why = (e.action == "AH" and Se:NoteFor(e.key)) or (e.action == "LISTED" and Se:NoteFor(e.key, "cancel"))
     if why then text = ORANGE .. why .. "|r" end
     r.state:SetText(text)
     local paid, sell, _, profit, live = Se:Numbers(e)
@@ -285,7 +294,7 @@ local function nextStep(deals, entries, short)
         local waiting = Se:SalesMoney()
         if waiting > 0 then return ("Collect %s%s|r at a mailbox: sale gold has arrived."):format(GREEN, short(waiting)) end
     end
-    if n.MAIL > 0 then return ("Visit a mailbox: %d purchase(s) to collect."):format(n.MAIL) end
+    if n.MAIL > 0 then return ("Visit a mailbox: %d item(s) to collect."):format(n.MAIL) end
     if sold > 0 then return "Visit a mailbox: an auction sold or expired." end
     if n.AH > 0 then return ("Open the auction house: %d item(s) to post for %s+%s|r."):format(n.AH, GREEN, short(gain.AH)) end
     if not ahOpen() then return "Open the auction house to look for deals." end
@@ -890,6 +899,7 @@ local function rowButton(self)
         elseif item.action == "AH" then Se:Post(item.key)
         elseif item.action == "VENDOR" then Se:SellVendor(item.key)
         elseif item.action == "HOLD" then Se.prices[item.key] = nil; Se.priority = item.key
+        elseif item.action == "LISTED" then Se:CancelClick(item.key)
         end
     end
     UI:Dirty()

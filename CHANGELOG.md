@@ -6,6 +6,18 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.30.0 (2026-11-15)
+
+- **Cancel an undercut auction from the panel.** A row under STUCK LISTINGS has a **Cancel** button while the auction house is open. The first click says what it costs (the posting fee is not returned) and the button asks **Sure?**; the second click cancels. The units go back to the Bags tab as "In your mailbox", the addon takes them out at a mailbox, and at the auction house **Post** lists them again one step under the cheapest seller.
+  - One auction per pair of clicks, dearest first. The lost fee comes off banked profit. A cancel is not scored as a failed flip.
+  - If the auction house is busy on the second click it stays armed; if the game refuses, the row shows the game's own reason.
+- **Expired auctions come back ready to post, in the cases that were left to you.** They are now recognised from the mail itself (an item you have listed, in a mail without an invoice). It used to need the auction house's list of your auctions from the same session, every auction of the item to be gone, and none of the item in your hands. So it failed when you went to the mailbox first after logging in, when you held more of the same item, and when one of two auctions ran out.
+  - Returned units are added to what you already hold of the item, cost averaged.
+  - Taking the mail out by hand before the addon does is recognised too.
+  - A purchase of the same item arriving by mail is not mistaken for a returned auction.
+- "Visit a mailbox: N item(s) to collect" (it said "purchase(s)").
+- Not yet tried in the real game: the cancel (it uses the game's own cancel call and its confirmation event) and the new recognition of returned mail.
+
 ## 3.29.0 (2026-11-15)
 
 - **All communication removed.** The addon no longer has any code that sends or receives anything: no addon messages, no chat channel, no guild. The sharing controls are gone from the Setup tab, and "spotted by a friend" from the deals. An install that had joined a channel for it leaves that channel once, ten seconds after the first login, and says so in chat. Prices are kept in a local price book as before.

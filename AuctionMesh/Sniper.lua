@@ -89,6 +89,7 @@ local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true 
 Sniper.verified = {}   -- key -> deal (+ key, at, commodity)
 Sniper.isItem = {}     -- key -> true for non-stackable items (never deal candidates)
 Sniper.own = {}        -- key -> { [unitPrice] = qty } of your own active auctions (from the server)
+Sniper.ownIds = {}     -- key -> list of those auctions one by one: { id, qty, price, ends }
 Sniper.floor = {}      -- key -> { price, at }: the server refused to sell below this price
 Sniper.book = {}       -- key -> { x = price level, cum = units at or below x, at } from the last reading
 Sniper.bought = {}     -- key -> units we bought since the last reading (not counted as demand)
@@ -1569,6 +1570,7 @@ end
 -- listings are never mistaken for deals.
 function Sniper:ReadOwned()
     local AH, own, n = C_AuctionHouse, {}, 0
+    local ids = {} -- key -> { { id, qty, price, ends } }: each active auction, so one can be cancelled
     local total = AH.GetNumOwnedAuctions and AH.GetNumOwnedAuctions() or 0
     local soldRows, soldQty, rowsLog = 0, {}, {}
     local soldPay = {}
@@ -1596,6 +1598,9 @@ function Sniper:ReadOwned()
             local price = a.buyoutAmount or a.bidAmount or 0
             own[id] = own[id] or {}
             own[id][price] = (own[id][price] or 0) + (a.quantity or 1)
+            ids[id] = ids[id] or {}
+            ids[id][#ids[id] + 1] = { id = a.auctionID, qty = a.quantity or 1, price = price,
+                                      ends = a.timeLeftSeconds and (GetTime() + a.timeLeftSeconds) or nil }
             n = n + 1
         end
     end
@@ -1603,6 +1608,7 @@ function Sniper:ReadOwned()
     self.ownSoldPay = soldPay -- { amount after the cut, due = when it is paid out }
     ns.Log("OWNED: the server lists %d of your auctions (%d active, %d sold and waiting to be paid) %s", total, n, soldRows, table.concat(rowsLog, " "))
     self.own, self.ownRead = own, true
+    self.ownIds, self.ownAt = ids, GetTime()
     -- Deals built before we knew about them are re-checked.
     for k in pairs(self.verified) do if own[k] then self.verified[k] = nil; self.checkedAt[k] = nil end end
     dirty()

@@ -193,7 +193,7 @@ function Seller:Instructions(entries)
     local function add(action, text) lines[#lines + 1] = COLORS[action][4] .. text .. "|r" end
     if n.MAIL > 0 then
         add("MAIL", mailOpen() and ("Collecting " .. n.MAIL .. " item(s) from the mailbox...")
-            or ("Go to a mailbox: " .. n.MAIL .. " purchase(s) to collect."))
+            or ("Go to a mailbox: " .. n.MAIL .. " item(s) to collect."))
     end
     if n.AH > 0 then
         if ahOpen() then
@@ -364,11 +364,12 @@ function Seller:CollectMail()
                     TakeInboxMoney(i); C_Timer.After(0.4, step); return
                 elseif not invoice and hasItem and (moneyAmt or 0) == 0 then
                     -- a returned (expired) auction of an item we are tracking
+                    -- an auction of ours that came back (it ran out, or you cancelled it)
                     local nm, id, _, cnt = GetInboxItem(i, 1)
                     local f = id and flips()[id]
-                    if f and f.proof == "auction expired, returned by mail" and (bagCount[id] or 0) < (f.units or 0) then
-                        AutoLootMailItem(i)
-                        say(("|cff4d99ffCollected from mailbox:|r %s x %s (expired auction) is back in your bags."):format(tostring(cnt or 1), tostring(nm or "item")))
+                    if f and (f.retPending or 0) > 0 and (bagCount[id] or 0) < (f.units or 0) then
+                        AutoLootMailItem(i) -- (the hook on it takes the units off "still in the mailbox")
+                        say(("|cff4d99ffCollected from mailbox:|r %s x %s (your auction, returned) is back in your bags. Post it again on the Bags tab."):format(tostring(cnt or 1), tostring(nm or "item")))
                         C_Timer.After(0.4, step); return
                     end
                 end
@@ -489,16 +490,24 @@ end
 function Seller:ScanMail()
     local shown, total = GetInboxNumItems()
     local counts = {}
+    -- Items in mail that carries no invoice, no gold and no charge: that is how
+    -- an auction of yours comes back (expired or cancelled). Something you
+    -- bought arrives with a "buyer" invoice and is not counted here.
+    local back = {}
     for i = 1, shown or 0 do
-        local _, _, _, _, _, _, _, hasItem = GetInboxHeaderInfo(i)
+        local _, _, _, _, moneyAmt, cod, _, hasItem = GetInboxHeaderInfo(i)
         if hasItem then
+            local plain = (moneyAmt or 0) == 0 and (cod or 0) == 0 and not (GetInboxInvoiceInfo and GetInboxInvoiceInfo(i))
             for j = 1, (ATTACHMENTS_MAX_RECEIVE or 16) do
                 local _, itemID, _, count = GetInboxItem(i, j)
-                if itemID then counts[itemID] = (counts[itemID] or 0) + (count or 1) end
+                if itemID then
+                    counts[itemID] = (counts[itemID] or 0) + (count or 1)
+                    if plain then back[itemID] = (back[itemID] or 0) + (count or 1) end
+                end
             end
         end
     end
-    self.mailCount = counts
+    self.mailCount, self.mailReturned = counts, back
     -- Sales, read from the invoices themselves (no guessing): gold that is in
     -- the mailbox now, and gold from sales the game is still holding back,
     -- with the time the game says it will arrive.
@@ -541,6 +550,182 @@ function Seller:ScanMail()
     self.mailComplete = (total or shown or 0) <= (shown or 0)
 end
 
+-- How many units of your listing of this item can have ended without a sale:
+-- what is on record as listed, less what the auction house still shows as
+-- running (an auction whose time has passed since that list was read is not
+-- running any more) and less what it shows as sold and waiting to be paid.
+-- With no list from this session, everything on record can have.
+function Seller:EndedQty(key)
+    local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
+    if not L then return 0 end
+    local S = ns.Sniper
+    if not (S and S.ownRead) then return L.qty or 0 end
+    local live, t = 0, GetTime()
+    for _, a in ipairs(S.ownIds and S.ownIds[key] or {}) do
+        if not a.gone and (not a.ends or a.ends > t) then live = live + (a.qty or 0) end
+    end
+    return max(0, (L.qty or 0) - live - ((S.ownSoldQty and S.ownSoldQty[key]) or 0))
+end
+
+-- AN AUCTION OF YOURS CAME BACK UNSOLD: it ran out ("expired") or you
+-- cancelled it ("cancelled"). The units go back among what you hold, with what
+-- they cost you, so the Bags tab offers them for posting again. If you already
+-- hold more of the item they are added to it. Returns the units moved.
+function Seller:Returned(key, n, why)
+    local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
+    if not L then return 0 end
+    n = min(n or 0, L.qty or 0)
+    if n <= 0 then return 0 end
+    local now = GetServerTime()
+    local cancelled = why == "cancelled"
+    local f = flips()[key]
+    if f then
+        local have = f.units or 0
+        if L.cost and not f.unknownCost then f.cost = floor(((f.cost or 0) * have + L.cost * n) / (have + n) + 0.5) end
+        f.units = have + n
+    else
+        f = { kind = "FLIP", units = n, cost = L.cost or 0, unknownCost = (L.cost == nil), sell = L.plan or L.price }
+        flips()[key] = f
+    end
+    f.at, f.missingSince = now, nil
+    f.proof = cancelled and "auction cancelled, returned by mail" or "auction expired, returned by mail"
+    f.retPending = (f.retPending or 0) + n -- still to come out of the mailbox
+    -- the posting fee of an auction that did not sell does not come back: a real loss
+    local fee = 0
+    if (L.fee or 0) > 0 then
+        fee = floor(L.fee * n / max(1, L.qty) + 0.5)
+        L.fee = L.fee - fee
+    end
+    if fee > 0 then
+        Seller.Realize(-fee)
+        if ns.Journal then ns.Journal:FeeLost(key, fee) end
+    end
+    if ns.Journal then
+        if cancelled then ns.Journal:Cancelled(key, n) else ns.Journal:Expired(key, n) end
+    end
+    L.qty = L.qty - n
+    if L.qty <= 0 then AuctionMeshDB.listed[key] = nil end
+    -- an auction that ran out is a flip that did not sell; one you cancelled to post again is not
+    if not cancelled and ns.Learn then ns.Learn:Outcome(key, false) end
+    self.prices[key] = nil -- priced afresh before it is posted again
+    ns.Log("RETURNED %s x%d (%s): back among your holdings at cost %s, posting fee lost %d", tostring(key), n, tostring(why), tostring(L.cost), fee)
+    say(("%s %d x %s. %sIt is on the Bags tab: collect it at a mailbox, then press Post.")
+        :format(cancelled and "|cffff8040Cancelled:|r" or "|cffff8040Expired unsold:|r", n, nameOf(key),
+            fee > 0 and ("The posting fee of " .. money(fee) .. " is lost. ") or ""))
+    self:Refresh()
+    return n
+end
+
+-- A mail's item is being taken (by this addon or by you). If it is one of
+-- your auctions coming back, it is matched here, so taking it by hand before
+-- the addon got to it still puts it on the Bags tab.
+function Seller:OnTakeItem(i)
+    if (GetInboxInvoiceInfo and GetInboxInvoiceInfo(i)) then return end
+    local _, _, _, _, moneyAmt, cod, _, hasItem = GetInboxHeaderInfo(i)
+    if not hasItem or (cod or 0) > 0 or (moneyAmt or 0) > 0 then return end
+    local _, id, _, cnt = GetInboxItem(i, 1)
+    if not id then return end
+    cnt = cnt or 1
+    local sig, t = id .. ":" .. cnt .. ":" .. i, GetTime()
+    if self.lastTake == sig and t - (self.lastTakeAt or -100) < 2 then return end -- the same mail, clicked twice
+    self.lastTake, self.lastTakeAt = sig, t
+    local f = flips()[id]
+    if not (f and (f.retPending or 0) > 0) and AuctionMeshDB.listed and AuctionMeshDB.listed[id] then
+        self:Returned(id, min(cnt, self:EndedQty(id)), "expired")
+        f = flips()[id]
+    end
+    if f and (f.retPending or 0) > 0 then
+        f.retPending = f.retPending - cnt
+        if f.retPending <= 0 then f.retPending = nil end
+    end
+end
+
+---------------------------------------------------------------- cancelling an undercut auction
+
+-- Your own running auctions of this item that someone is cheaper than,
+-- dearest first. Empty when the auction house's list has not been read.
+function Seller:Cancellable(key)
+    local S, out = ns.Sniper, {}
+    if not (S and S.ownRead and S.ownIds and S.ownIds[key]) then return out end
+    local low, _, t = nil, nil, nil
+    if ns.Store and ns.Store.Get then low, _, t = ns.Store:Get(key) end
+    if not (low and t and GetServerTime() - t < 600) then return out end
+    local now = GetTime()
+    for _, a in ipairs(S.ownIds[key]) do
+        if a.id and not a.gone and (not a.ends or a.ends > now) and (a.price or 0) > low then out[#out + 1] = a end
+    end
+    table.sort(out, function(x, y) return (x.price or 0) > (y.price or 0) end)
+    return out
+end
+
+-- The Cancel button on an undercut auction. Two clicks on the same button: the
+-- first says what it costs, the second cancels. Rows move when a deal appears,
+-- and a cancel cannot be taken back, so one stray click must not do it.
+-- Must run from a click (the game wants a real input for a cancel).
+function Seller:CancelClick(key)
+    if not ahOpen() then return end
+    local c = self.cancelling
+    if c then self:Note(c.key, "Cancelling: waiting for the auction house to confirm.", "cancel"); return end
+    local a = self:Cancellable(key)[1]
+    if not a then self:Note(key, "Nothing to cancel: none of your auctions of it is undercut right now.", "cancel"); return end
+    local AH = C_AuctionHouse
+    if AH.CanCancelAuction and AH.CanCancelAuction(a.id) == false then
+        self:Note(key, "The game does not allow this auction to be cancelled.", "cancel")
+        return
+    end
+    local arm = self.cancelArm
+    if not (arm and arm.id == a.id and GetTime() - arm.at < 5) then
+        self.cancelArm = { id = a.id, key = key, at = GetTime() }
+        local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
+        local fee = (L and (L.fee or 0) > 0) and floor(L.fee * min(1, a.qty / max(1, L.qty)) + 0.5) or 0
+        self:Note(key, ("Click again to cancel %d at %s each.%s It comes back by mail; then post it again on the Bags tab.")
+            :format(a.qty, Seller.short(a.price), fee > 0 and (" The posting fee of " .. Seller.short(fee) .. " is not returned.") or " The posting fee is not returned."), "cancel")
+        C_Timer.After(5.1, function() if ns.UI then ns.UI:Dirty() end end)
+        return
+    end
+    if not ns.Gate:ReadyForUser() then
+        arm.at = GetTime() -- stays armed: the next click cancels
+        self.quietUntil = GetTime() + 1.0
+        self:Note(key, "The auction house is busy for a moment. Click again.", "cancel")
+        return
+    end
+    self.cancelArm = nil
+    ns.Gate:Use(("cancel auction %s: %dx %s @%d"):format(tostring(a.id), a.qty, tostring(key), a.price or 0))
+    self.cancelling = { key = key, id = a.id, qty = a.qty, price = a.price, at = GetTime(), a = a }
+    self.note = nil -- the row now says "Cancelling..."
+    self.quietUntil = GetTime() + 2
+    if not pcall(AH.CancelAuction, a.id) then
+        self.cancelling = nil
+        self:Note(key, "The game refused the cancel.", "cancel")
+    end
+    self:Refresh()
+end
+
+-- The auction house confirmed a cancel (event AUCTION_CANCELED).
+function Seller:OnCancelled(auctionID)
+    local c = self.cancelling
+    if not c or (auctionID and auctionID ~= 0 and c.id ~= auctionID) then
+        -- cancelled in the game's own Auctions tab: read your auctions again; the mailbox does the rest
+        if ns.Sniper then ns.Sniper.needOwned = true end
+        return
+    end
+    self.cancelling = nil
+    local S = ns.Sniper
+    if S then
+        c.a.gone = true -- until the auction house's list is read again
+        local o = S.own and S.own[c.key]
+        if o and o[c.price] then
+            o[c.price] = o[c.price] - c.qty
+            if o[c.price] <= 0 then o[c.price] = nil end
+            if next(o) == nil then S.own[c.key] = nil end
+        end
+        S.needOwned = true
+    end
+    self:Returned(c.key, c.qty, "cancelled")
+    self.note = nil
+    self:Refresh()
+end
+
 -- With the real bag + mailbox contents known, fix anything the Flip Bag got wrong:
 -- units that are in neither place (a purchase that never happened, or items you
 -- moved elsewhere) are removed, with a message. Purchases younger than 2 min are
@@ -552,29 +737,19 @@ function Seller:Reconcile()
     -- have it on record as listed, it is no longer among our auctions, and the
     -- item is sitting in the mailbox. Put it back in the portfolio with its cost
     -- (so it can be reposted without selling at a loss) and score the failure.
-    local S = ns.Sniper
-    if S and S.ownRead then
+    -- THE MAIL ITSELF IS THE EVIDENCE: an item you have listed, in a mail with
+    -- no invoice. (This used to need the auction house's list of your auctions
+    -- from the same session, every auction of the item to be gone, and nothing
+    -- else of the item in your hands. After a night's sleep you log in and walk
+    -- to the mailbox first, or you hold more of the same item, and the expired
+    -- auction was left in the mailbox for you to sort out by hand.)
+    do
         local returned = false
-        for key, L in pairs(AuctionMeshDB.listed or {}) do
-            local inMail = self.mailCount[key] or 0
-            local live = 0
-            for _, q in pairs(S.own[key] or {}) do live = live + q end
-            if inMail > 0 and live == 0 and not flips()[key] and now - (L.at or 0) > 600 then
-                local n = min(inMail, L.qty)
-                flips()[key] = { kind = "FLIP", units = n, cost = L.cost or 0, unknownCost = (L.cost == nil),
-                                 sell = L.price, at = now, proof = "auction expired, returned by mail" }
-                AuctionMeshDB.listed[key] = nil
-                -- an auction that does not sell never gets its posting fee back: that is a real loss
-                if (L.fee or 0) > 0 then
-                    Seller.Realize(-L.fee)
-                    if ns.Journal then ns.Journal:FeeLost(key, L.fee) end
-                    say(("The posting fee of %s for %s is lost (the auction did not sell)."):format(money(L.fee), nameOf(key)))
-                end
-                if ns.Journal then ns.Journal:Expired(key, n) end
-                if ns.Learn then ns.Learn:Outcome(key, false) end
-                say(("|cffff8040Expired unsold:|r %d x %s came back by mail. It is on the Bags tab again."):format(n, nameOf(key)))
-                returned = true
-            end
+        for key in pairs(AuctionMeshDB.listed or {}) do
+            local f = flips()[key]
+            local back = ((self.mailReturned and self.mailReturned[key]) or 0) - ((f and f.retPending) or 0)
+            local n = min(back, self:EndedQty(key))
+            if n > 0 and self:Returned(key, n, "expired") > 0 then returned = true end
         end
         if returned then C_Timer.After(0.5, function() Seller:CollectMail() end) end
     end
@@ -583,6 +758,7 @@ function Seller:Reconcile()
         local have = (bagCount[key] or 0) + inMail
         if inMail > 0 then f.mailVerified = now end
         if have >= (f.units or 0) then f.missingSince = nil end
+        if (bagCount[key] or 0) >= (f.units or 0) then f.retPending = nil end -- all of it is in the bags
         if self.mailComplete and have < (f.units or 0) and now - (f.at or 0) > 120 and not f.missingSince then
             -- first time it is not found: keep it, and look again at a later mailbox visit
             f.missingSince = now
@@ -637,6 +813,12 @@ function Seller:Tick()
     if self.pending and GetTime() - self.pending.at > PRICE_TIMEOUT then
         self.pending = nil
         self:Refresh()
+    end
+    if self.cancelling and GetTime() - self.cancelling.at > 6 then
+        local key = self.cancelling.key
+        self.cancelling = nil
+        if ns.Sniper then ns.Sniper.needOwned = true end
+        self:Note(key, "The auction house did not confirm the cancel. Try again.", "cancel")
     end
 end
 
@@ -700,18 +882,20 @@ end
 -- WHY NOTHING HAPPENED. Every press of Post that does not post says why, on
 -- the row itself (next to the button being pressed), for 4 seconds. Chat gets
 -- the message once, not once per press.
-function Seller:Note(key, text)
+-- what = nil for the Post button's notes (Bags tab), "cancel" for the Cancel
+-- button's (Trades tab): each row shows only its own.
+function Seller:Note(key, text, what)
     local was = self.note
-    self.note = { key = key, text = text, at = GetTime() }
+    self.note = { key = key, text = text, at = GetTime(), what = what }
     if not was or was.text ~= text or GetTime() - was.at > 4 then
         if ns.Print then ns.Print(nameOf(key) .. ": " .. text) end
     end
     if ns.UI then ns.UI:Dirty() end
 end
 
-function Seller:NoteFor(key)
+function Seller:NoteFor(key, what)
     local n = self.note
-    return (n and n.key == key and GetTime() - n.at < 4) and n.text or nil
+    return (n and n.key == key and n.what == what and GetTime() - n.at < (what == "cancel" and 5 or 4)) and n.text or nil
 end
 
 -- Must run from a click or keypress (posting is hardware-event protected).
@@ -810,6 +994,13 @@ function Seller:CheckPosted()
 end
 
 function Seller:OnError(msg)
+    if self.cancelling and not self.posting then
+        local key = self.cancelling.key
+        ns.Log("CANCEL error for %s: %s", tostring(key), tostring(msg))
+        self.cancelling = nil
+        self:Note(key, "Not cancelled. The game says: " .. tostring(msg), "cancel")
+        return self:Refresh()
+    end
     if not self.posting then return end
     ns.Log("POST error for %s: %s", tostring(self.posting.key), tostring(msg))
     local key = self.posting.key
@@ -1045,7 +1236,7 @@ function Seller:Advice(e)
             return ("Wait. Someone lists at %s. Posting again costs a fee of %s first and you have %s.%s")
                 :format(short(low), short(self:DepositTotal(key, true, e.count)), short(GetMoney()), expires), "wait"
         elseif each and each * e.count >= cfg.minProfit then
-            return ("Someone lists at %s. Cancel yours (the game's Auctions tab) and post again at %s: still %s. The posting fee is paid again.")
+            return ("Someone lists at %s. Press Cancel on its row (Trades tab), collect it at a mailbox and post again at %s: still %s. The posting fee is paid again.")
                 :format(short(low), short(repost), signed(each * e.count)), "do"
         elseif each then
             return ("Wait. Someone lists at %s; going under that would leave %s, less than your minimum.%s If it runs out it comes back by mail.")
@@ -1085,11 +1276,16 @@ function Seller:Init()
     if hooksecurefunc and TakeInboxMoney then
         hooksecurefunc("TakeInboxMoney", function(i) Seller:RecordSale(i) end)
     end
+    if hooksecurefunc then
+        if AutoLootMailItem then hooksecurefunc("AutoLootMailItem", function(i) Seller:OnTakeItem(i) end) end
+        if TakeInboxItem then hooksecurefunc("TakeInboxItem", function(i) Seller:OnTakeItem(i) end) end
+    end
     local f = CreateFrame("Frame")
     for _, e in ipairs({ "MERCHANT_SHOW", "MERCHANT_CLOSED", "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MAIL_CLOSED",
         "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "BAG_UPDATE_DELAYED", "UI_ERROR_MESSAGE", "PLAYER_MONEY" }) do
         f:RegisterEvent(e)
     end
+    pcall(f.RegisterEvent, f, "AUCTION_CANCELED")
     Seller.goldSeen = GetMoney()
     f:SetScript("OnEvent", function(_, event, a1, a2)
         if event == "PLAYER_MONEY" then
@@ -1097,6 +1293,8 @@ function Seller:Init()
             local delta = now - (Seller.goldSeen or now)
             Seller.goldSeen = now
             if delta > 0 and mailOpen() then Seller:MailGold(delta); Seller:Refresh() end
+        elseif event == "AUCTION_CANCELED" then
+            Seller:OnCancelled(a1)
         elseif event == "MERCHANT_SHOW" then
             -- Nothing is sold by itself: the panel opens and waits for your click.
             Seller:Refresh("open")
@@ -1110,7 +1308,7 @@ function Seller:Init()
             if not Seller.ticker then Seller.ticker = C_Timer.NewTicker(0.3, function() Seller:Tick() end) end
         elseif event == "AUCTION_HOUSE_CLOSED" then
             if Seller.ticker then Seller.ticker:Cancel(); Seller.ticker = nil end
-            Seller.pending, Seller.posting = nil, nil
+            Seller.pending, Seller.posting, Seller.cancelling, Seller.cancelArm = nil, nil, nil, nil
             Seller:Refresh()
         elseif event == "BAG_UPDATE_DELAYED" then
             local before = bagCount

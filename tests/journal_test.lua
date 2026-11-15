@@ -68,5 +68,17 @@ for i = 2, 8 do local t = J:Bought(i, "T" .. i, "FLIP", 1, 1, 2); J:Sold(i, 1, 2
 check(#list3 == 5 and list3[1] == keep, "at most 5 kept; finished trades are dropped before open ones")
 J.MAX = 200
 
+print("an auction you cancel to post it again")
+do
+    J:Attach({})
+    local c = J:Bought(4306, "Silk Cloth", "FLIP", 8, 99, 198)
+    J:Posted(4306, 8, 198)
+    J:FeeLost(4306, 12)
+    J:Cancelled(4306, 8)
+    check(c.listed == 0 and c.cancelled == 1 and (c.expired or 0) == 0 and J.left(c) == 8 and c.feeLost == 12, "cancelled: held again, not counted as expired, the lost fee is on record")
+    J:Posted(4306, 8, 185); J:Sold(4306, 8, 185, 1406)
+    check(J.left(c) == 0 and J.realized(c) == 1406 - 8 * 99 - 12, "posted again lower and sold: profit after the lost fee")
+end
+
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

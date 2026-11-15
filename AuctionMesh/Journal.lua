@@ -117,6 +117,15 @@ function Journal:Expired(key, qty)
     end)
 end
 
+-- You cancelled an auction (to post it again under a cheaper seller): the
+-- units are held again. Not a failure to sell, so nothing is scored.
+function Journal:Cancelled(key, qty)
+    spread(self, key, qty, function(t) return t.listed or 0 end, function(t, n)
+        t.listed = t.listed - n
+        t.cancelled = (t.cancelled or 0) + 1
+    end)
+end
+
 -- Units that are gone without a sale on record (removed from tracking, or not
 -- found in bags or mailbox). qty = nil: everything still open for this item.
 function Journal:Dropped(key, qty, why)

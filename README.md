@@ -115,7 +115,7 @@ A slim **DETAILS** handle sits on the panel's right edge. Clicking it slides a s
 * **Click any item row** in the main panel and the drawer shows that item alone: cheapest listing and its age, market price, 24h change, units sold per hour, what buyers really paid, vendor price, why the last check was or wasn't a deal, then each of your trades in it in full, with one recommendation (`DO`, `WAIT` or `CHECK`) for what you still hold. **Ledger** goes back.
 * **Stop tracking this item** is a button at the bottom of that one-item view, and asks for a second click. (A right-click on a row used to remove it, which was too easy to do by accident; a right-click now does the same as a left-click.)
 
-The addon never cancels an auction itself; a "cancel and post again" recommendation is something you do in the game's own Auctions tab.
+The addon never cancels an auction by itself. An undercut auction has a **Cancel** button on its row; the cancel happens on your second click (see "Undercut and expired auctions").
 
 ### Setup: five short groups
 
@@ -136,7 +136,7 @@ Nothing has to be typed in chat. The Setup tab has a control for everything that
 | ADDON | The panel | Inside the auction house window or a window of its own; opens by itself on or off |
 | | Auto-adjust | One switch for the pace, the split of requests, the profit bar, the smallest profit and the radar's quiet time. **Forget what was learned** needs a second click |
 
-Under the controls are three lines: the last thing auto-adjust changed (and when), the server's measured request limit, and what one radar read costs. The heading shows the installed version, e.g. `SETTINGS (AuctionMesh version 3.29.0)`, and the line under it shows what your last click did. Hovering a button explains it.
+Under the controls are three lines: the last thing auto-adjust changed (and when), the server's measured request limit, and what one radar read costs. The heading shows the installed version, e.g. `SETTINGS (AuctionMesh version 3.30.0)`, and the line under it shows what your last click did. Hovering a button explains it.
 
 To track an item you bought some other way, drag it from your bags onto the panel.
 
@@ -460,6 +460,31 @@ A purchase that cannot be found in your bags or mailbox is kept on the list and 
 * An auction you post is shown on the Trades tab under **LISTED** with its quantity, cost, your price and expected profit. It moves under **STUCK LISTINGS** when the latest radar read saw someone cheaper, and under **ENDED, CHECK A MAILBOX** when it is no longer among your auctions. An auction that has **sold** is listed under **SOLD, GOLD ON ITS WAY** with `Sold: gold arrives in 16 min` (it used to be shown as stuck and undercut while its gold was on the way, because the cheaper listings the radar saw were other people's).
 * **Banked so far** (bottom of the Trades tab) is profit actually made: vendor sales, plus auction sales once you collect the gold (sale price minus the auction house cut minus what you paid).
 
+### Undercut and expired auctions
+
+**Undercut: cancel and post again.** An auction under **STUCK LISTINGS** (someone lists cheaper than you) has a **Cancel** button on its row while the auction house is open.
+
+| Step | What happens |
+|---|---|
+| First click | Nothing is cancelled. The row says what it costs: `Click again to cancel 5 at 1s 60c each. The posting fee of 10c is not returned.` The button reads **Sure?** for 5 seconds, then goes back to **Cancel** |
+| Second click | The auction is cancelled at the auction house; the row says `Cancelling...` |
+| The auction house confirms | The units are among your holdings again at what they cost you, shown on the Bags tab as **In your mailbox**. The lost posting fee is taken off your banked profit |
+| At a mailbox | The addon takes them out |
+| Back at the auction house | The Bags tab has them **Ready to post**, one step under the cheapest seller now. Press **Post** (or **Post next**) |
+
+* Two clicks because rows move when a deal appears and a cancel cannot be taken back; both clicks are on the same button, so a double-click does it.
+* With several auctions of one item, each pair of clicks cancels one, dearest first.
+* The drawer's recommendation still says whether cancelling pays: it compares the profit left after posting again (and paying the fee again) with your smallest profit. The button is there either way.
+* The button appears once the auction house has listed your auctions, a second or two after you open it. A cancel is not scored as a flip that failed to sell.
+
+**Expired: it comes back ready to post.** An auction that ran out arrives in the mailbox. At a mailbox the addon recognises it, takes it out, and puts it on the Bags tab with what it cost you; at the auction house it is priced live and **Post** lists it again.
+
+* It is recognised from the mail itself: an item you have listed, in a mail with no invoice. Something you bought arrives with an invoice and is never mistaken for it.
+* This works when you visit the mailbox before the auction house in a new session, when you already hold more of the same item (the returned units are added, cost averaged), and when only one of several auctions of the item ran out.
+* If you take the mail out yourself before the addon does, it is still recognised and tracked.
+* The posting fee of an auction that did not sell is booked as lost, and the item is not flipped again for 12 hours (it can still be posted).
+* Posting again is always your click: nothing is listed by itself.
+
 ### Deals (Trades tab)
 
 Only deals that were just checked against the live listings appear here, with the exact quantity and the exact total you'll pay. Nothing is shown from an estimate.
@@ -672,7 +697,7 @@ python3 tests/test_server.py  # companion ↔ server ↔ Seed.lua round trip
 
 ## Known limits / to verify in game
 
-* **Confirmed in the real game so far** (from logs): one-click buying, buying with the mouse wheel, the radar reads, posting, the mailbox and the import code. **Not yet tried in the real game:** buying with a key (tap or hold), the stake-out, and the vendor-or-auction-house recommendation. Holding a key relies on the game repeating typed characters and accepting them as inputs for buying; if the game refuses, that mode switches itself off and says so.
+* **Confirmed in the real game so far** (from logs): one-click buying, buying with the mouse wheel, the radar reads, posting, the mailbox and the import code. **Not yet tried in the real game:** buying with a key (tap or hold), the stake-out, the vendor-or-auction-house recommendation, the Cancel button and the new recognition of returned auctions in the mailbox. Holding a key relies on the game repeating typed characters and accepting them as inputs for buying; if the game refuses, that mode switches itself off and says so.
 * **The request engine's learning is tested with a fake clock only.** The rules (pause steps, trial lengths, split limits) are sensible starting values, not values proven on a live realm. The Setup tab shows what it actually measured; the log has a `TUNER` line for every change it makes.
 * **Prime items use starting thresholds** (30 sold an hour, 10 minutes of watching, top 12). They are meant to be adjusted from the daily reports.
 * **The two "Sold" lines** rely on the game's sale invoices (`seller_temp_invoice` with its arrival time). If this realm delivers sale gold with no delay, "still on its way" simply stays empty.

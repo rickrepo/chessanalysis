@@ -61,7 +61,15 @@ GetBuildInfo = function() return "12.1.7", "69913", "", 16001 end
 InCombatLockdown = function() return false end
 IsInGuild = function() return false end
 GetChannelName = function() return 0 end
-hooksecurefunc = function() end
+hooksecurefunc = function(name, fn)
+    -- Only the two "take an item out of a mail" functions are really hooked. In
+    -- the game the mail can still be read right after the call (the inbox only
+    -- changes when the server answers), so the hook runs before the fake take.
+    if name == "AutoLootMailItem" or name == "TakeInboxItem" then
+        local orig = _G[name]
+        _G[name] = function(...) fn(...); return orig(...) end
+    end
+end
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) chat[#chat + 1] = strip(m) end }
 SlashCmdList = {}
 UIParent = widget()
@@ -96,6 +104,7 @@ GetInboxInvoiceInfo = function() return "buyer" end
 GetInboxItem = function(i, j) local m = inbox[i]; if m and j == 1 then return "x", m.itemID, nil, m.stackCount end end
 AutoLootMailItem = function(i) local m = table.remove(inbox, i); for s = 1, 16 do if not bags[s] then bags[s] = m; break end end; fire("BAG_UPDATE_DELAYED") end
 TakeInboxMoney = function() end
+TakeInboxItem = function(i) return AutoLootMailItem(i) end
 
 local LIST = {}   -- itemID -> rows {price, qty}
 local full, morePages = {}, 0
@@ -361,7 +370,7 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
     for _, e in ipairs(Se:Entries()) do if e.action == "LISTED" and e.key == 2589 then listedEntry = e end end
     local adv, tone = Se:Advice(listedEntry)
     print("     " .. strip(adv))
-    check(tone == "do" and strip(adv):find("Someone lists at 70c. Cancel yours", 1, true) and strip(adv):find("post again at 69c: still + 2s70c", 1, true),
+    check(tone == "do" and strip(adv):find("Someone lists at 70c. Press Cancel on its row", 1, true) and strip(adv):find("post again at 69c: still + 2s70c", 1, true),
         "undercut with profit left: recommends cancel and repost at 69c, and says what is left (+ 2s70c)")
     ns.Deals.cfg.minProfit = 500
     adv, tone = Se:Advice(listedEntry)
@@ -524,6 +533,192 @@ do
     GetInboxInvoiceInfo = function() return "buyer" end
     AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(2)
     ns.Learn.d.items[2592] = nil
+end
+
+print("an auction that expires: the cases that used to be left to you")
+do
+    local Se = ns.Seller
+    local floor = math.floor
+    ITEMS[2592] = { "Wool Cloth", 33 }
+    local invWas = GetInboxInvoiceInfo
+    GetInboxInvoiceInfo = function(i) return inbox[i] and inbox[i].invoice end
+    local function clear()
+        for s2 = 1, 16 do bags[s2] = nil end
+        fire("BAG_UPDATE_DELAYED")
+        AuctionMeshDB.flips[2592] = nil
+        inbox = {}
+        Se.lastTake = nil
+        if ns.Learn.d.items then ns.Learn.d.items[2592] = nil end
+    end
+    AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
+    -- 1. A NEW SESSION: the mailbox is visited before the auction house, so the
+    --    addon has no list of your auctions. And you hold 3 more of the item.
+    clear()
+    AuctionMeshDB.listed = { [2592] = { qty = 5, price = 160, cost = 34, plan = 160, fee = 10, at = GetServerTime() - 13 * 3600 } }
+    S.own, S.ownIds, S.ownRead = {}, {}, false
+    bags[1] = { itemID = 2592, stackCount = 3 }; fire("BAG_UPDATE_DELAYED")
+    AuctionMeshDB.flips[2592] = { kind = "FLIP", units = 3, cost = 40, sell = 160, at = GetServerTime() - 3600 }
+    inbox = { { itemID = 2592, stackCount = 5 } }
+    local banked = AuctionMeshDB.realized or 0
+    MailFrame:Show(); fire("MAIL_SHOW"); advance(4)
+    local f = AuctionMeshDB.flips[2592]
+    check(f and f.units == 8 and f.cost == 36 and AuctionMeshDB.listed[2592] == nil,
+        "mailbox before the auction house, and more of the item in your bags: the 5 expired units join the 3 you hold (8 at 36c, the average)")
+    check(#inbox == 0 and bags[2] and bags[2].itemID == 2592 and bags[2].stackCount == 5 and f.retPending == nil, "and they are taken out of the mailbox by the addon")
+    check((AuctionMeshDB.realized or 0) == banked - 10, "the posting fee of the auction that did not sell is booked as lost (10c)")
+    MailFrame:Hide(); fire("MAIL_CLOSED")
+    -- 2. something you BOUGHT of an item you also have listed is not a returned auction
+    clear()
+    AuctionMeshDB.listed = { [2592] = { qty = 5, price = 160, cost = 34, plan = 160, at = GetServerTime() - 3600 } }
+    inbox = { { itemID = 2592, stackCount = 4, invoice = "buyer" } }
+    MailFrame:Show(); fire("MAIL_SHOW"); advance(4)
+    check(AuctionMeshDB.listed[2592] and AuctionMeshDB.listed[2592].qty == 5 and AuctionMeshDB.flips[2592] == nil,
+        "a purchase of the same item arriving by mail leaves your listing as it is")
+    MailFrame:Hide(); fire("MAIL_CLOSED")
+    -- 3. two auctions of the same item: one ran out, the other is still running
+    clear()
+    AuctionMeshDB.listed = { [2592] = { qty = 10, price = 160, cost = 34, plan = 160, fee = 20, at = GetServerTime() - 13 * 3600 } }
+    S.ownRead, S.own = true, { [2592] = { [160] = 10 } } -- as read at the auction house earlier in the session
+    S.ownIds = { [2592] = { { id = 11, qty = 5, price = 160, ends = GetTime() + 3600 }, { id = 12, qty = 5, price = 160, ends = GetTime() - 60 } } }
+    inbox = { { itemID = 2592, stackCount = 5 } }
+    MailFrame:Show(); fire("MAIL_SHOW"); advance(4)
+    f = AuctionMeshDB.flips[2592]
+    local L = AuctionMeshDB.listed[2592]
+    check(f and f.units == 5 and f.cost == 34 and L and L.qty == 5 and L.fee == 10,
+        "two auctions of one item, one ran out: its 5 units come back, the other 5 stay listed with their share of the fee")
+    MailFrame:Hide(); fire("MAIL_CLOSED")
+    -- 4. you take it out of the mailbox yourself before the addon has looked
+    clear()
+    AuctionMeshDB.listed = { [2592] = { qty = 5, price = 160, cost = 34, plan = 160, at = GetServerTime() - 13 * 3600 } }
+    S.own, S.ownIds, S.ownRead = {}, {}, false
+    inbox = { { itemID = 2592, stackCount = 5 } }
+    TakeInboxItem(1) -- your own click on the mail
+    f = AuctionMeshDB.flips[2592]
+    check(f and f.units == 5 and f.cost == 34 and f.retPending == nil and AuctionMeshDB.listed[2592] == nil and bags[1] and bags[1].itemID == 2592,
+        "taken out of the mailbox by hand: it is still recognised as your expired auction and tracked")
+    TakeInboxItem(1) -- a second click on a mail that is already being taken
+    check(AuctionMeshDB.flips[2592].units == 5, "a double click on the mail does not count it twice")
+    check(ns.Learn:Blocked(2592) ~= nil, "an auction that ran out is scored as a flip that did not sell")
+    -- back at the auction house it is offered for posting again
+    LIST[2592] = { { 150, 100 }, { 155, 300 } }
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW")
+    UI.tab = "SELL"; advance(4); UI:Render()
+    local row
+    for _, l in ipairs(rowsText()) do if l:find("Wool Cloth x5", 1, true) then row = l end end
+    print("     " .. tostring(row))
+    check(row and row:find("Ready to post", 1, true) and row:find("%[Post%]"), "at the auction house the Bags tab has it ready to post again, with a live price")
+    UI.tab = "BUY"
+    clear(); AuctionMeshDB.listed = {}; LIST[2592] = nil
+    S.own, S.ownIds, S.ownRead = {}, {}, true
+    GetInboxInvoiceInfo = invWas
+end
+
+print("undercut: cancel, collect, post again")
+do
+    local Se = ns.Seller
+    ITEMS[2592] = { "Wool Cloth", 33 }
+    for s2 = 1, 16 do bags[s2] = nil end
+    fire("BAG_UPDATE_DELAYED")
+    Se.note, Se.cancelArm, Se.cancelling = nil, nil, nil
+    -- 5 Wool Cloth of yours listed at 1s60c; someone now lists 50 at 1s20c
+    LIST[2592] = { { 120, 50 }, { 125, 300 }, { 160, 5 } }
+    ns.Store:Put(2592, 120, 355, GetServerTime())
+    AuctionMeshDB.listed = { [2592] = { qty = 5, price = 160, cost = 34, plan = 160, fee = 10, at = GetServerTime() - 3600 } }
+    Enum.AuctionStatus = { Active = 0, Sold = 1 }
+    local numWas, infoWas = C_AuctionHouse.GetNumOwnedAuctions, C_AuctionHouse.GetOwnedAuctionInfo
+    C_AuctionHouse.GetNumOwnedAuctions = function() return 1 end
+    C_AuctionHouse.GetOwnedAuctionInfo = function()
+        return { auctionID = 9001, itemKey = { itemID = 2592 }, status = 0, quantity = 5, buyoutAmount = 160, timeLeftSeconds = 30000 }
+    end
+    local cancelled = {}
+    C_AuctionHouse.CancelAuction = function(id) cancelled[#cancelled + 1] = id end
+    S:ReadOwned()
+    UI.tab = "BUY"; UI:Render()
+    local function rowOf(key)
+        for i = 1, #frames do local fr = frames[i]; if rawget(fr, "detail") and fr._shown and rawget(fr, "item") and fr.item.key == key then return fr end end
+    end
+    local function press() local r = rowOf(2592); r.btn._scripts.OnClick(r.btn); UI:Render() end
+    local r = rowOf(2592)
+    print("     " .. strip(r.name._text) .. " | " .. strip(r.state._text) .. " | [" .. (r.btn._shown and r.btn._text or "") .. "]")
+    check(r and r.item.action == "LISTED" and strip(r.state._text) == "Listed, but someone is cheaper" and r.btn._shown and r.btn._text == "Cancel",
+        "an undercut auction has a Cancel button on its row (Trades tab, STUCK LISTINGS)")
+    -- the first click only says what it will cost
+    press(); r = rowOf(2592)
+    print("     " .. strip(r.state._text) .. " | [" .. r.btn._text .. "]")
+    check(#cancelled == 0 and r.btn._text == "Sure?" and strip(r.state._text):find("^Click again to cancel 5 at 1s60c each. The posting fee of 10c is not returned."),
+        "first click: nothing is cancelled; the row says what a cancel costs and the button asks 'Sure?'")
+    advance(6); UI:Render(); r = rowOf(2592)
+    check(#cancelled == 0 and r.btn._text == "Cancel", "left alone for 5 seconds it goes back to Cancel: one stray click never cancels")
+    -- busy auction house: the second click is not lost
+    press()
+    local readyWas = C_AuctionHouse.IsThrottledMessageSystemReady
+    C_AuctionHouse.IsThrottledMessageSystemReady = function() return false end
+    press(); r = rowOf(2592)
+    check(#cancelled == 0 and strip(r.state._text):find("busy for a moment. Click again", 1, true) and r.btn._text == "Sure?", "auction house busy on the second click: it says so and stays armed")
+    C_AuctionHouse.IsThrottledMessageSystemReady = readyWas
+    -- the game refuses
+    C_AuctionHouse.CancelAuction = function() fire("UI_ERROR_MESSAGE", 1, "Auction not found") end
+    press(); r = rowOf(2592)
+    check(Se.cancelling == nil and AuctionMeshDB.listed[2592] and strip(r.state._text):find("Not cancelled. The game says: Auction not found", 1, true), "if the game refuses, the row shows the game's own reason and nothing changes")
+    C_AuctionHouse.CancelAuction = function(id) cancelled[#cancelled + 1] = id end
+    -- two clicks cancel
+    local banked = AuctionMeshDB.realized or 0
+    local learnWas = ns.Learn.d.n
+    Se.note = nil
+    advance(6); UI:Render() -- (an error makes the request engine wait a few seconds)
+    press(); press(); r = rowOf(2592)
+    print("     " .. strip(r.state._text) .. " | cancelled " .. #cancelled)
+    check(#cancelled == 1 and cancelled[1] == 9001 and strip(r.state._text) == "Cancelling..." and not r.btn._shown, "two clicks: the auction is cancelled at the auction house (its own id), and the row says Cancelling...")
+    press()
+    check(#cancelled == 1, "more clicks while it is being cancelled do nothing")
+    fire("AUCTION_CANCELED", 9001); UI:Render()
+    local f = AuctionMeshDB.flips[2592]
+    check(AuctionMeshDB.listed[2592] == nil and f and f.units == 5 and f.cost == 34 and f.retPending == 5, "confirmed by the auction house: the 5 units are among your holdings again, at what they cost you")
+    check((AuctionMeshDB.realized or 0) == banked - 10, "the posting fee is booked as lost (10c)")
+    check(ns.Learn.d.n == learnWas and ns.Learn:Blocked(2592) == nil, "a cancel is not scored as a flip that failed to sell")
+    check(rowOf(2592) == nil, "the auction is gone from the Trades tab")
+    print("     " .. chat[#chat])
+    check(chat[#chat]:find("Cancelled:", 1, true) and chat[#chat]:find("5 x Wool Cloth", 1, true) and chat[#chat]:find("collect it at a mailbox, then press Post", 1, true), "chat says what to do next")
+    UI.tab = "SELL"; UI:Render()
+    local row
+    for _, l in ipairs(rowsText()) do if l:find("Wool Cloth x5", 1, true) then row = l end end
+    check(row and row:find("In your mailbox", 1, true), "the Bags tab shows it as in your mailbox")
+    -- the mailbox: it is collected by the addon
+    local invWas = GetInboxInvoiceInfo
+    GetInboxInvoiceInfo = function(i) return inbox[i] and inbox[i].invoice end
+    inbox = { { itemID = 2592, stackCount = 5 } }
+    AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
+    MailFrame:Show(); fire("MAIL_SHOW"); advance(4)
+    check(#inbox == 0 and bags[1] and bags[1].itemID == 2592 and AuctionMeshDB.flips[2592].retPending == nil and AuctionMeshDB.flips[2592].units == 5,
+        "at the mailbox the cancelled auction is taken out by the addon, counted once")
+    MailFrame:Hide(); fire("MAIL_CLOSED")
+    GetInboxInvoiceInfo = invWas
+    -- back at the auction house: post again under the cheaper seller
+    C_AuctionHouse.GetNumOwnedAuctions = function() return 0 end
+    LIST[2592] = { { 120, 50 }, { 125, 300 } }
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW")
+    UI.tab = "SELL"; advance(4); UI:Render()
+    row = nil
+    for _, l in ipairs(rowsText()) do if l:find("Wool Cloth x5", 1, true) then row = l end end
+    print("     " .. tostring(row))
+    check(row and row:find("Ready to post", 1, true) and row:find("Sell 1s19c", 1, true) and row:find("%[Post%]"), "back at the auction house: ready to post at 1s19c, one step under the cheaper seller")
+    local np = #posted
+    r = rowOf(2592); r.btn._scripts.OnClick(r.btn); advance(2)
+    check(#posted == np + 1 and posted[#posted].qty == 5 and posted[#posted].price == 119 and AuctionMeshDB.listed[2592] and AuctionMeshDB.listed[2592].price == 119,
+        "one click on Post: listed again, 5 at 1s19c")
+    -- no button where it cannot work
+    ns.Store:Put(2592, 110, 400, GetServerTime() + 1)
+    S.own, S.ownIds, S.ownRead = {}, {}, false
+    UI.tab = "BUY"; UI:Render(); r = rowOf(2592)
+    check(r and not r.btn._shown, "no Cancel button until the auction house has listed your auctions (the addon must know which one to cancel)")
+    -- cleanup
+    AuctionMeshDB.listed = {}; AuctionMeshDB.flips[2592] = nil; LIST[2592] = nil
+    for s2 = 1, 16 do bags[s2] = nil end
+    fire("BAG_UPDATE_DELAYED")
+    C_AuctionHouse.GetNumOwnedAuctions, C_AuctionHouse.GetOwnedAuctionInfo = numWas, infoWas
+    S.own, S.ownIds, S.ownRead = {}, {}, true
+    Se.note, Se.cancelArm, Se.cancelling, Se.posting = nil, nil, nil, nil
+    advance(2)
 end
 
 print("minimum profit control")
