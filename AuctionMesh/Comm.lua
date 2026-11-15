@@ -84,12 +84,34 @@ end
 -- Route: dedicated channel if joined, else guild. Returns chatType, target.
 function Comm:Route()
     local name = self.channelName
-    if name and GetChannelName then
-        local id = GetChannelName(name)
+    if name then
+        -- A private channel was chosen: use it or nothing. (It used to fall back
+        -- to the guild silently, so the panel said "connected" while two friends
+        -- in different guilds were not talking to each other at all.)
+        local id = GetChannelName and GetChannelName(name) or 0
         if id and id > 0 then return "CHANNEL", id end
+        return nil
     end
     if IsInGuild and IsInGuild() then return "GUILD", nil end
     return nil
+end
+
+-- Called when a connection has just been made: send what is waiting right away.
+function Comm:Resume()
+    for _, b in pairs(buckets) do b.pausedUntil, b.fails = 0, 0 end
+    wake()
+end
+
+-- What the game itself says about our channel: "joined", "wrong password",
+-- "not joined" (with the game's own reason when it gave one).
+function Comm:ChannelState()
+    local name = self.channelName
+    if not name then return "none" end
+    local id = GetChannelName and GetChannelName(name) or 0
+    if id and id > 0 then return "joined", id end
+    local n = self.notice
+    if n and n.kind == "WRONG_PASSWORD" then return "wrong password" end
+    return "not joined", n and n.kind or nil
 end
 
 local THROTTLE_CODES
@@ -111,7 +133,7 @@ end
 -- Returns "ok", "retry" (back off and resend), or "drop".
 function Comm:RawSend(prefix, msg)
     local chatType, target = self:Route()
-    if not chatType then return "retry" end
+    if not chatType then return "noroute" end
     local ok, ret = pcall(C_ChatInfo.SendAddonMessage, prefix, msg, chatType, target)
     if not ok then return "retry" end
     -- Older clients return boolean/nil; newer return Enum.SendAddonMessageResult (0 = Success).
@@ -163,6 +185,12 @@ function Comm:Pump()
             if res == "ok" then
                 b.tokens = b.tokens - 1
                 b.fails = 0
+            elseif res == "noroute" then
+                -- Not connected to anyone: keep the message, but this is not a
+                -- throttle. (It used to back off for up to 16 seconds, so the
+                -- first messages after joining a channel went out late.)
+                retry[l] = msg
+                break
             else
                 self.stats.throttled = self.stats.throttled + 1
                 b.fails = b.fails + 1
@@ -192,6 +220,18 @@ function Comm:Init()
     pump:SetScript("OnUpdate", function() Comm:Pump() end)
     pump:SetScript("OnShow", function() Comm.last = Comm.now() end)
 
+    -- the game's own answer to a join: joined, wrong password, left...
+    local cn = CreateFrame("Frame")
+    cn:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE")
+    cn:SetScript("OnEvent", function(_, _, kind, _, _, _, _, _, _, _, base)
+        local name = Comm.channelName
+        if name and base and tostring(base):lower() == name:lower() then
+            Comm.notice = { kind = kind, at = Comm.now() }
+            if ns.Log then ns.Log("CHANNEL %s: %s", tostring(base), tostring(kind)) end
+            if ns.UI then ns.UI:Dirty() end
+        end
+    end)
+
     local ev = CreateFrame("Frame")
     ev:RegisterEvent("CHAT_MSG_ADDON")
     ev:SetScript("OnEvent", function(_, _, prefix, msg, chatType, sender)
@@ -207,10 +247,16 @@ end
 
 -- Joins (and hides) the private mesh channel.
 function Comm:JoinChannel(name, password)
+    -- leaving the previous channel first, so a changed name really moves you
+    if self.channelName and name and self.channelName:lower() ~= name:lower() and LeaveChannelByName then
+        pcall(LeaveChannelByName, self.channelName)
+    end
     self.channelName = name
-    if not name or name == "" then return end
-    if GetChannelName(name) == 0 and JoinTemporaryChannel then
-        JoinTemporaryChannel(name, password)
+    self.notice = nil
+    if not name or name == "" then self.channelName = nil; return end
+    if GetChannelName(name) == 0 then
+        local join = JoinTemporaryChannel or JoinChannelByName
+        if join then pcall(join, name, password) end
     end
     if ChatFrame_RemoveChannel then
         for i = 1, (NUM_CHAT_WINDOWS or 10) do

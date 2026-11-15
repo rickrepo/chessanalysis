@@ -420,7 +420,8 @@ function Scout:Report(o)
     add("All money is in copper (100 = 1 silver, 10000 = 1 gold).")
     add("settings: minProfit=", tostring(cfg.minProfit), " margin=", tostring(cfg.margin), "% flips=", tostring(cfg.flips ~= false),
         " scope=", tostring(cfg.scope), " focus=", tostring(cfg.focusMode or "off"), " tune=", tostring(cfg.tune ~= false),
-        " oneClickBuy=", tostring(cfg.prearm ~= false))
+        " oneClickBuy=", tostring(cfg.prearm ~= false),
+        " postingFeeComesBack=", cfg.feeBack == nil and "unknown (no sale yet)" or tostring(cfg.feeBack))
     if ns.Sniper and ns.Sniper.tally then
         local t = ns.Sniper.tally
         add("snipes this session: ", t.won, " got, ", t.lost, " missed after a click, ", t.gone, " gone before a click")

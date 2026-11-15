@@ -143,7 +143,7 @@ Nothing has to be typed in chat. The Setup tab has a control for everything that
 | Laser focus | Click to change: off, prime items (picked from measured activity), or my own list |
 | Focus code | A box and **Apply**, for a code you were given (see below) |
 | The panel | Inside the auction house window or a window of its own; opens by itself on or off |
-| Share prices with friends | Channel name, password, **Join**; or **Use my guild**. The line underneath says who you are connected to |
+| Share prices with friends | Channel name, password, **Join**; or **Use my guild**. The line underneath says, in colour, whether you are connected and to whom; **Who is there?** asks everyone to answer |
 | Self-tuning | One switch for the pace, the split of requests and the profit bar. **Forget what was learned** needs a second click |
 | Share with Claude | **Daily report** (once a day), **Log** and **Last session's log** (when something looks wrong), **Rebuild from purchases** |
 
@@ -233,6 +233,36 @@ The first real report showed deals lasting 7 to 36 seconds, so everything betwee
 The message is on the big button for 6 seconds, flashes in large text in the middle of your screen, and then stays on the line under the button with its age until the next outcome. That line also keeps a count for the session: "3 got, 1 missed, 2 gone before a click".
 
 If the game does not allow an addon to ask for a price without a click, one-click buying switches itself off permanently and the first click asks instead; everything else stays the same.
+
+### Sharing: knowing that it worked
+
+Pressing **Join** now reports what actually happened, about two seconds later:
+
+| The line on the Setup tab | Meaning |
+|---|---|
+| red: `NOT connected: wrong password for channel 'X'.` | Someone already uses that channel name with another password |
+| red: `NOT connected: channel 'X' is not joined. Press Join.` | The game did not let you in (bad name, or you are already in 10 chat channels) |
+| orange: `Joined channel 'X'. Nobody else has answered (asked 3s ago).` | You are in, and no other AuctionMesh has replied. Your friend must be online, on the same realm and faction, with exactly the same name and password |
+| green: `Connected on channel 'X' with 1 player: Bob (v3.15.0, heard 4s ago).` | Working. Each friend is named with their addon version and when they were last heard |
+
+* Joining sends a **roll call**: every AuctionMesh on the channel answers within a second or two, so the list fills at once instead of whenever a friend next happens to send something. **Who is there?** repeats it on demand.
+* The first time a friend is heard, chat says `Connected: Bob-Realm is sharing prices with you.`
+* The bar at the top of every tab ends with `1 friend connected` or `no friends connected`.
+* A friend on a version before 3.15 does not answer roll calls; they appear as "older version" once they send anything (within about 2.5 minutes).
+
+Two faults fixed here. A private channel that had not been joined used to fall back to the guild silently, so the panel could say "connected" while two friends in different guilds were not talking. And messages queued while not connected were held back for up to 16 seconds after joining.
+
+### Moving the panel
+
+Inside the auction house the panel is part of that window and cannot be dragged on its own (the addon does not move the game's windows). The **Pop out** button at the top right turns it into a separate window; drag it by its background, by an item row or by the drawer, and its position is remembered. **Dock** puts it back.
+
+### The cut and the posting fee
+
+* **The 5% auction house cut is taken off every profit figure**: deals, the MONEY section, the drawer, recommendations.
+* **The posting fee** is kept aside when a deal is judged (you must be able to pay it, so it is never spent on buying), but it is not subtracted from profit, because it normally comes back when the auction sells.
+* **Whether it really comes back on this realm is checked on your first sale.** The sale invoice says how much fee was returned. If none was, chat says so, and from then on the fee is taken off every profit figure and a flip has to clear it.
+* **An auction that runs out loses its fee.** That loss is taken off banked profit and shown on the trade in the drawer.
+* The MONEY section's last line shows the fees currently paid on your auctions and which of the three states applies (confirmed / does not come back / not confirmed yet).
 
 ### The columns
 

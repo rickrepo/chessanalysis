@@ -101,6 +101,14 @@ function Journal:Vendored(key, qty, unit)
     end)
 end
 
+-- A posting fee that will not come back (the auction expired).
+function Journal:FeeLost(key, fee)
+    for i = #(self.list or {}), 1, -1 do
+        local t = self.list[i]
+        if t.key == key and (t.listed or 0) > 0 then t.feeLost = (t.feeLost or 0) + fee; return end
+    end
+end
+
 -- An auction came back unsold: the units are in the bags again.
 function Journal:Expired(key, qty)
     spread(self, key, qty, function(t) return t.listed or 0 end, function(t, n)
@@ -163,8 +171,9 @@ end
 -- Profit of the units that are finished (nil while the cost is unknown).
 function Journal.realized(t)
     local done = (t.sold or 0) + (t.vend or 0)
-    if done <= 0 or not t.cost then return nil end
-    return (t.got or 0) - t.cost * done
+    if not t.cost then return nil end
+    if done <= 0 then return (t.feeLost or 0) > 0 and -t.feeLost or nil end
+    return (t.got or 0) - t.cost * done - (t.feeLost or 0)
 end
 
 -- trades newest first, optionally for one item only

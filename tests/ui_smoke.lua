@@ -70,7 +70,8 @@ AuctionHouseFrame = widget(); AuctionHouseFrame:Hide()
 MerchantFrame = widget(); MerchantFrame:Hide()
 MailFrame = widget(); MailFrame:Hide()
 Enum = { AuctionHouseSortOrder = { Price = 1 }, SendAddonMessageResult = { Success = 0 } }
-C_ChatInfo = { RegisterAddonMessagePrefix = function() end, SendAddonMessage = function() return 0 end }
+sentAddon = {}
+C_ChatInfo = { RegisterAddonMessagePrefix = function() end, SendAddonMessage = function(_, msg) sentAddon[#sentAddon + 1] = msg; return 0 end }
 C_CurrencyInfo = { GetCoinTextureString = function(c) return c .. "c" end }
 ItemLocation = { CreateFromBagAndSlot = function() return {} end }
 GetCursorInfo = function() end
@@ -312,7 +313,7 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
     for i = 1, 7 do print("     " .. tostring(sp.rows[i].label._text) .. " | " .. strip(sp.rows[i].value._text)) end
     local st = UI.barState
     print("     bar: " .. st.mode .. " " .. ("%.2f"):format(st.fill) .. " " .. st.text)
-    check(st and st.text ~= "" and strip(AuctionMeshFrame.barText._text) == st.text, "the engine bar is on every tab and says what the engine is doing")
+    check(st and st.text ~= "" and strip(AuctionMeshFrame.barText._text):find(st.text, 1, true) == 1, "the engine bar is on every tab and says what the engine is doing")
     UI.tab = "BUY"; UI:Render()
 end
 
@@ -353,6 +354,8 @@ check(ns.Store.sa[2589] == 77 and ns.Store.sn[2589] == 6, "sale invoice read onc
 check(AuctionMeshDB.realized == 24 + (462 - 23 - 120) and (AuctionMeshDB.listed or {})[2589] == nil,
     ("sale collected: banked profit is now %dc and the listing leaves the portfolio"):format(AuctionMeshDB.realized or 0))
 check(chat[#chat]:find("Sold: 6 x Linen Cloth at 77c each. Profit +319c", 1, true), "chat reports the sale and the profit made")
+check(AuctionMeshDB.cfg.feeBack == true and ns.Deals.cfg.depositIsCost == false and chat[#chat - 1]:find("the posting fee comes back when an auction sells", 1, true),
+    "the invoice shows the posting fee came back: confirmed for this realm, profits stay as they are")
 check(ns.Learn.d.n == 1 and ns.Learn.d.ok == 1 and math.abs(ns.Learn.d.ratio - 1) < 0.01, "the sale is scored against its prediction: sold at 100% of plan")
 
 print("an auction that expires")
@@ -913,6 +916,109 @@ do
     check(cfg.prearm == false, "if the game blocks asking without a click, one-click buying switches itself off and the first click asks instead")
     cfg.prearm = false; S.hold = 0; reset()
     LIST[2770] = nil
+end
+
+print("sharing: joining says plainly whether it worked and who is there")
+do
+    local Do, Comm, Sync, cfg = ns.Do, ns.Comm, ns.Sync, AuctionMeshDB.cfg
+    UI.tab = "HISTORY"; UI.notice = nil
+    local sp = AuctionMeshFrame.setup
+    local joined, guild = {}, true
+    local oldGet = GetChannelName
+    GetChannelName = function(name) return joined[name:lower()] and 5 or 0 end
+    JoinTemporaryChannel = function(name, pw) if pw == "secret" then joined[name:lower()] = true else fire("CHAT_MSG_CHANNEL_NOTICE", "WRONG_PASSWORD", "", "", "", "", "", 0, 0, name) end end
+    LeaveChannelByName = function(name) joined[name:lower()] = nil end
+    IsInGuild = function() return guild end
+    Sync.peers, Sync.peerInfo = {}, {}
+    -- wrong password
+    sp.chan:SetText("GoldCrew7"); sp.pass:SetText("oops"); sp.join._scripts.OnClick(sp.join)
+    advance(2.5); UI:Render()
+    print("     " .. strip(sp.share._text))
+    check(strip(sp.share._text) == "NOT connected: wrong password for channel 'GoldCrew7'.", "wrong password: the panel says so")
+    check(Comm:Route() == nil, "and nothing is sent anywhere (it used to fall back to the guild without saying)")
+    -- right password, nobody there yet
+    local before = #sentAddon
+    sp.pass:SetText("secret"); sp.join._scripts.OnClick(sp.join)
+    advance(2.5); UI:Render()
+    print("     " .. strip(sp.share._text))
+    check(strip(sp.share._text):find("^Joined channel 'GoldCrew7'. Nobody else has answered %(asked %d+s ago%)"), "joined, nobody there: says joined, and that nobody has answered")
+    advance(1)
+    local rollCall
+    for i = before + 1, #sentAddon do if sentAddon[i]:sub(1, 1) == "P" then rollCall = sentAddon[i] end end
+    check(rollCall ~= nil, "joining sends a roll call on the channel")
+    -- a friend answers
+    local friendP = "P" .. ns.Codec.uint(1) .. ns.Codec.uint(31500) .. ns.Codec.uint(0)
+    local chatBefore = #chat
+    fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, friendP, "CHANNEL", "Bob-Realm")
+    UI.notice = nil; UI:Render()
+    print("     " .. strip(sp.share._text))
+    check(strip(sp.share._text):find("^Connected on channel 'GoldCrew7' with 1 player: Bob %(v3.15.0, heard %d+s ago%)."), "a friend answers: named, with their version and when they were last heard")
+    check(chat[chatBefore + 1] and chat[chatBefore + 1]:find("Connected: Bob-Realm is sharing prices with you.", 1, true), "and chat says so the moment they connect")
+    check(strip(AuctionMeshFrame.barText._text):find("1 friend connected", 1, true), "the bar at the top shows 1 friend connected on every tab")
+    -- our addon answers someone else's roll call
+    before = #sentAddon
+    Sync.answeredAt = nil
+    fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, "P" .. ns.Codec.uint(1) .. ns.Codec.uint(31500) .. ns.Codec.uint(1), "CHANNEL", "Bob-Realm")
+    advance(3)
+    local answered
+    for i = before + 1, #sentAddon do if sentAddon[i]:sub(1, 1) == "P" then answered = true end end
+    check(answered, "when a friend asks who is there, this addon answers")
+    -- an old version's presence (no version in it) still counts
+    fire("CHAT_MSG_ADDON", Comm.PREFIX_LIVE, "P" .. ns.Codec.uint(1), "CHANNEL", "Old-Realm")
+    UI:Render()
+    check(strip(sp.share._text):find("with 2 players", 1, true) and strip(sp.share._text):find("Old (older version", 1, true), "a friend on an older version is listed as such")
+    GetChannelName = oldGet; IsInGuild = function() return false end
+    Sync.peers, Sync.peerInfo = {}, {}
+    cfg.channel, cfg.route = "", "channel"; Comm.channelName = nil
+    UI.tab = "BUY"; UI:Render()
+end
+
+print("moving the panel")
+do
+    check(UI.docked == true and AuctionMeshFrame.pop:IsShown() and AuctionMeshFrame.pop._text == "Pop out", "inside the auction house there is a Pop out button")
+    AuctionMeshFrame.pop._scripts.OnClick(AuctionMeshFrame.pop)
+    check(UI.docked == false and AuctionMeshDB.cfg.dock == false and AuctionMeshFrame:IsShown() and AuctionMeshFrame._parent == UIParent, "one click makes it a separate window")
+    check(AuctionMeshFrame.pop._text == "Dock", "the button now says Dock")
+    local moved = 0
+    AuctionMeshFrame.StartMoving = function() moved = moved + 1 end
+    local row
+    for i = 1, #frames do local f = frames[i]; if rawget(f, "detail") and f._scripts.OnDragStart then row = f; break end end
+    row._scripts.OnDragStart(row)
+    AuctionMeshDrawer._scripts.OnDragStart(AuctionMeshDrawer)
+    AuctionMeshFrame._scripts.OnDragStart(AuctionMeshFrame)
+    check(moved == 3, "the separate window is dragged by its background, its rows or the drawer")
+    AuctionMeshFrame.pop._scripts.OnClick(AuctionMeshFrame.pop)
+    check(UI.docked == true and AuctionMeshDB.cfg.dock == true, "Dock puts it back inside the auction house")
+    moved = 0
+    AuctionMeshFrame._scripts.OnDragStart(AuctionMeshFrame)
+    check(moved == 0, "docked, it does not move on its own (it is part of the auction house window)")
+end
+
+print("the 5% cut and the posting fee")
+do
+    local cfg = AuctionMeshDB.cfg
+    ITEMS[2592] = { "Wool Cloth", 33 }
+    AuctionMeshDB.names["Wool Cloth"] = 2592
+    -- an auction that sells, on a realm where the fee does NOT come back
+    AuctionMeshDB.listed = { [2592] = { qty = 5, price = 160, cost = 34, plan = 160, at = GetServerTime() - 600, fee = 100 } }
+    local before = AuctionMeshDB.realized
+    GetInboxInvoiceInfo = function() return "seller", "Wool Cloth", "Buyer", 800, 0, 0, 40, nil, nil, nil, 5 end
+    Se.lastSale = nil
+    Se:RecordSale(2)
+    check(cfg.feeBack == false and ns.Deals.cfg.depositIsCost == true, "a sale invoice with no fee returned: the addon now counts the posting fee as a cost")
+    check(AuctionMeshDB.realized == before + (800 - 40 - 5 * 34 - 100), ("and that sale's profit has the fee taken off: + %dc (800 - 40 cut - 170 cost - 100 fee)"):format(AuctionMeshDB.realized - before))
+    -- with the fee as a cost, a flip must clear it
+    local function rows(t) local r = {}; for i, x in ipairs(t) do r[i] = { price = x[1], qty = x[2] } end return r end
+    local book = rows({ { 100, 2 }, { 200, 100 }, { 201, 100 } })
+    local o = { budget = 5000, gold = 5000, commodity = true, deposit = 1, depositMin = 100 }
+    ns.Deals.cfg.requireTurnover = false
+    local d1 = ns.Deals.evaluate(book, o)
+    ns.Deals.cfg.depositIsCost = false
+    local d2 = ns.Deals.evaluate(book, o)
+    print(("     2 units bought at 1s00c, resold at 1s99c: profit + %dc with the fee as a cost, + %dc when the fee comes back"):format(d1 and d1.profit or -1, d2 and d2.profit or -1))
+    check(d2 and d1 and d2.profit - d1.profit == 100, "the same deal shows 1s less profit once the fee is known not to come back")
+    cfg.feeBack = true; ns.Deals.cfg.depositIsCost = false
+    AuctionMeshDB.listed = {}
 end
 
 print(("\n%d passed, %d failed"):format(pass, fail))

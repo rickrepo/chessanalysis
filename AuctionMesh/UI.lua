@@ -371,8 +371,14 @@ function UI:RenderMoney(entries, short)
     local parts = {}
     if held > 0 then parts[#parts + 1] = ("%d held item%s that cost %s (tab Bags)"):format(held, held == 1 and "" or "s", short(heldCost)) end
     if ended > 0 then parts[#parts + 1] = ("%d auction%s that ended, sold or expired: a mailbox visit tells which"):format(ended, ended == 1 and "" or "s") end
-    lg.note:SetText(#parts > 0 and ("Not counted: " .. table.concat(parts, "; ") .. ".")
-        or "Sale amounts are after the 5% auction house cut. Sold amounts are read from the mailbox.")
+    -- the cut and the posting fees, stated every time
+    local fees = 0
+    for _, Lr in pairs(AuctionMeshDB.listed or {}) do fees = fees + (Lr.fee or 0) end
+    local fb = AuctionMeshDB.cfg.feeBack
+    local feeText = fees > 0 and (" Posting fees paid on your auctions: %s (%s)."):format(short(fees),
+        fb == true and "come back when they sell, confirmed here" or fb == false and "do NOT come back on this realm; already taken off profits"
+        or "should come back when they sell; the first sale will confirm it") or ""
+    lg.note:SetText((#parts > 0 and ("Not counted: " .. table.concat(parts, "; ") .. ".") or "All amounts are after the 5% auction house cut.") .. feeText)
 end
 
 -- THE BIG BUY BUTTON (Trades tab). It never moves and always acts on the best
@@ -446,7 +452,9 @@ function UI:RenderBar()
     bar.fill:SetWidth(math.max(1, w))
     if st.mode == "try" then bar.fill:SetColorTexture(1, 0.55, 0.25, 1)
     else bar.fill:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 1) end
-    frame.barText:SetText((st.mode == "try" and ORANGE or GREY) .. st.text .. "|r")
+    local friends = #ns.Sync:Peers()
+    frame.barText:SetText((st.mode == "try" and ORANGE or GREY) .. st.text .. "|r"
+        .. (friends > 0 and ("  %s%d friend%s connected|r"):format(GREEN, friends, friends == 1 and "" or "s") or (GREY .. "  no friends connected|r")))
     self.barState = st
 end
 
@@ -464,7 +472,10 @@ function UI:RenderSetup()
         sp.focus:SetText(ns.Scout.MODE_NAMES[mode] .. ((mode ~= "off" and #flist > 0) and (" (%d)"):format(#flist) or ""))
     end
     sp.forget:SetText((self.forgetUntil and GetTime() < self.forgetUntil) and "Click again to forget" or "Forget what was learned")
-    sp.share:SetText(GREY .. ns.Do.SharingText() .. "|r")
+    do
+        local text, state = ns.Do.SharingText()
+        sp.share:SetText((state == "ok" and GREEN or state == "alone" and ORANGE or RED) .. text .. "|r")
+    end
     if not sp.margin:HasFocus() then sp.margin:SetText(tostring(cfg.margin or floor(ns.Deals.cfg.margin * 100 + 0.5))) end
     if not sp.chan:HasFocus() and not sp.pass:HasFocus() and not self.chanFilled then
         -- shown once; after that the boxes are yours to type in
@@ -633,7 +644,8 @@ local function rowEnter(self)
             local qty = ns.Seller:PostQty(item.key, p)
             GameTooltip:AddLine(("%sPosts %d at %s each, deposit %s|r"):format(GOLD, qty,
                 ns.Seller.short(p.price), ns.Seller.short(ns.Seller:DepositTotal(item.key, p.commodity, math.max(qty, 1)))))
-            GameTooltip:AddLine(GREY .. "The posting fee comes back when it sells.|r")
+            GameTooltip:AddLine(GREY .. (AuctionMeshDB.cfg.feeBack == false and "The posting fee does not come back on this realm; it is taken off the profit.|r"
+                or "The posting fee comes back when it sells; it is lost if the auction runs out.|r"))
         elseif p and p.hold then
             GameTooltip:AddLine(RED .. p.hold .. "|r")
         end
@@ -642,8 +654,12 @@ local function rowEnter(self)
     else
         local d = item
         if d.kind == "FLIP" then
-            GameTooltip:AddLine(("%sLive market: %d units listed from %s. Posting fee %s (kept aside, returned on sale).|r"):format(GREY,
-                d.depth or 0, ns.Seller.short(d.wall or 0), ns.Seller.short(d.deposit or 0)))
+            local fb = AuctionMeshDB.cfg.feeBack
+            GameTooltip:AddLine(("%sLive market: %d units listed from %s. Profit is after the 5%% cut. Posting fee %s: %s.|r"):format(GREY,
+                d.depth or 0, ns.Seller.short(d.wall or 0), ns.Seller.short(d.deposit or 0),
+                fb == false and "taken off the profit (it does not come back on this realm)"
+                or fb == true and "kept aside, comes back when it sells (confirmed here)"
+                or "kept aside; it should come back when it sells, the first sale will confirm it"))
             do  -- what the price history database knows
                 local St, now = ns.Store, GetServerTime()
                 local t6, t24 = St:Trend(d.key, now, 6), St:Trend(d.key, now, 24)
@@ -781,6 +797,19 @@ function UI:Create()
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     frame.title:SetPoint("TOPLEFT", 14, -12)
     frame.title:SetText("AuctionMesh")
+    -- A separate window is dragged by any part of it that is not a button or a
+    -- box: the background, the item rows, the drawer.
+    function UI.Draggable(w)
+        w:EnableMouse(true)
+        w:RegisterForDrag("LeftButton")
+        w:SetScript("OnDragStart", function() if not UI.docked then frame:StartMoving() end end)
+        w:SetScript("OnDragStop", function()
+            frame:StopMovingOrSizing()
+            if UI.docked then return end
+            local point, _, rel, x, y = frame:GetPoint()
+            AuctionMeshDB.cfg.pos = { point, rel, x, y }
+        end)
+    end
     frame.closeBtn = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     frame.closeBtn:SetPoint("TOPRIGHT", 0, 0)
     frame.closeBtn:SetScript("OnClick", function() UI:Close() end)
@@ -791,6 +820,20 @@ function UI:Create()
     frame.tabHist = makeTab(frame, "Setup", function() UI.tab = "HISTORY"; UI:Render() end)
     frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", 6, 0)
     frame.tabHist:SetPoint("LEFT", frame.tabSell, "RIGHT", 6, 0)
+
+    -- POP OUT / DOCK. Inside the auction house the panel is part of that window
+    -- and cannot be dragged on its own; this button turns it into a separate
+    -- window that can, and back.
+    frame.pop = button(frame, 62, "Pop out", function() ns.Do.Dock(not UI.docked) end)
+    frame.pop:SetHeight(18)
+    frame.pop:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+        GameTooltip:AddLine(UI.docked and "Pop out" or "Dock", 1, 1, 1)
+        GameTooltip:AddLine(UI.docked and "Makes the panel a separate window that you can drag anywhere."
+            or "Puts the panel back inside the auction house window.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    frame.pop:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- ENGINE BAR, top right on every tab: what the request engine is doing now
     local bar = CreateFrame("Frame", nil, frame)
@@ -805,7 +848,7 @@ function UI:Create()
     frame.bar = bar
     frame.barText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     frame.barText:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -3)
-    frame.barText:SetWidth(300)
+    frame.barText:SetWidth(420)
     frame.barText:SetJustifyH("RIGHT"); frame.barText:SetWordWrap(false)
 
     -- NEXT STEP: one plain instruction, always the most profitable thing to do now
@@ -942,6 +985,11 @@ function UI:Create()
     sp.guild = tip(button(sp, 110, "Use my guild", function() ns.Do.Guild() end),
         "Share with guild members who run the addon instead of a private channel.")
     sp.guild:SetPoint("TOPRIGHT", 0, y(9) + 5)
+    sp.who = tip(button(sp, 100, "Who is there?", function() ns.Do.WhoIsThere() end),
+        "Asks everyone on the channel to answer. The line on the left then lists who is connected, their version, and when they were last heard.")
+    sp.who:SetPoint("RIGHT", sp.guild, "LEFT", -6, 0)
+    sp.share:SetPoint("RIGHT", sp.who, "LEFT", -8, 0)
+    sp.share:SetWordWrap(false)
 
     setting(y(10), "Self-tuning: pace, split of requests, profit bar")
     sp.forget = tip(button(sp, 170, "Forget what was learned", function()
@@ -1031,7 +1079,7 @@ function UI:Create()
         r.btn:SetScript("OnEnter", function(self) UI.hoverBtn = self end)
         r.btn:SetScript("OnLeave", function(self) if UI.hoverBtn == self then UI.hoverBtn = nil end end)
         r.btn:SetPoint("RIGHT", -4, 0)
-        r:EnableMouse(true)
+        UI.Draggable(r)
         r:SetScript("OnEnter", rowEnter)
         r:SetScript("OnLeave", function() GameTooltip:Hide() end)
         r:SetScript("OnMouseUp", rowMouseUp)
@@ -1162,7 +1210,9 @@ function UI:Place()
         frame:SetMovable(false)
         frame.title:Hide(); frame.closeBtn:Hide()
         frame.tabBuy:SetPoint("TOPLEFT", 12, -8)
-        frame.bar:SetPoint("TOPRIGHT", -14, -9)
+        frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -12, -6)
+        frame.pop:SetText("Pop out"); frame.pop:Show()
+        frame.bar:SetPoint("TOPRIGHT", -84, -9)
     else
         frame:SetParent(UIParent)
         frame:SetScale(0.9)
@@ -1171,7 +1221,10 @@ function UI:Place()
         frame:SetMovable(true)
         frame.title:Show(); frame.closeBtn:Show()
         frame.tabBuy:SetPoint("TOPLEFT", 130, -8)
-        frame.bar:SetPoint("TOPRIGHT", -34, -9)
+        -- "Dock" only makes sense while the auction house is open
+        frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -34, -6)
+        frame.pop:SetText("Dock"); frame.pop:SetShown(ahOpen() and true or false)
+        frame.bar:SetPoint("TOPRIGHT", ahOpen() and -104 or -34, -9)
         local pos = AuctionMeshDB.cfg.pos
         if pos then frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else frame:SetPoint("CENTER", 0, 40) end
     end
@@ -1240,6 +1293,9 @@ local function tradeLines(out, t, byKey, short)
     end
     if (t.lost or 0) > 0 then
         out[#out + 1] = { l = GREY .. ("%d not counted: %s|r"):format(t.lost, tostring(t.lostWhy or "removed")) }
+    end
+    if (t.feeLost or 0) > 0 then
+        out[#out + 1] = { l = "Posting fee lost (auction ran out)", r = RED .. "- " .. short(t.feeLost) .. "|r" }
     end
     local made = J.realized(t)
     if made then
@@ -1406,7 +1462,7 @@ function UI:CreateDrawer()
     d:SetWidth(DRAWER_W)
     d:SetPoint("TOPLEFT", frame, "TOPRIGHT", 1, 0)
     d:SetPoint("BOTTOMLEFT", frame, "BOTTOMRIGHT", 1, 0)
-    d:EnableMouse(true)
+    UI.Draggable(d)
     d.art = d:CreateTexture(nil, "BACKGROUND", nil, -8)
     d.art:SetAllPoints()
     d.art:SetColorTexture(0.045, 0.05, 0.06, 0.97)

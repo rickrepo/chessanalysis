@@ -264,6 +264,7 @@ end
 ---------------------------------------------------------------- presence, hints, history
 
 Sync.peers = {} -- sender -> clock() when we last heard anything from them
+Sync.peerInfo = {} -- sender -> { ver = addon version number, since = first heard }
 
 -- How many other players' addons we have heard from in the last 7 minutes.
 function Sync:PeerCount()
@@ -275,8 +276,48 @@ function Sync:PeerCount()
 end
 
 -- "P": I'm here. Sent every few minutes so everyone can see who is connected.
-function Sync:Beacon()
-    Comm:Enqueue(Comm.CONTROL, "P" .. Codec.uint(PROTO))
+-- PRESENCE. "P <protocol> <addon version> <ask>". With ask = 1 it is a roll
+-- call: everyone who hears it answers with their own presence within a second
+-- or two, so "who is connected" is known right after joining instead of
+-- whenever a friend next happens to send something.
+function Sync:Beacon(ask)
+    Comm:Enqueue(Comm.CONTROL, "P" .. Codec.uint(PROTO) .. Codec.uint(ns.versionNum or 0) .. Codec.uint(ask and 1 or 0))
+end
+
+function Sync:RollCall()
+    self.askedAt = self.clock()
+    self:Beacon(true)
+end
+
+function Sync:OnPresence(msg, sender)
+    local ver, pos = Codec.readUInt(msg, 2)
+    if not ver then return end
+    local addon, ask
+    if pos and pos <= #msg then addon, pos = Codec.readUInt(msg, pos) end
+    if pos and pos <= #msg then ask = Codec.readUInt(msg, pos) end
+    local info = self.peerInfo[sender]
+    if info and addon and addon > 0 then info.ver = addon end
+    if ask == 1 then
+        -- answer once, a little apart from everyone else's answer
+        local now = self.clock()
+        if not self.answeredAt or now - self.answeredAt > 8 then
+            self.answeredAt = now
+            C_Timer.After(0.3 + math.random() * 1.2, function() Sync:Beacon(false) end)
+        end
+    end
+end
+
+-- Everyone heard from recently, most recent first: { name, at, ver }.
+function Sync:Peers()
+    local out, now = {}, self.clock()
+    for name, at in pairs(self.peers) do
+        if now - at < 420 then
+            local info = self.peerInfo[name]
+            out[#out + 1] = { name = name, at = at, ago = now - at, ver = info and info.ver or nil }
+        end
+    end
+    table.sort(out, function(a, b) return a.at > b.at end)
+    return out
 end
 
 -- "O <key>": I found a deal on this item that I can't afford. A friend with
@@ -498,6 +539,12 @@ Sync.OPS = OPS -- other modules (Swarm) register their opcodes here
 
 function Sync.Dispatch(msg, sender)
     ns.peerAt = Sync.clock() -- someone else on the mesh is online
+    if not Sync.peers[sender] then
+        -- first time we hear this player: say so, once
+        Sync.peerInfo[sender] = { since = ns.peerAt }
+        if ns.UI then ns.UI:Notice(("|cff33ff66Connected:|r %s is sharing prices with you."):format(sender)) end
+        if ns.Print then ns.Print(("|cff33ff66Connected:|r %s is sharing prices with you."):format(sender)) end
+    end
     Sync.peers[sender] = ns.peerAt
     local f = OPS[msg:byte(1) or 0]
     if f then f(Sync, msg, sender) end
@@ -517,5 +564,7 @@ function Sync:Tidy()
     -- heardAt only matters while streams run; keep it from growing forever
     if #live == 0 then self.heardAt = {} end
 end
+
+OPS[80] = function(self, msg, sender) self:OnPresence(msg, sender) end -- 'P'
 
 return Sync

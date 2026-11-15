@@ -134,6 +134,13 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         db.journal = db.journal or {}
         ns.Journal:Attach(db.journal)
         ns.Journal:Sync(db.flips, db.listed, function(key) return C_Item.GetItemInfo(key) or ("item:" .. key) end)
+        do  -- addon version as a number (3.15.0 -> 31500), sent with presence so friends see who runs what
+            local v = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version") or ""
+            local a, b, c = tostring(v):match("^(%d+)%.(%d+)%.?(%d*)")
+            ns.versionNum = a and (tonumber(a) * 10000 + tonumber(b) * 100 + (tonumber(c) or 0)) or 0
+        end
+        -- learned from a sale invoice: on this realm the posting fee does not come back
+        if db.cfg.feeBack == false then Deals.cfg.depositIsCost = true end
         r.scout = r.scout or {}
         ns.Scout:Attach(r.scout)
         r.tune = r.tune or {}
@@ -190,7 +197,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         -- Channels can't be joined reliably in the first seconds after login.
         C_Timer.After(6, function()
             applyRoute()
-            C_Timer.After(2 + math.random() * 3, function() Sync:Hello() end)
+            C_Timer.After(2 + math.random() * 3, function() Sync:Hello(); if Comm:Route() then Sync:RollCall() end end)
         end)
         C_Timer.NewTicker(30, function() Sync:Tidy() end)
         C_Timer.NewTicker(150, function()
@@ -290,26 +297,72 @@ function Do.Channel(name, pw)
     if not name then UI:Notice("Type a channel name first. Everyone in your group uses the same name and password.", true); return end
     cfg.channel, cfg.password, cfg.route = name, (pw and pw:match("^%s*(%S*)")) or "", "channel"
     applyRoute()
-    UI:Notice("Sharing on channel '" .. name .. "'. Everyone in your group must type the same name and password.", true)
-    C_Timer.After(3, function() Sync:Hello() end)
+    UI:Notice("Joining channel '" .. name .. "'...", true)
+    -- the game needs a moment to answer; then say plainly whether it worked, and ask who is there
+    C_Timer.After(2, function()
+        local state = Comm:ChannelState()
+        if state == "joined" then
+            Comm:Resume()
+            Sync:Hello()
+            Sync:RollCall()
+            UI:Notice("|cff33ff66Joined channel '" .. name .. "'.|r Asking who is there...", true)
+        elseif state == "wrong password" then
+            UI:Notice("|cffff4040Wrong password for channel '" .. name .. "'.|r Someone else already uses that name with another password.", true)
+        else
+            UI:Notice("|cffff4040Could not join channel '" .. name .. "'.|r Try another name (letters and digits only). You can be in at most 10 chat channels.", true)
+        end
+    end)
 end
 
 function Do.Guild()
     AuctionMeshDB.cfg.route = "guild"
     applyRoute()
     UI:Notice("Sharing with guild members who run the addon.", true)
-    C_Timer.After(1, function() Sync:Hello() end)
+    C_Timer.After(1, function() Comm:Resume(); Sync:Hello(); if Comm:Route() then Sync:RollCall() end end)
 end
 
--- One sentence on who prices are being shared with right now.
+-- Asks everyone on the channel to answer, so the list of connected players is current.
+function Do.WhoIsThere()
+    if not Comm:Route() then UI:Notice("|cffff8040" .. Do.SharingText() .. "|r", true); return end
+    Comm:Resume()
+    Sync:RollCall()
+    UI:Notice("Asking who is there... answers arrive within about 2 seconds.", true)
+end
+
+local function versionText(v)
+    if not v or v <= 0 then return "older version" end
+    return ("v%d.%d.%d"):format(floor(v / 10000), floor(v / 100) % 100, v % 100)
+end
+
+-- Who prices are being shared with right now, from what the game and the
+-- other addons actually report. Returns the sentence and "ok" | "alone" | "off".
 function Do.SharingText()
     local cfg = AuctionMeshDB.cfg
-    local chatType = Comm:Route()
-    local peers = Sync:PeerCount()
-    local where = cfg.route == "guild" and "your guild" or ("channel '" .. tostring(cfg.channel or "") .. "'")
-    if not chatType then return "Not connected: " .. (cfg.route == "guild" and "you are not in a guild." or "the channel has not been joined yet.") end
-    if peers > 0 then return ("Sharing live with %d other player%s on %s."):format(peers, peers == 1 and "" or "s", where) end
-    return "Connected to " .. where .. ", nobody else is online with the addon yet."
+    local where
+    if cfg.route == "guild" or not Comm.channelName then
+        if not (IsInGuild and IsInGuild()) then
+            return cfg.route == "guild" and "Not connected: you are not in a guild." or "Not connected: no channel chosen yet. Type a name and a password, then Join.", "off"
+        end
+        where = "your guild"
+    else
+        local state = Comm:ChannelState()
+        if state == "wrong password" then return "NOT connected: wrong password for channel '" .. tostring(cfg.channel) .. "'.", "off" end
+        if state ~= "joined" then return "NOT connected: channel '" .. tostring(cfg.channel) .. "' is not joined. Press Join.", "off" end
+        where = "channel '" .. tostring(cfg.channel) .. "'"
+    end
+    local peers = Sync:Peers()
+    if #peers == 0 then
+        local asked = Sync.askedAt and (Sync.clock() - Sync.askedAt) or nil
+        return ("Joined %s. Nobody else has answered%s. A friend must be online on this realm and faction with the same name and password.")
+            :format(where, asked and asked < 120 and (" (asked %ds ago)"):format(floor(asked)) or ""), "alone"
+    end
+    local names = {}
+    for i = 1, math.min(3, #peers) do
+        local p = peers[i]
+        names[#names + 1] = ("%s (%s, heard %ds ago)"):format(p.name:match("^[^-]+") or p.name, versionText(p.ver), floor(p.ago))
+    end
+    return ("Connected on %s with %d player%s: %s%s."):format(where, #peers, #peers == 1 and "" or "s", table.concat(names, ", "),
+        #peers > 3 and (" and %d more"):format(#peers - 3) or ""), "ok"
 end
 
 -- Self-tuning covers both learners: the request engine and the profit bar.

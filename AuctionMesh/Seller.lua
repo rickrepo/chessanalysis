@@ -303,9 +303,25 @@ function Seller:RecordSale(i)
     if ns.Sync then ns.Sync:ObserveSold(key, unit, count) end
     local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
     local profitText = ""
+    -- DOES THE POSTING FEE COME BACK? The sale invoice says so. The first sale
+    -- settles it for this realm: if no fee is returned, every profit figure
+    -- from then on has the fee taken off.
+    local feeLost = 0
+    if L and (L.fee or 0) > 0 then
+        local cfg = AuctionMeshDB.cfg
+        local back = (feeBack or 0) > 0
+        if cfg.feeBack ~= back then
+            cfg.feeBack = back
+            Deals.cfg.depositIsCost = not back
+            say(back and "|cff33ff66Confirmed on this realm:|r the posting fee comes back when an auction sells. Profit figures are right as they are."
+                or "|cffff8040Found out on this realm:|r the posting fee does NOT come back when an auction sells. From now on it is taken off every profit figure.")
+        end
+        if not back then feeLost = floor(L.fee * math.min(1, count / math.max(1, L.qty)) + 0.5) end
+    end
     if L then
         if L.cost then
-            local profit = bid - (cut or floor(bid * Deals.cfg.cut)) - L.cost * count
+            local profit = bid - (cut or floor(bid * Deals.cfg.cut)) - L.cost * count - feeLost
+            if feeLost > 0 then L.fee = math.max(0, L.fee - feeLost) end
             Seller.Realize(profit)
             profitText = (" Profit %s%s."):format(profit >= 0 and "+" or "-", money(math.abs(profit)))
         end
@@ -401,6 +417,12 @@ function Seller:Reconcile()
                 flips()[key] = { kind = "FLIP", units = n, cost = L.cost or 0, unknownCost = (L.cost == nil),
                                  sell = L.price, at = now, proof = "auction expired, returned by mail" }
                 AuctionMeshDB.listed[key] = nil
+                -- an auction that does not sell never gets its posting fee back: that is a real loss
+                if (L.fee or 0) > 0 then
+                    Seller.Realize(-L.fee)
+                    if ns.Journal then ns.Journal:FeeLost(key, L.fee) end
+                    say(("The posting fee of %s for %s is lost (the auction did not sell)."):format(money(L.fee), nameOf(key)))
+                end
                 if ns.Journal then ns.Journal:Expired(key, n) end
                 if ns.Learn then ns.Learn:Outcome(key, false) end
                 say(("|cffff8040Expired unsold:|r %d x %s came back by mail. It is on the Bags tab again."):format(n, nameOf(key)))
@@ -585,8 +607,9 @@ function Seller:CheckPosted()
         local plan = f and f.sell or q.price -- the resale price predicted when it was bought
         if L then
             L.qty, L.price, L.cost, L.at, L.plan = L.qty + posted, q.price, cost, GetServerTime(), plan
+            L.fee = (L.fee or 0) + (q.deposit or 0)
         else
-            AuctionMeshDB.listed[q.key] = { qty = posted, price = q.price, cost = cost, at = GetServerTime(), plan = plan }
+            AuctionMeshDB.listed[q.key] = { qty = posted, price = q.price, cost = cost, at = GetServerTime(), plan = plan, fee = q.deposit or 0 }
         end
     end
     if ns.Journal then ns.Journal:Posted(q.key, min(gone, q.qty), q.price) end
