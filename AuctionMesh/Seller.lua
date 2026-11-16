@@ -968,7 +968,8 @@ end
 function Seller:Note(key, text, what)
     local was = self.note
     self.note = { key = key, text = text, at = GetTime(), what = what }
-    if not was or was.text ~= text or GetTime() - was.at > 4 then
+    if self.quietNotes then -- the one key is being spammed: the row shows it, chat is left alone
+    elseif not was or was.text ~= text or GetTime() - was.at > 4 then
         if ns.Print then ns.Print(nameOf(key) .. ": " .. text) end
     end
     if ns.UI then ns.UI:Dirty() end
@@ -1041,6 +1042,8 @@ function Seller:Post(key)
         local q = Seller.posting
         if q and q.key == key and q.at == Seller.posting.at then
             Seller.posting = nil
+            Seller.refusedAt = Seller.refusedAt or {}
+            Seller.refusedAt[key] = GetTime()
             Seller:Note(key, "Not posted: the auction house did not take it. Press Post again.")
             Seller:Refresh()
         end
@@ -1077,6 +1080,8 @@ function Seller:CheckPosted()
     self.ForgetUnits(q.key, min(gone, q.qty))
     self.prices[q.key] = nil
     say(("Posted %dx %s at %s each, deposit %s (%s)."):format(min(gone, q.qty), nameOf(q.key), money(q.price), money(q.deposit), q.why))
+    -- confirmed: the radar goes on at once (it waited out a fixed 2 seconds after every post)
+    self.quietUntil = math.min(self.quietUntil or 0, GetTime() + 0.3)
 end
 
 function Seller:OnError(msg)
@@ -1090,6 +1095,8 @@ function Seller:OnError(msg)
     end
     if not self.posting then return end
     ns.Log("POST error for %s: %s", tostring(self.posting.key), tostring(msg))
+    self.refusedAt = self.refusedAt or {}
+    self.refusedAt[self.posting.key] = GetTime() -- the one key leaves it alone for half a minute (see PostNext)
     local key = self.posting.key
     self.posting = nil
     self.quietUntil = GetTime() + 1
@@ -1098,16 +1105,42 @@ function Seller:OnError(msg)
 end
 
 -- Post-next for the keybind: first AH item with a ready price.
-function Seller:PostNext()
-    if self.posting then return self:Post(self.posting.key) end
-    for _, e in ipairs(self:Entries()) do
-        local p = e.action == "AH" and self.prices[e.key]
-        if p and p.price and GetTime() - p.at < PRICE_TTL then return self:Post(e.key) end
+-- quiet (the one key, which may be pressed many times a second): nothing is
+-- written to chat for a press that posts nothing, and it returns true only
+-- when there was something to post.
+function Seller:PostNext(quiet)
+    if self.posting then
+        if quiet then return true end -- one is on its way: this press has nothing to add
+        return self:Post(self.posting.key)
     end
-    for _, e in ipairs(self:Entries()) do
-        if e.action == "AH" then return self:Post(e.key) end -- no live price yet: asks for it and says so on the row
+    local entries = self:Entries()
+    local target
+    -- The one key is pressed again and again: an item the game has just
+    -- refused to post is left alone for 30 seconds, or the same post would be
+    -- tried over and over with the radar waiting each time. (The Post button
+    -- tries whenever you press it.)
+    local function ok(e)
+        if e.action ~= "AH" then return false end
+        local r = quiet and self.refusedAt and self.refusedAt[e.key]
+        return not (r and GetTime() - r < 30)
     end
-    say("Nothing to post.")
+    for _, e in ipairs(entries) do
+        local p = ok(e) and self.prices[e.key]
+        if p and p.price and GetTime() - p.at < PRICE_TTL then target = e.key; break end
+    end
+    if not target then
+        for _, e in ipairs(entries) do
+            if ok(e) then target = e.key; break end -- no live price yet: asks for it and says so on the row
+        end
+    end
+    if not target then
+        if not quiet then say("Nothing to post.") end
+        return false
+    end
+    self.quietNotes = quiet or nil
+    self:Post(target)
+    self.quietNotes = nil
+    return true
 end
 
 ---------------------------------------------------------------- recovering / adding items

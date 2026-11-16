@@ -1890,6 +1890,79 @@ do
             AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test"); LIST[2770] = nil
             reset(); gold = 900; UI.wheelSeen = nil; cfg.buyBlocked = nil
         end
+        do  -- ONE KEY FOR EVERYTHING: it buys the deal that is up; with none it posts what is ready in your bags
+            UI:SetBuyMode("one"); UI.tab = "BUY"; UI:Render()
+            check(UI.BuyMode() == "one" and keyBound() and strip(btn.hint._text):find("keep tapping F: it buys the deal that is up; with none it posts what is ready in your bags", 1, true),
+                "one key: F is bound on the Trades tab and the box says what it does")
+            UI.tab = "SELL"; UI:Render()
+            check(keyBound(), "and on the Bags tab too (there it posts)")
+            UI.tab = "HISTORY"; UI:Render()
+            check(not keyBound(), "on the Setup tab F is your own key")
+            UI.tab = "BUY"; UI:Render()
+            -- nothing to post, no deal: presses arm the box and say nothing
+            local nchat, np = #chat, #posted
+            for _ = 1, 20 do btn._scripts.OnClick(btn, "KEY"); advance(0.05) end
+            check(#chat == nchat and #posted == np and S:SnipeMode(), "pressed 20 times a second with nothing to do: armed, nothing posted, not a word in chat")
+            -- 5 Wool Cloth in the bags, bought at 34c; the market is at 1s50c
+            ITEMS[2592] = { "Wool Cloth", 33 }
+            LIST[2592] = { { 150, 100 }, { 155, 300 } }
+            AuctionMeshDB.flips[2592] = { kind = "FLIP", units = 5, cost = 34, sell = 160, at = GetServerTime(), proof = "test" }
+            for s2 = 1, 16 do bags[s2] = nil end
+            bags[1] = { itemID = 2592, stackCount = 5 }; fire("BAG_UPDATE_DELAYED")
+            nchat = #chat
+            for _ = 1, 60 do btn._scripts.OnClick(btn, "KEY"); advance(0.05) end
+            print(("     posted %d, chat lines %d: %s"):format(#posted - np, #chat - nchat, tostring(chat[#chat])))
+            check(#posted == np + 1 and posted[#posted].qty == 5 and posted[#posted].price == 149, "5 Wool Cloth in the bags: the same key, pressed with no deal up, gets the live price and posts them once, at 1s49c")
+            check(#chat - nchat <= 2 and chat[#chat]:find("Posted 5x", 1, true), "chat has the 'Posted' line and no line per press")
+            check(AuctionMeshDB.flips[2592] == nil and AuctionMeshDB.listed[2592] ~= nil, "it is booked as listed, like a post made with the Post button")
+            -- a deal and something to post at the same time: the deal comes first
+            AuctionMeshDB.flips[4306] = { kind = "FLIP", units = 3, cost = 90, sell = 200, at = GetServerTime(), proof = "test" }
+            ITEMS[4306] = { "Silk Cloth", 40 }
+            LIST[4306] = { { 200, 100 }, { 205, 300 } }
+            bags[2] = { itemID = 4306, stackCount = 3 }; fire("BAG_UPDATE_DELAYED")
+            LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+            S.verified = {}; S.priority = 2770; advance(1)
+            local order = {}
+            local realStart, realPost = C_AuctionHouse.StartCommoditiesPurchase, C_AuctionHouse.PostCommodity
+            C_AuctionHouse.StartCommoditiesPurchase = function(...) order[#order + 1] = "buy"; return realStart(...) end
+            C_AuctionHouse.PostCommodity = function(...) order[#order + 1] = "post"; return realPost(...) end
+            for _ = 1, 80 do btn._scripts.OnClick(btn, "KEY"); advance(0.05) end
+            C_AuctionHouse.StartCommoditiesPurchase, C_AuctionHouse.PostCommodity = realStart, realPost
+            print("     order: " .. table.concat(order, ", "))
+            check(order[1] == "buy" and gold == 900 - 36, "a deal is up and an item is waiting to be posted: the key buys first")
+            local postedSilk = false
+            for i = 2, #order do if order[i] == "post" then postedSilk = true end end
+            check(postedSilk and posted[#posted].qty == 3, "then, with no deal left, it posts the Silk Cloth")
+            -- on the Bags tab the key posts as well
+            AuctionMeshDB.flips[2589] = { kind = "FLIP", units = 4, cost = 10, sell = 80, at = GetServerTime(), proof = "test" }
+            LIST[2589] = { { 78, 100 }, { 80, 300 } }
+            bags[3] = { itemID = 2589, stackCount = 4 }; fire("BAG_UPDATE_DELAYED")
+            UI.tab = "SELL"; UI:Render()
+            np = #posted
+            for _ = 1, 60 do btn._scripts.OnClick(btn, "KEY"); advance(0.05) end
+            check(#posted == np + 1 and posted[#posted].qty == 4, "on the Bags tab the one key posts the next item too")
+            UI.tab = "BUY"; UI:Render()
+            do  -- a post the game refuses is not tried over and over
+                AuctionMeshDB.flips[2589] = { kind = "FLIP", units = 4, cost = 10, sell = 80, at = GetServerTime(), proof = "test" }
+                bags[3] = { itemID = 2589, stackCount = 4 }; fire("BAG_UPDATE_DELAYED")
+                local tries = 0
+                local realPost = C_AuctionHouse.PostCommodity
+                C_AuctionHouse.PostCommodity = function() tries = tries + 1; fire("UI_ERROR_MESSAGE", 1, "You cannot post that auction") end
+                for _ = 1, 200 do btn._scripts.OnClick(btn, "KEY"); advance(0.05) end
+                C_AuctionHouse.PostCommodity = realPost
+                check(tries == 1, ("the game refuses a post: the one key tries it once in 10 seconds of pressing, not on every press (%d)"):format(tries))
+                Se.refusedAt = {}; Se.note, Se.posting = nil, nil
+            end
+            ns.Do.Import("AMS1:buy=one"); check(UI.BuyMode() == "one", "a settings code can choose it (buy=one)")
+            -- cleanup
+            AuctionMeshDB.flips[2770] = nil; AuctionMeshDB.flips[4306] = nil; AuctionMeshDB.flips[2589] = nil; AuctionMeshDB.listed = {}
+            for _, k in ipairs({ 2770, 4306, 2589, 2592 }) do ns.Journal:Dropped(k, nil, "test") end
+            LIST[2770], LIST[4306], LIST[2589], LIST[2592] = nil, nil, nil, nil
+            for s2 = 1, 16 do bags[s2] = nil end
+            fire("BAG_UPDATE_DELAYED")
+            Se.note, Se.posting = nil, nil
+            reset(); gold = 900; UI.wheelSeen = nil; cfg.buyBlocked = nil
+        end
         -- clicks only
         UI:SetBuyMode("click"); UI:Render()
         check(UI.WheelPress(true) == false and not keyBound() and strip(btn.hint._text):find("click here", 1, true), "clicks only: no wheel, no key")

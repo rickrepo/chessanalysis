@@ -6,6 +6,19 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.34.0 (2026-11-16)
+
+- **One key for buying and posting** (Setup, **Buy with**: `One key: buys and posts`; it uses the key chosen with **Key**). Each press does the next useful thing:
+  - a deal is up: it buys it (exactly as "A key: tap it" does);
+  - no deal: it posts the next item in your bags that is ready, at the addon's own price (one step under the market, never under what the item cost you with the cut; an item whose market is below that stays held);
+  - nothing to do: it keeps the snipe box armed.
+  - It works on the Trades tab and on the Bags tab. A deal always comes before a post.
+  - Made to be pressed many times a second: a press with nothing to post says nothing in chat, posting is tried at most five times a second, and a post the game refuses is left alone for 30 seconds instead of being tried on every press.
+  - Settings code: `buy=one`.
+- **The radar goes on as soon as a post is confirmed.** It waited out a fixed 2 seconds after every post.
+- How often to press: the game holds a price request until the lock from the radar's read opens, about half a second after a deal appears, so any press inside that half second leaves at the same moment. One press every 100 ms is already as fast as it gets; pressing faster gains nothing.
+- Not yet tried in the real game: the one-key mode.
+
 ## 3.33.4 (2026-11-16)
 
 From a log of "hold a key down" in the real game.

@@ -531,7 +531,7 @@ function Do.Import(text)
             Sniper.lastBg = 0
             note("focus items are re-read every", old .. "s", cfg.focusEvery .. "s")
         elseif k == "buy" or k == "wheel" then
-            -- buy=wheel|key|hold|click; the older wheel=1/0 still works
+            -- buy=wheel|key|one|click; the older wheel=1/0 still works
             local U = ns.UI
             local mode = v:lower()
             if k == "wheel" then mode = onoff(v) and "wheel" or "click" end
@@ -543,7 +543,7 @@ function Do.Import(text)
                 end
                 note("buy with", U.BUY_NAMES[old], U.BUY_NAMES[mode])
             else
-                changes[#changes + 1] = "buy=" .. v .. " is not a way to buy (wheel, key, hold or click): left alone"
+                changes[#changes + 1] = "buy=" .. v .. " is not a way to buy (wheel, key, one or click): left alone"
             end
         elseif k == "key" then
             local name = v:upper():gsub("%s+", "")

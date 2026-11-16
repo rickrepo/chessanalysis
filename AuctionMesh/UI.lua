@@ -472,8 +472,13 @@ end
 --   for four seconds. It has been removed.)
 --   click   clicks on the snipe box only
 -- Clicking the box works in every mode.
-UI.BUY_MODES = { "wheel", "key", "click" }
-UI.BUY_NAMES = { wheel = "Mouse wheel", key = "A key: tap it", click = "Clicks only" }
+--   one     ONE KEY FOR EVERYTHING: the same key as "key", and it also posts.
+--           Each press does the next useful thing: buy the deal that is up;
+--           with no deal, post the next item in your bags that is ready (at
+--           the addon's price, never under what it cost you). It works on the
+--           Trades tab and on the Bags tab.
+UI.BUY_MODES = { "wheel", "key", "one", "click" }
+UI.BUY_NAMES = { wheel = "Mouse wheel", key = "A key: tap it", one = "One key: buys and posts", click = "Clicks only" }
 function UI.BuyMode()
     local cfg = AuctionMeshDB.cfg
     local m = cfg.buyMode
@@ -493,6 +498,7 @@ function UI:SetBuyMode(mode)
     if cfg.buyBlocked then cfg.buyBlocked[mode] = nil end -- chosen again by hand: try it again
     self:Notice(mode == "wheel" and "Buy with the mouse wheel: put the mouse in the snipe box and roll."
         or mode == "key" and (cfg.buyKey and ("Buy with a key: tap %s while the Trades tab is open."):format(cfg.buyKey) or "Buy with a key: now click 'Key' and press the key you want.")
+        or mode == "one" and (cfg.buyKey and ("One key: %s buys the deal that is up; with none it posts the next item in your bags. Trades and Bags tabs."):format(cfg.buyKey) or "One key for buying and posting: now click 'Key' and press the key you want.")
         or "Buy with clicks on the snipe box only.", true)
     self:Dirty()
     return mode
@@ -520,6 +526,7 @@ end
 -- Returns true if the input was used for buying.
 function UI.InputPress(inBox, via)
     via = via or "wheel"
+    if UI.tab == "SELL" and via == "key" and UI.BuyMode() == "one" then return UI.OnePost() end -- the one key, on the Bags tab: it posts
     if UI.tab ~= "BUY" then return false end
     if via == "wheel" and UI.BuyMode() ~= "wheel" then return false end
     local S = ns.Sniper
@@ -536,7 +543,8 @@ function UI.InputPress(inBox, via)
                 ns.Log("ARMED by %s in the snipe box (%s)", via, S:StakeKey() and "stake-out: every input asks the staked item's price" or "snipe mode: radar and alerts only")
                 UI:Dirty() -- show ARMED; no redraw per input
             end
-            S:StakeNotch() -- with an item staked out, this input asks its price
+            -- the one key, with no deal to buy: post the next item that is ready (a stake-out's price request comes first)
+            if not (S:StakeNotch()) and via == "key" and UI.BuyMode() == "one" then UI.OnePost() end
             return true
         end
         return false
@@ -544,6 +552,16 @@ function UI.InputPress(inBox, via)
     if inBox then UI.wheelSeen = now end
     S:Press()
     return true
+end
+
+-- THE ONE KEY, POSTING. At most five times a second, and only when something
+-- in your bags is waiting to be posted: a press with nothing to post costs
+-- nothing and says nothing.
+function UI.OnePost()
+    local Se, now = ns.Seller, GetTime()
+    if not ahOpen() or (UI.onePostAt and now - UI.onePostAt < 0.2) then return false end
+    UI.onePostAt = now
+    return Se:PostNext(true) and true or false
 end
 function UI.WheelPress(inBox) return UI.InputPress(inBox, "wheel") end
 
@@ -563,7 +581,9 @@ function UI:BindInputs(dealUp, off)
     local mode = UI.BuyMode()
     local live = not off and self.tab == "BUY" and frame:IsShown()
     local wantWheel = (live and mode == "wheel" and dealUp) and true or false
-    local wantKey = (live and mode == "key" and cfg.buyKey and cfg.buyKey ~= "" and not self.capturingKey) and cfg.buyKey or false
+    -- the one key is also live on the Bags tab (there it posts)
+    local keyLive = live or (not off and mode == "one" and self.tab == "SELL" and frame:IsShown())
+    local wantKey = (keyLive and (mode == "key" or mode == "one") and cfg.buyKey and cfg.buyKey ~= "" and not self.capturingKey) and cfg.buyKey or false
     if wantWheel == (self.wheelBound or false) and wantKey == (self.keyBound or false) then return end
     if InCombatLockdown and InCombatLockdown() then return end
     if wantWheel ~= (self.wheelBound or false) then
@@ -599,7 +619,7 @@ function UI:RenderSnipe(short)
     sn:SetShown(show)
     frame.next:SetShown(self.tab == "SELL")
     if not show then
-        self:BindInputs(false, true)
+        self:BindInputs(false, not (self.tab == "SELL" and UI.BuyMode() == "one")) -- the one key stays live on the Bags tab
         return
     end
     local key = S:Target()
@@ -674,6 +694,9 @@ function UI:RenderSnipe(short)
                 or "put the mouse here and keep rolling the wheel"
         elseif mode == "key" then
             how = cfg.buyKey and ("tap " .. cfg.buyKey .. " (it works anywhere while this tab is open), or click here")
+                or "no key chosen yet: Setup tab, Key"
+        elseif mode == "one" then
+            how = cfg.buyKey and ("keep tapping " .. cfg.buyKey .. ": it buys the deal that is up; with none it posts what is ready in your bags")
                 or "no key chosen yet: Setup tab, Key"
         else
             how = "click here"
@@ -1421,7 +1444,7 @@ function UI:Create()
     group("BUYING")
     L, at = row("Buy with")
     sp.buy = tip(button(sp, 190, "", function() UI:SetBuyMode() end),
-        "Click to change.\nMouse wheel: put the mouse in the snipe box and roll.\nA key, tap it: pick a key below; tapping it buys, anywhere, while the Trades tab is open.\nClicks only: click the snipe box.\nClicking the box works in every mode.")
+        "Click to change.\nMouse wheel: put the mouse in the snipe box and roll.\nA key, tap it: pick a key below; tapping it buys, anywhere, while the Trades tab is open.\nOne key, buys and posts: the same key; with no deal up, each press posts the next item in your bags that is ready, at the addon's price. Trades and Bags tabs.\nClicks only: click the snipe box.\nClicking the box works in every mode.")
     sp.buy:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.buy)
 
@@ -1441,7 +1464,7 @@ function UI:Create()
         if name then
             cfg.buyKey = name
             if cfg.buyBlocked then cfg.buyBlocked.key = nil end
-            UI:Notice(("Buy key set to %s. It buys while the Trades tab is open (Buy with: A key, tap it)."):format(name), true)
+            UI:Notice(("Buy key set to %s. It buys while the Trades tab is open (Buy with: A key, tap it; or One key, which also posts)."):format(name), true)
         end
         UI:Dirty()
     end
