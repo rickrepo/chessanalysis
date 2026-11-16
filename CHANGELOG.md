@@ -6,6 +6,16 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.38.0 (2026-11-16)
+
+- **A session chart under the deals** on the Trades tab. It takes the room the list does not need: shown while at most three deals are up (two on a short panel), and it gives way to the list when more are.
+  - **Tries**: one bar, green for bought, red for missed, orange for gone before an input, with the count and the percentage of each: `24 bought (24%)   68 missed (68%)   8 gone before an input (8%)`.
+  - **Gold this session**: a gold column for every stretch of the session showing the gold in hand, and a teal line above it showing what you are worth once everything has sold (gold, sale gold on its way, your auctions and what is bought and not listed, after the cut). Ups and downs are purchases, sales and fees as they happened. The heading gives both figures and the change since the start.
+  - **The next hour**, paler, to the right of the "now" line: the gold in hand plus sale gold that is already sold, arriving when the auction house pays it. Nothing in it is a guess: auctions that have not sold are in the teal line only.
+  - A sample is kept every 20 seconds, three hours of them, and they survive a reload. A break of over 30 minutes starts a new session on the chart.
+- The chart costs the radar and your purchases nothing: no request is sent for it, and it is worked out once a second at most (at once when a try has ended), not each time the panel is redrawn for a new deal.
+- Not yet tried in the real game: the chart (and 3.37.0's gauge). The panel's height when docked on the auction house is not known offline; if the chart does not show, send a screenshot.
+
 ## 3.37.0 (2026-11-16)
 
 - **A gauge for your pressing speed**, under the snipe box on the Trades tab: a bar in three zones with a white marker where you are, and the figures next to it.

@@ -476,6 +476,144 @@ function UI:RenderMoney(entries, short)
     lg.note:SetText((#parts > 0 and ("Not counted: " .. table.concat(parts, "; ") .. ".") or "All amounts are after the 5% auction house cut.") .. endedNote .. feeText)
 end
 
+-- The same figures as the MONEY section, as numbers.
+function UI.MoneyFigures(entries)
+    local Se = ns.Seller
+    entries = entries or Se:Entries()
+    local waiting, onway, _, soldKeys = Se:SalesMoney()
+    local listed, bought = 0, 0
+    local cut = 1 - ns.Deals.cfg.cut
+    for _, e in ipairs(entries) do
+        local _, _, net = Se:Numbers(e)
+        if e.action == "LISTED" then
+            if not (e.live == 0 and soldKeys[e.key]) then listed = listed + floor((e.listed.price or 0) * cut) * e.count end
+        elseif e.action ~= "HOLD" then
+            bought = bought + (net or 0) * e.count
+        end
+    end
+    local gold = GetMoney()
+    return { gold = gold, waiting = waiting, onway = onway, listed = listed, bought = bought, total = gold + waiting + onway + listed + bought }
+end
+
+-- THE SESSION, DRAWN (Trades tab, under the deals, when there is room: at
+-- most a couple of deals are up at a time).
+--   * TRIES: one bar, green for bought, red for missed, orange for gone
+--     before an input, with the percentages.
+--   * GOLD: a column for every stretch of the session. Gold: what you hold.
+--     The teal tick above it: what you are worth once everything has sold.
+--     To the right of "now", paler: the next hour, with the sale gold that is
+--     already certain (sold, waiting to be paid) arriving when it is due.
+--     Nothing in the forecast is a guess: auctions that have not sold are in
+--     the teal figure only.
+-- A sample is kept every 20 seconds (3 hours of them, across reloads).
+local CHART_COLS, CHART_NEXT, CHART_W, CHART_H = 80, 24, 6, 44
+function UI:SampleGold(force, entries)
+    local db = AuctionMeshDB
+    if not db then return end
+    local now = GetServerTime()
+    local h = db.goldHist or {}
+    db.goldHist = h
+    local last = h[#h]
+    if not force and last and now - last.t < 20 then return end
+    local ok, m = pcall(UI.MoneyFigures, entries)
+    if not ok or not m then return end
+    h[#h + 1] = { t = now, g = m.gold, w = m.total }
+    while #h > 540 or (h[1] and now - h[1].t > 3 * 3600) do table.remove(h, 1) end
+end
+
+-- What the chart shows, as numbers (the drawing and the tests both use it).
+function UI:ChartData(entries)
+    local now = GetServerTime()
+    local h = (AuctionMeshDB and AuctionMeshDB.goldHist) or {}
+    -- this stretch of play: back to the last gap of over 30 minutes
+    local from = #h
+    while from > 1 and h[from].t - h[from - 1].t <= 1800 do from = from - 1 end
+    local t0 = h[from] and h[from].t or now
+    local span = math.max(60, now - t0)
+    local cols, hi = {}, 1
+    local j = from
+    local cur
+    for i = 1, CHART_COLS do
+        local tEnd = t0 + span * i / CHART_COLS
+        while h[j] and h[j].t <= tEnd do cur = h[j]; j = j + 1 end
+        if cur then
+            cols[i] = { g = cur.g, w = cur.w }
+            if cur.w > hi then hi = cur.w end
+            if cur.g > hi then hi = cur.g end
+        end
+    end
+    -- the next hour: what you hold now, plus the sale gold that is due by then
+    local m = UI.MoneyFigures(entries)
+    local pays = ns.Seller:PayOuts()
+    local nextCols, coming = {}, 0
+    for i = 1, CHART_NEXT do
+        local tEnd = 3600 * i / CHART_NEXT
+        local g = m.gold + m.waiting
+        for _, p in ipairs(pays) do if p.secs <= tEnd then g = g + p.amount end end
+        nextCols[i] = { g = g, w = m.total }
+        if g > hi then hi = g end
+    end
+    for _, p in ipairs(pays) do if p.secs <= 3600 then coming = coming + p.amount end end
+    if m.total > hi then hi = m.total end
+    local t = ns.Sniper.tally
+    local n = (t.won or 0) + (t.lost or 0) + (t.gone or 0)
+    return { cols = cols, next = nextCols, hi = hi, span = span, now = m, coming = coming + m.waiting,
+             start = h[from],
+             tries = n, won = t.won or 0, lost = t.lost or 0, gone = t.gone or 0 }
+end
+
+function UI:RenderChart(show, short, entries)
+    local c = frame.chart
+    if not c then return end
+    local was = c:IsShown()
+    c:SetShown(show)
+    if not show then return end
+    -- Drawn again once a second at most, or at once when a try has ended:
+    -- the panel is redrawn the moment a deal appears, and that must stay cheap.
+    local t = ns.Sniper.tally
+    local n = (t.won or 0) + (t.lost or 0) + (t.gone or 0)
+    local now = GetTime()
+    if was and self.chartState and n == self.chartTries and now - (self.chartAt or 0) < 1 then return end
+    self.chartAt, self.chartTries = now, n
+    local d = self:ChartData(entries)
+    self.chartState = d
+    -- tries
+    local W = 300
+    local function seg(tex, x, n)
+        local w = d.tries > 0 and floor(W * n / d.tries + 0.5) or 0
+        tex:ClearAllPoints(); tex:SetPoint("TOPLEFT", c.triesBar, "TOPLEFT", x, 0); tex:SetSize(math.max(w, 0.01), 9); tex:SetShown(w > 0)
+        return x + w
+    end
+    local x = seg(c.won, 0, d.won); x = seg(c.lost, x, d.lost); seg(c.gone, x, d.gone)
+    local function pct(n) return d.tries > 0 and floor(n * 100 / d.tries + 0.5) or 0 end
+    c.triesText:SetText(d.tries > 0 and ("%s%d bought (%d%%)|r   %s%d missed (%d%%)|r   %s%d gone before an input (%d%%)|r"):format(
+        GREEN, d.won, pct(d.won), RED, d.lost, pct(d.lost), ORANGE, d.gone, pct(d.gone)) or (GREY .. "No deal tried yet this session.|r"))
+    -- gold
+    local function put(col, v, i, pale)
+        local hg = v and math.max(1, floor(CHART_H * v.g / d.hi + 0.5)) or 0
+        col.bar:SetHeight(math.max(hg, 0.01)); col.bar:SetShown(v ~= nil)
+        col.bar:SetColorTexture(1, 0.82, 0, pale and 0.35 or 0.9)
+        if v then
+            col.tick:ClearAllPoints()
+            col.tick:SetPoint("BOTTOMLEFT", c.plot, "BOTTOMLEFT", (i - 1) * CHART_W, math.min(CHART_H - 2, floor(CHART_H * v.w / d.hi + 0.5)))
+        end
+        col.tick:SetShown(v ~= nil)
+        col.tick:SetColorTexture(0.2, 0.85, 0.8, pale and 0.45 or 1)
+    end
+    for i = 1, CHART_COLS do put(c.col[i], d.cols[i], i, false) end
+    for i = 1, CHART_NEXT do put(c.col[CHART_COLS + i], d.next[i], CHART_COLS + i, true) end
+    local startG = d.start and d.start.g or d.now.gold
+    local startW = d.start and d.start.w or d.now.total
+    local up = d.now.total - startW
+    c.title:SetText(("%sGOLD THIS SESSION|r   %sin hand %s|r (gold columns)   %swhen all has sold %s|r (teal line)   %s%s%s since the start|r"):format(
+        GREY, GOLD, short(d.now.gold), TEAL, short(d.now.total), up >= 0 and GREEN or RED, up >= 0 and "+ " or "- ", short(math.abs(up))))
+    c.top:SetText(GREY .. short(d.hi) .. "|r")
+    local mins = floor(d.span / 60 + 0.5)
+    c.axisL:SetText(GREY .. (mins >= 90 and ("%.1f h ago"):format(mins / 60) or (mins .. " min ago")) .. "|r")
+    c.axisN:SetText(GREY .. "now|r")
+    c.axisR:SetText(d.coming > 0 and ("%snext hour: + %s of sale gold already sold|r"):format(GREY, short(d.coming)) or (GREY .. "next hour: no sale gold due|r"))
+end
+
 -- How long gold spent on a flip is out of reach: time to sell plus the hour
 -- the auction house takes to pay out.
 function UI.backIn(d)
@@ -1031,6 +1169,23 @@ function UI:Render()
     local list = buildList(tab, deals, entries)
     local h = frame:GetHeight()
     local vis = type(h) == "number" and h > 0 and math.max(3, math.min(MAXROWS, floor((h - self.listTop - 36) / ROW_H))) or ROWS
+    do  -- the session chart takes the room under the deals when the list is short (a couple of deals at most)
+        local CH = 96
+        -- rows kept for deals above it: 3, or 2 on a short panel
+        local keep = 3
+        if type(h) == "number" and h > 0 then keep = math.min(3, floor((h - self.listTop - 36 - CH) / ROW_H)) end
+        local chartOn = tab == "BUY" and keep >= 2 and #list <= keep
+        if chartOn then vis = math.min(vis, keep) end
+        if frame.chart then
+            if chartOn then
+                frame.chart:ClearAllPoints()
+                frame.chart:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -(self.listTop + keep * ROW_H + 6))
+                frame.chart:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -14, -(self.listTop + keep * ROW_H + 6))
+                self:SampleGold(false, entries)
+            end
+            self:RenderChart(chartOn, short, entries)
+        end
+    end
     self.vis = vis
     self.scroll = self.scroll or {}
     local off = math.max(0, math.min(self.scroll[tab] or 0, #list - vis))
@@ -1494,6 +1649,46 @@ function UI:Create()
     lg.note:SetJustifyH("LEFT"); lg.note:SetWordWrap(false)
     lg:Hide()
     frame.ledger = lg
+
+    -- THE SESSION CHART (Trades tab, under the deals)
+    do
+        local c = CreateFrame("Frame", nil, frame)
+        c:SetHeight(96)
+        c.triesBar = CreateFrame("Frame", nil, c)
+        c.triesBar:SetPoint("TOPLEFT", 0, -2); c.triesBar:SetSize(300, 9)
+        local bg = c.triesBar:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(); bg:SetColorTexture(1, 1, 1, 0.06)
+        c.won, c.lost, c.gone = c.triesBar:CreateTexture(nil, "ARTWORK"), c.triesBar:CreateTexture(nil, "ARTWORK"), c.triesBar:CreateTexture(nil, "ARTWORK")
+        c.won:SetColorTexture(0.2, 0.9, 0.4, 1); c.lost:SetColorTexture(0.9, 0.25, 0.25, 1); c.gone:SetColorTexture(1, 0.55, 0.2, 1)
+        c.triesText = c:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        c.triesText:SetPoint("LEFT", c.triesBar, "RIGHT", 10, 0); c.triesText:SetJustifyH("LEFT"); c.triesText:SetWordWrap(false)
+        c.title = c:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        c.title:SetPoint("TOPLEFT", 0, -16); c.title:SetJustifyH("LEFT"); c.title:SetWordWrap(false)
+        c.plot = CreateFrame("Frame", nil, c)
+        c.plot:SetPoint("TOPLEFT", 0, -31); c.plot:SetSize((CHART_COLS + CHART_NEXT) * CHART_W, CHART_H)
+        local pbg = c.plot:CreateTexture(nil, "BACKGROUND")
+        pbg:SetAllPoints(); pbg:SetColorTexture(1, 1, 1, 0.04)
+        c.col = {}
+        for i = 1, CHART_COLS + CHART_NEXT do
+            local bar = c.plot:CreateTexture(nil, "ARTWORK")
+            bar:SetPoint("BOTTOMLEFT", (i - 1) * CHART_W, 0); bar:SetSize(CHART_W - 1, 1)
+            local tick = c.plot:CreateTexture(nil, "OVERLAY")
+            tick:SetSize(CHART_W, 2)
+            c.col[i] = { bar = bar, tick = tick }
+        end
+        local nowLine = c.plot:CreateTexture(nil, "OVERLAY")
+        nowLine:SetPoint("BOTTOMLEFT", CHART_COLS * CHART_W, 0); nowLine:SetSize(1, CHART_H); nowLine:SetColorTexture(1, 1, 1, 0.5)
+        c.top = c:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        c.top:SetPoint("TOPLEFT", c.plot, "TOPRIGHT", 6, 0)
+        c.axisL = c:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        c.axisL:SetPoint("TOPLEFT", c.plot, "BOTTOMLEFT", 0, -3)
+        c.axisN = c:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        c.axisN:SetPoint("TOP", c.plot, "BOTTOMLEFT", CHART_COLS * CHART_W, -3)
+        c.axisR = c:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        c.axisR:SetPoint("TOPLEFT", c.plot, "BOTTOMLEFT", CHART_COLS * CHART_W + 16, -3)
+        c:Hide()
+        frame.chart = c
+    end
 
     -- SETUP tab: a control for everything that can be changed (no commands
     -- to remember), then what the request engine has learned.
@@ -2495,6 +2690,8 @@ end
 function UI:IsShown() return frame and frame:IsShown() end
 
 function UI:Init()
+    -- a gold sample every 20 seconds for the session chart, panel open or not
+    if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(20, function() UI:SampleGold() end) end
     local f = CreateFrame("Frame")
     for _, e in ipairs({ "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "MERCHANT_CLOSED", "MAIL_CLOSED", "PLAYER_MONEY" }) do
         f:RegisterEvent(e)

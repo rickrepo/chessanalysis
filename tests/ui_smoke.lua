@@ -1530,10 +1530,66 @@ do
         reset(); gold = 900; S.feesCache, S.poor = nil, {}
     end
 
+    -- THE SESSION CHART under the deals: tries in percent, gold over the session, the next hour's sale gold
+    do
+        reset(); gold = 900; S.verified = {}
+        local histWas, salesWas, payWas = AuctionMeshDB.goldHist, AuctionMeshDB.sales, S.ownSoldPay
+        local t = GetServerTime()
+        -- an hour of play: 5s in hand rising to 9s, worth 12s rising to 20s
+        AuctionMeshDB.goldHist = {}
+        for i = 0, 60 do AuctionMeshDB.goldHist[#AuctionMeshDB.goldHist + 1] = { t = t - 3600 + i * 60, g = 500 + math.floor(400 * i / 60), w = 1200 + math.floor(800 * i / 60) } end
+        S.ownSoldPay = nil
+        AuctionMeshDB.sales = { waiting = 0, pending = { { amount = 300, at = t + 600 }, { amount = 500, at = t + 2400 }, { amount = 900, at = t + 7200 } } }
+        S.tally.won, S.tally.lost, S.tally.gone = 24, 68, 8
+        UI.tab = "BUY"; UI.notice = nil; UI.chartAt = nil; UI:Render()
+        local c, d = AuctionMeshFrame.chart, UI.chartState
+        check(c and c._shown and d ~= nil, "with no deal up, the session chart is shown under the deals")
+        print("     " .. strip(c.triesText._text))
+        check(strip(c.triesText._text) == "24 bought (24%)   68 missed (68%)   8 gone before an input (8%)", "TRIES: bought, missed and gone, with their percentages")
+        check(d.cols[1] and d.cols[1].g <= 520 and d.cols[#d.cols].g >= 880 and d.cols[#d.cols].w >= 1900, "GOLD: a column for each stretch of the session, from 5s in hand at the start to 9s now, and what it is all worth above it")
+        check(d.next[1].g == 900 and d.next[5].g == 1200 and d.next[24].g == 1700, "FORECAST: the next hour, with sale gold that is already sold arriving when it is due (3s after 10 minutes, 5s more after 40)")
+        check(d.coming == 800, "only what is due within the hour is counted (the 9s due in two hours is not)")
+        print("     " .. strip(c.title._text))
+        print("     " .. strip(c.axisL._text) .. " ... " .. strip(c.axisN._text) .. " ... " .. strip(c.axisR._text))
+        check(strip(c.title._text):find("GOLD THIS SESSION   in hand 9s00c", 1, true) and strip(c.axisR._text) == "next hour: + 8s00c of sale gold already sold" and strip(c.axisL._text) == "60 min ago",
+            "the chart is labelled: gold in hand, what it is worth when sold, the change since the start, and the sale gold due")
+        -- cheap: the figures are worked out once a second at most, and at once when a try has ended
+        local calls, realData = 0, UI.ChartData
+        UI.ChartData = function(...) calls = calls + 1; return realData(...) end
+        UI:Render(); UI:Render(); UI:Render()
+        check(calls == 0, "redrawing the panel (a deal appears) does not work the chart out again within the second")
+        S.tally.won = 25; UI:Render()
+        check(calls == 1 and strip(c.triesText._text):find("25 bought", 1, true), "a try that has ended shows at once")
+        S.tally.won = 24
+        UI.ChartData = realData
+        -- a sample is taken as the session goes on
+        local n0 = #AuctionMeshDB.goldHist
+        advance(45)
+        check(#AuctionMeshDB.goldHist >= n0 + 2 and AuctionMeshDB.goldHist[#AuctionMeshDB.goldHist].g == 900, "a gold sample is kept every 20 seconds")
+        -- more than a couple of deals: the list takes the room, the chart gives way
+        for i = 1, 4 do
+            local k = 7000 + i
+            ITEMS[k] = { "Test Ore " .. i, 5 }
+            S.verified[k] = { key = k, kind = "VENDOR", units = 1, cost = 3, sell = 5, profit = 20 + i, deposit = 0, buys = {}, counts = {}, commodity = true, at = GetTime(), from = "me" }
+        end
+        UI:Render()
+        check(not c._shown, "with more than a couple of deals up the chart gives way to the list")
+        S.verified = {}; UI:Render()
+        check(c._shown, "and comes back when they are gone")
+        UI.tab = "SELL"; UI:Render()
+        check(not c._shown, "it is on the Trades tab only")
+        UI.tab = "BUY"
+        for i = 1, 4 do ITEMS[7000 + i] = nil end
+        AuctionMeshDB.goldHist, AuctionMeshDB.sales, S.ownSoldPay = histWas, salesWas, payWas
+        S.tally.won, S.tally.lost, S.tally.gone = 0, 0, 0
+        reset()
+    end
+
     -- AFTER A PURCHASE the radar is back at once: no re-check unless cheap units may be left
     do
         reset(); gold = 900; cfg.autoConfirm = nil
         S.cool, S.streak, S.muted = {}, {}, {}
+        local leather = LIST[2319]; LIST[2319] = nil -- the standing leather flip is not part of this
         -- every item check, with what asked for it ("recheck" = the look that follows a purchase)
         local asked, realSearch = {}, S.Search
         S.Search = function(self, key, src, ...) asked[#asked + 1] = key .. ":" .. tostring(src); return realSearch(self, key, src, ...) end
@@ -1584,7 +1640,7 @@ do
         check(S.buying == nil, "given up after 4 seconds (it was 10, with nothing else being sent meanwhile)")
         C_AuctionHouse.StartCommoditiesPurchase = realStart
         advance(1); reset(); cfg.autoConfirm = false
-        LIST[2770] = nil; S.cool = {}
+        LIST[2770] = nil; LIST[2319] = leather; S.cool = {}
         S.lastBg, S.lastScreen = 0, 0
         S.Search = realSearch
     end

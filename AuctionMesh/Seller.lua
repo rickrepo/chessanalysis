@@ -441,6 +441,27 @@ end
 -- Counts every item attached to mail in the inbox (nil until the mailbox is opened).
 -- Sale gold as last seen at the mailbox: in the mailbox now, still on its way,
 -- seconds until the next arrival, and the items those sales were for.
+-- Sale gold still to come, as a list of { amount, secs = seconds from now },
+-- soonest first (the same sources, in the same order of trust, as SalesMoney).
+function Seller:PayOuts()
+    local out = {}
+    local S = ns.Sniper
+    local pay = S and S.ownSoldPay
+    if pay and #pay > 0 then
+        local t = GetTime()
+        for _, r in ipairs(pay) do
+            if r.due > t then out[#out + 1] = { amount = r.amount, secs = r.due - t } end
+        end
+    else
+        local s, now = AuctionMeshDB.sales, GetServerTime()
+        for _, p in ipairs(s and s.pending or {}) do
+            if p.at > now then out[#out + 1] = { amount = p.amount, secs = p.at - now } end
+        end
+    end
+    table.sort(out, function(a, b) return a.secs < b.secs end)
+    return out
+end
+
 function Seller:SalesMoney()
     local s = AuctionMeshDB.sales
     local waiting, onway, nextAt, keys = 0, 0, nil, {}
