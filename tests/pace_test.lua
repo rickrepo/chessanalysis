@@ -295,7 +295,7 @@ if SCEN == "armed" then
     UI:Render(); st = strip(AuctionMeshFrame.status._text or "")
     print("     " .. st:gsub("\n", "\n     "))
     check(st:find("Armed: every request goes to the radar and its alerts", 1, true) ~= nil and st:find("a read every 0%.6%ds") ~= nil
-        and st:find("Last minute: 9%d reads, 0 alert checks, 0 buying, 0 other") ~= nil and st:find("12 of 12 items can be flipped straight from the radar", 1, true) ~= nil,
+        and st:find("Last minute: 9%d reads, 0 alert checks, 0 buying, 0 other") ~= nil and st:find("12 of 12 ready for a flip straight from the radar", 1, true) ~= nil and st:find("^MODE: VENDOR %+ FLIPS%.") ~= nil,
         "the Trades tab shows it: armed, a read every 0.6xs, 9x reads and no other request in the last minute, 12 of 12 items ready")
 
 elseif SCEN == "unarmed" then

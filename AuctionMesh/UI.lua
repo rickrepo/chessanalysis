@@ -219,18 +219,21 @@ local function buyStatus(n)
     if not ahOpen() then return GOLD .. "Open the Auction House to look for deals.|r" end
     local S, Sw, G = ns.Sniper, ns.Swarm, ns.Gate
     local name, lines = S.nameOf, {}
-    local mode = ns.Deals.cfg.flips and "" or (GREEN .. "Vendor-only.|r ")
+    -- THE MODE, first thing on the first line, in capitals and in colour:
+    -- what kind of deals are being offered right now.
+    local mode = S.lowGold and (ORANGE .. "MODE: VENDOR ONLY (gold is low).|r ")
+        or (not ns.Deals.cfg.flips) and (GREEN .. "MODE: VENDOR ONLY.|r ")
+        or (TEAL .. "MODE: VENDOR + FLIPS.|r ")
     local cap = S:Capital()
     if ns.Deals.cfg.flips and (AuctionMeshDB.cfg.focusMode or "off") ~= "off" then
         local set, flist = S:FocusSet()
-        mode = set and (TEAL .. ("Focus on %d item%s.|r "):format(#flist, #flist == 1 and "" or "s")) or (GREY .. "Focus: still measuring.|r ")
+        mode = mode .. (set and (GREY .. ("Focus on %d item%s.|r "):format(#flist, #flist == 1 and "" or "s")) or (GREY .. "Focus: still measuring.|r "))
     end
 
     local poor = S.PoorCount and S:PoorCount() or 0
     local low = S.lowGold
     if low then
         -- flips are off by themselves: what is owed, what you hold, and when gold arrives
-        mode = ""
         lines[#lines + 1] = ("%sGold is low: vendor deals only.|r You hold %s; posting the %d item%s you bought takes %s. Flips come back by themselves.%s"):format(
             ORANGE, ns.Seller.short(GetMoney()), low.items or 0, (low.items or 0) == 1 and "" or "s", ns.Seller.short(low.fees or 0),
             cap.nextIn and (" Next sale gold in %s."):format(cap.nextIn >= 90 and (floor(cap.nextIn / 60 + 0.5) .. " min") or (floor(cap.nextIn) .. "s"))
@@ -249,12 +252,12 @@ local function buyStatus(n)
     end
     -- line 1: the state
     if G:UserBusy() then
-        lines[#lines + 1] = ORANGE .. "Paused for a moment (a click is in progress).|r"
+        lines[#lines + 1] = mode .. ORANGE .. "Paused for a moment (a click is in progress).|r"
     else
         local sr = S.searching
         local alert = S:PeekNext()
         local ready, watched = S:ReadyCount()
-        local flips = (ns.Deals.cfg.flips and watched > 0) and ("  %s%d of %d items can be flipped straight from the radar.|r"):format(GREY, ready, watched) or ""
+        local flips = (ns.Deals.cfg.flips and watched > 0) and ("  %s%d of %d ready for a flip straight from the radar.|r"):format(GREY, ready, watched) or ""
         if sr and (sr.src == "vendor" or sr.src == "market" or sr.src == "drop") then
             lines[#lines + 1] = mode .. "Checking an alert: " .. name(sr.key)
         elseif alert then
@@ -263,15 +266,23 @@ local function buyStatus(n)
             -- exact: while a watched listing is still missing, one request in nine reads one
             local missing = ns.Deals.cfg.flips and watched - ready or 0
             lines[#lines + 1] = mode .. GREEN .. "Armed:|r " .. (missing > 0
-                and ("the radar has 8 of every 9 requests; the 9th reads a listing (%d to go) so that flips on it need no item check."):format(missing)
+                and ("8 of every 9 requests go to the radar; the 9th reads a listing (%d to go)."):format(missing)
                 or "every request goes to the radar and its alerts.") .. flips
         else
             lines[#lines + 1] = mode .. "Not armed: the radar reads back to back." .. flips
         end
     end
-    -- line 2: the last answer to an alert (or the last deal found); it gives way when there is no room
+    -- line 2: how the last try went in time, while it is news; otherwise the
+    -- last answer to an alert. It gives way when there is no room.
     local l = S.lastAlert
-    if l and GetTime() - l.at < 600 and #lines < 2 then
+    local lt = S.lastTry
+    if lt and GetTime() - lt.at < 60 and #lines < 2 then
+        local function ms(x) return x and ("%d ms"):format(floor(x * 1000 + 0.5)) or nil end
+        lines[#lines + 1] = ("%sLast try (%s, %s):|r%s input %s after the deal%s%s, over after %s.|r"):format(
+            lt.kind == "won" and GREEN or ORANGE, name(lt.key), lt.kind == "won" and "bought" or "missed", GREY,
+            ms(lt.input) or "?", lt.held and (", the game held the price request " .. ms(lt.held) .. " for its lock") or ", the price request left at once",
+            lt.quote and (", price back after " .. ms(lt.quote)) or ", no price came back", ms(lt.total) or "?")
+    elseif l and GetTime() - l.at < 600 and #lines < 2 then
         lines[#lines + 1] = ("%sLast alert: %s: %s (%s ago)|r"):format(l.deal and GREEN or GREY, name(l.key),
             l.deal and "DEAL FOUND" or ((l.reason or "no deal"):gsub("%$(%d+)", function(c) return ns.Seller.short(tonumber(c)) .. GREY end)),
             clock(GetTime() - l.at))
@@ -532,8 +543,28 @@ end
 -- inBox: it is meant for the snipe box (a wheel notch elsewhere on the panel
 -- only counts while a deal is up; otherwise it scrolls the list).
 -- Returns true if the input was used for buying.
+-- Seconds between your buy inputs, averaged over the last two seconds (nil
+-- when there were fewer than three). A press and its release each count.
+function UI.InputEvery()
+    local t, now = UI.inputTimes, GetTime()
+    if not t then return nil end
+    local first, n = nil, 0
+    for i = #t, 1, -1 do
+        if now - t[i] > 2 then break end
+        first, n = t[i], n + 1
+    end
+    if n < 3 then return nil end
+    return (t[#t] - first) / (n - 1)
+end
+
 function UI.InputPress(inBox, via)
     via = via or "wheel"
+    do
+        local t = UI.inputTimes or {}
+        UI.inputTimes = t
+        t[#t + 1] = GetTime()
+        if #t > 60 then table.remove(t, 1) end
+    end
     if UI.tab == "SELL" and via == "key" and UI.BuyMode() == "one" then return UI.OnePost() end -- the one key, on the Bags tab: it posts
     if UI.tab ~= "BUY" then return false end
     if via == "wheel" and UI.BuyMode() ~= "wheel" then return false end
@@ -626,6 +657,8 @@ function UI:RenderSnipe(short)
     local show = self.tab == "BUY"
     sn:SetShown(show)
     frame.next:SetShown(self.tab == "SELL")
+    -- the "Last: GOT IT ..." line belongs to the snipe box: it was left showing over the other tabs
+    if sn.result then sn.result:SetShown(show) end
     if not show then
         self:BindInputs(false, not (self.tab == "SELL" and UI.BuyMode() == "one")) -- the one key stays live on the Bags tab
         return
@@ -693,6 +726,13 @@ function UI:RenderSnipe(short)
                     or "every request goes to the radar and its alerts|r")
         end
     end
+    do  -- POSTING, step by step, while no deal is up: what is being posted and what it is waiting for
+        local act = ns.Seller.activity
+        if act and not d and not b and GetTime() - act.at < 4 then
+            text = GOLD .. act.text .. "|r"
+            colour, fill = { 1, 0.82, 0 }, { 0.14, 0.11, 0.02 }
+        end
+    end
     sn.label:SetText(text)
     do  -- one line under it: how to buy, in the mode you chose
         local cfg = AuctionMeshDB.cfg
@@ -715,7 +755,10 @@ function UI:RenderSnipe(short)
         elseif S:StakeKey() and not d then
             hint = GREY .. "Stake-out: " .. how .. ". Stop it in the drawer (click the item).|r"
         elseif armed then
-            hint = GREEN .. "Armed. Keep going: it stops being armed when the inputs stop.|r"
+            -- your inputs against the game's lock, measured
+            local every, lock = UI.InputEvery(), ns.Gate and ns.Gate.cycle
+            hint = GREEN .. "Armed." .. (every and (" An input every %d ms."):format(floor(every * 1000 + 0.5)) or "")
+                .. (lock and (" The game takes one request every %d ms: an input within about %d ms of a deal is in time."):format(floor(lock * 1000 + 0.5), math.max(100, floor((lock - 0.25) * 1000 + 0.5))) or " Keep going: it stops being armed when the inputs stop.") .. "|r"
         elseif d then
             hint = GREY .. (mode == "wheel" and how or ("To buy: " .. how .. ".")) .. "|r"
         else
@@ -930,11 +973,15 @@ function UI:Render()
     if tab == "SELL" then frame.next:SetText(TEAL .. "NEXT|r  " .. nextStep(deals, entries, short)) end -- (hidden on the other tabs)
     self:RenderSnipe(short)
     local status = tab == "BUY" and buyStatus(#deals) or tab == "SELL" and Se:Instructions(entries) or ""
+
     local n = self.notice
     if n and GetTime() < n.till then
         status = n.text
     elseif tab == "SELL" and ahOpen() and ns.Gate:UserBusy() then
         status = ORANGE .. "Paused for a moment (a click is in progress).|r " .. status
+    end
+    if tab == "SELL" and Se.activity and GetTime() - Se.activity.at < 4 then
+        status = GOLD .. Se.activity.text .. "|r\n" .. status -- what the post is doing right now, first
     end
     frame.status:SetText(status)
 
@@ -1136,6 +1183,26 @@ local function outline(f, c, a)
         e[4]:SetPoint("TOPRIGHT"); e[4]:SetPoint("BOTTOMRIGHT"); e[4]:SetWidth(1)
     end
     for i = 1, 4 do e[i]:SetColorTexture(c[1], c[2], c[3], a or 1) end
+end
+
+-- THE WHOLE PANEL FLASHES: green around its edge for a purchase, red for a
+-- miss. One and a half seconds, then it is gone.
+local FLASH_RGB = { won = { 0.2, 1, 0.4 }, lost = { 1, 0.2, 0.2 } }
+function UI:Flash(kind)
+    local c = FLASH_RGB[kind]
+    if not (frame and c) then return end
+    local e = rawget(frame, "flashEdges")
+    if not e then
+        e = {}
+        rawset(frame, "flashEdges", e)
+        for i = 1, 4 do e[i] = frame:CreateTexture(nil, "OVERLAY") end
+        e[1]:SetPoint("TOPLEFT"); e[1]:SetPoint("TOPRIGHT"); e[1]:SetHeight(4)
+        e[2]:SetPoint("BOTTOMLEFT"); e[2]:SetPoint("BOTTOMRIGHT"); e[2]:SetHeight(4)
+        e[3]:SetPoint("TOPLEFT"); e[3]:SetPoint("BOTTOMLEFT"); e[3]:SetWidth(4)
+        e[4]:SetPoint("TOPRIGHT"); e[4]:SetPoint("BOTTOMRIGHT"); e[4]:SetWidth(4)
+    end
+    for i = 1, 4 do e[i]:SetColorTexture(c[1], c[2], c[3], 1); e[i]:Show() end
+    self.flashKind, self.flashUntil = kind, GetTime() + 1.5
 end
 
 -- flat button: dark fill, thin outline, soft teal glow on hover
@@ -1709,6 +1776,10 @@ function UI:Create()
         if acc < 0.2 then return end
         acc = 0
         if UI.notice and GetTime() >= UI.notice.till then UI.notice = nil; UI.dirty = true end
+        if UI.flashUntil and GetTime() >= UI.flashUntil then
+            UI.flashUntil, UI.flashKind = nil, nil
+            for _, t in ipairs(rawget(frame, "flashEdges") or {}) do t:Hide() end
+        end
         local paused = ns.Gate:UserBusy()
         if paused ~= UI.wasPaused then UI.wasPaused = paused; UI.dirty = true end
         local armed = UI.Armed()

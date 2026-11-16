@@ -240,6 +240,10 @@ function Watch:Sent()
     self.byCall[name] = b
     b.n, b.total = b.n + 1, b.total + wait
     if wait > b.worst then b.worst = wait end
+    do  -- the price request of the try in progress: how long the game held it (for the timing line on the panel)
+        local ti = ns.Sniper and ns.Sniper.tryInfo
+        if ti and name == "StartCommoditiesPurchase" and not ti.held then ti.held = wait end
+    end
     -- A stake-out asks the price with every input, so its requests are queued
     -- all the time: those are counted, and listed only when the wait is long.
     local stake = q.call and tostring(q.call.desc or ""):find("^stake%-out") ~= nil
@@ -487,7 +491,7 @@ local function onEvent(_, event, ...)
         if Gate.sentAt then
             local dt = GetTime() - Gate.sentAt
             Gate.sentAt = nil
-            Watch:Cycle(dt, Gate.cycle)
+            if dt < 10 then Watch:Cycle(dt, Gate.cycle) end -- (longer than that is the auction house having been closed, not a slow lock)
             if ns.Tuner then ns.Tuner:Answered(dt) end
             if dt > 0.2 and dt < 10 then
                 local old = Gate.cycle

@@ -996,6 +996,8 @@ end
 function Seller:Note(key, text, what)
     local was = self.note
     self.note = { key = key, text = text, at = GetTime(), what = what }
+    -- the same, for the snipe box and the top of the Bags tab: what a post is doing right now
+    if what == nil then self.activity = { text = "Posting " .. nameOf(key) .. ": " .. text, at = GetTime() } end
     if self.quietNotes then -- the one key is being spammed: the row shows it, chat is left alone
     elseif not was or was.text ~= text or GetTime() - was.at > 4 then
         if ns.Print then ns.Print(nameOf(key) .. ": " .. text) end
@@ -1028,8 +1030,12 @@ function Seller:Post(key)
         return
     end
     if not ns.Gate:ReadyForUser() then
-        self.quietUntil = GetTime() + 1.0
-        self:Note(key, "The auction house is busy for a moment. Keep pressing.")
+        -- The radar keeps the auction house locked nearly all the time. Nothing
+        -- else is sent for 3 seconds now, so the next press finds it free and
+        -- posts. (It was 1 second: pressing once a second, every press found
+        -- it busy again, and the post looked stuck.)
+        self.quietUntil = GetTime() + 3
+        self:Note(key, "the auction house is busy for a moment. Press again: the next press posts.")
         return
     end
     local bag, slot = self.FindInBags(key)
@@ -1051,6 +1057,7 @@ function Seller:Post(key)
     ns.Gate.ignoreErrorUntil = math.max(ns.Gate.ignoreErrorUntil or 0, GetTime() + 3)
     self.posting = { key = key, qty = qty, before = bagCount[key] or 0, price = p.price,
                      deposit = deposit, why = p.why, at = GetTime() }
+    self.activity = { text = ("Posting %d x %s at %s each: sent, waiting for the auction house to confirm..."):format(qty, nameOf(key), Seller.short(p.price)), at = GetTime() }
     self.quietUntil = GetTime() + 2
     local ok
     if p.commodity then
@@ -1110,6 +1117,12 @@ function Seller:CheckPosted()
     say(("Posted %dx %s at %s each, deposit %s (%s)."):format(min(gone, q.qty), nameOf(q.key), money(q.price), money(q.deposit), q.why))
     -- confirmed: the radar goes on at once (it waited out a fixed 2 seconds after every post)
     self.quietUntil = math.min(self.quietUntil or 0, GetTime() + 0.3)
+    do  -- say so where you are looking, with what is left to post
+        local left = 0
+        for _, e in ipairs(self:Entries()) do if e.action == "AH" then left = left + 1 end end
+        self.activity = { text = ("POSTED %d x %s at %s each. %s"):format(min(gone, q.qty), nameOf(q.key), Seller.short(q.price),
+            left > 0 and (left .. " more item" .. (left == 1 and "" or "s") .. " to post: keep pressing.") or "Nothing left to post."), at = GetTime() }
+    end
 end
 
 function Seller:OnError(msg)

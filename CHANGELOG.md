@@ -6,6 +6,21 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.36.0 (2026-11-16)
+
+- **The mode is the first thing on the Trades tab**, in capitals and in colour: `MODE: VENDOR + FLIPS.`, `MODE: VENDOR ONLY.`, or `MODE: VENDOR ONLY (gold is low).`
+- **The whole panel flashes**: green around its edge for a purchase, red for a miss, for a second and a half.
+- **A miss is no longer written in the middle of the screen.** A purchase still is. (The game's own red error text for a refused purchase is the game's and is left alone.)
+- **Your inputs against the game's lock, measured.**
+  - While armed, the line under the snipe box reads `Armed. An input every 98 ms. The game takes one request every 740 ms: an input within about 490 ms of a deal is in time.` A press and its release each count as an input.
+  - After each try, the second status line shows how it went: `Last try (Silk Cloth, missed): input 30 ms after the deal, the game held the price request 460 ms for its lock, price back after 710 ms, over after 1460 ms.` The log has the same as a `TRY` line.
+- Shorter status texts so the first line fits.
+- **Posting says what it is doing.** Each step of a post is shown where you are looking, in the snipe box on the Trades tab and at the top of the Bags tab: `Posting Thick Leather: Getting the live price first`, `Posting 7 x Thick Leather at 6s97c each: sent, waiting for the auction house to confirm...`, `POSTED 7 x Thick Leather at 6s97c each. 2 more items to post: keep pressing.` Posting from the Trades tab with the one key showed nothing at all.
+- **A Post press that finds the auction house busy holds the radar for 3 seconds**, so the next press posts. It was 1 second: pressing about once a second, every press found it busy again and the post looked stuck (7 to 10 seconds between posts in the log).
+- **Fixed: the "Last: GOT IT ..." line stayed on screen over the Bags, Picks and Setup tabs.**
+- **A flip that would take more than your share-per-flip of the gold in hand is skipped at the radar.** With 11s in hand and the limit at 35%, a 4s78c Runecloth was alerted, checked and refused about every 20 seconds. It is counted on the "not enough gold" line instead.
+- The Snapshot's `SLOW` figures no longer include the time the auction house was closed.
+
 ## 3.35.0 (2026-11-16)
 
 - **Low gold: vendor deals only, by itself, and back by itself.** The addon keeps count of the posting fees still owed on everything you have bought and not listed (each auction costs its fee up front; it comes back when the item sells). When the gold in hand no longer covers them:

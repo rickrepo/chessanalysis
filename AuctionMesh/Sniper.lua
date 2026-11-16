@@ -894,12 +894,15 @@ function Sniper:OnSweep(key, price, qty)
     end
     if not why then return end
     do  -- YOUR GOLD. One unit must be payable; for a flip, with its posting fee on top (the deal rules keep it back).
-        local need = price
+        local need, have = price, self:Budget()
         if flip then
             local _, feeMin = self.depositInfo(key, true)
             need = price + (feeMin or 0)
+            -- and one flip may take only a share of the gold in hand (your "spend" setting), as the deal rules will say
+            local gold = GetMoney()
+            if gold >= Deals.cfg.smallPurse then have = min(have, floor(gold * Deals.cfg.maxSpend)) end
         end
-        if need > self:Budget() then
+        if need > have then
             self.poor = self.poor or {}
             self.poor[key] = now
             return
@@ -1506,11 +1509,25 @@ function Sniper:Result(kind, key, text)
         if mine then self.react = nil end
     end
     ns.Log("RESULT %s: %s", kind, text)
+    do  -- how this try went, in time (shown on the Trades tab)
+        local ti = self.tryInfo
+        if ti and ti.key == key and kind ~= "gone" then
+            self.lastTry = { key = key, kind = kind, input = ti.input, held = ti.held, quote = ti.quote, total = GetTime() - ti.t0, at = GetTime(), via = ti.via }
+            self.tryInfo = nil
+            ns.Log("TRY %s %s: input %s after the deal, price request held %s for the lock, price back after %s, over after %.2fs", tostring(key), kind,
+                ti.input and ("%.2fs"):format(ti.input) or "?", ti.held and ("%.2fs"):format(ti.held) or "0s",
+                ti.quote and ("%.2fs"):format(ti.quote) or "never", GetTime() - ti.t0)
+        end
+    end
     if PlaySound then pcall(PlaySound, kind == "won" and 120 or 847) end
-    if UIErrorsFrame and UIErrorsFrame.AddMessage then
+    -- A purchase is announced in the middle of the screen. A miss is not any
+    -- more: the whole panel flashes red instead (green for a purchase), and
+    -- the line under the snipe box keeps what happened.
+    if kind == "won" and UIErrorsFrame and UIErrorsFrame.AddMessage then
         local c = FLASH[kind] or FLASH.gone
         pcall(UIErrorsFrame.AddMessage, UIErrorsFrame, "AuctionMesh: " .. text, c[1], c[2], c[3])
     end
+    if ns.UI and ns.UI.Flash then ns.UI:Flash(kind) end
     ns.Gate.holdUntil = nil
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
 end
@@ -1592,6 +1609,10 @@ function Sniper:Buy(key)
             self.react = { key = key, secs = seen and (GetTime() - seen) or nil, via = via }
         end
         if via ~= "click" then self.tally.wheel = (self.tally.wheel or 0) + 1 end
+        -- THE TIMING OF THIS TRY, for the panel: when the input came, how long
+        -- the game held the price request for its lock, when the price was
+        -- back, when it was over.
+        self.tryInfo = { key = key, t0 = GetTime(), input = seen and (GetTime() - seen) or nil, via = via }
     end
     if deal.commodity then
         self.buying = { key = key, units = deal.units, max = deal.cost, phase = "quote", deal = deal, at = GetTime() }
@@ -1778,6 +1799,10 @@ function Sniper:OnPriceQuote(unitPrice, total)
     local b = self.buying
     if not b or b.phase ~= "quote" then return end
     ns.Log("QUOTE %s: %s total vs verified %s", tostring(b.key), tostring(total), tostring(b.max))
+    do
+        local ti = self.tryInfo
+        if ti and ti.key == b.key and not ti.quote then ti.quote = GetTime() - ti.t0 end
+    end
     if b.stake then
         -- a stake-out's price request: buy if it is low enough, otherwise ask again on the next notch
         local st = self.stake

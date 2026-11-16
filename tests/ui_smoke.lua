@@ -1054,7 +1054,7 @@ check(st:find("Last alert: Peacebloom: 500 cheap units is too many to clear", 1,
 UI.wheelSeen = GetTime(); UI:Render()
 st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
-check(st:find("Armed: the radar has 8 of every 9 requests; the 9th reads a listing %(%d+ to go%)") ~= nil, "armed with listings still unread: the status line says exactly what the one other request in nine is for")
+check(st:find("Armed: 8 of every 9 requests go to the radar; the 9th reads a listing %(%d+ to go%)") ~= nil and st:find("^MODE: VENDOR %+ FLIPS%.") ~= nil, "armed with listings still unread: the first line starts with the mode in capitals and says exactly what the one other request in nine is for")
 do
     local was = S.ListingReady
     S.ListingReady = function() return true end
@@ -1348,6 +1348,18 @@ do
     check(S.result and S.result.kind == "won" and label():find("^GOT IT  12 x Copper Ore for 36c"), "the panel says GOT IT")
     check(G.holdUntil == nil, "and the radar runs again")
     check(flashes[#flashes][1]:find("^AuctionMesh: GOT IT  12 x Copper Ore for 36c") and flashes[#flashes][3] == 1, "the same message flashes in green in the middle of the screen")
+    do  -- and the whole panel flashes green around its edge
+        local e = rawget(AuctionMeshFrame, "flashEdges")
+        check(UI.flashKind == "won" and e and #e == 4 and e[1]._shown, "a purchase: the whole panel's edge flashes green")
+        local lt = S.lastTry
+        check(lt and lt.key == 2770 and lt.kind == "won" and lt.quote and lt.total and lt.total >= lt.quote, "how the try went in time is kept: when the price was back, when it was over")
+        UI.tab = "BUY"; UI.notice = nil; UI:Render()
+        local st = strip(AuctionMeshFrame.status._text)
+        for l in st:gmatch("[^\n]+") do if l:find("Last try", 1, true) then print("     " .. l) end end
+        check(st:find("Last try %(Copper Ore, bought%):.- input %d+ ms after the deal") and st:find("price back after %d+ ms, over after %d+ ms"), "the Trades tab shows the last try's timing in milliseconds")
+        advance(2)
+        check(UI.flashKind == nil and not e[1]._shown, "the flash is gone after a second and a half")
+    end
     check(strip(btn.result._text) == "This session: 1 got, 0 missed, 0 gone before a click", "the line under the button keeps count")
     AuctionMeshDB.flips[2770] = nil
     ns.Journal:Dropped(2770, nil, "test")
@@ -1361,7 +1373,8 @@ do
     print("     " .. label())
     check(gold == 900 and S.result and S.result.kind == "lost" and label():find("^MISSED  Copper Ore: someone was faster. It now costs 1s08c for 12. Nothing spent."),
         "the listing was bought by someone else: the panel says MISSED with the real price, nothing spent")
-    check(flashes[#flashes][1]:find("^AuctionMesh: MISSED  Copper Ore") and flashes[#flashes][2] == 1, "MISSED flashes in red in the middle of the screen")
+    check(not flashes[#flashes][1]:find("MISSED", 1, true), "a miss is no longer written in the middle of the screen")
+    check(UI.flashKind == "lost" and rawget(AuctionMeshFrame, "flashEdges")[1]._shown, "a miss: the whole panel's edge flashes red")
     check(not (S.result.text or ""):find("NOT BUYABLE"), "it is never called 'not buyable' on the strength of a quote")
     -- the listing goes on showing the units for a moment after they are gone (seen in a real log)
     LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
@@ -1446,6 +1459,17 @@ do
         gold = 15; S.poor = {}
         S:OnSweep(6002, 15, 301)
         check(S:PoorCount() == 1, "gold for the unit but not for its posting fee: still skipped (the deal rules would refuse it)")
+        -- one flip may take only a share of the gold in hand: 15c + 1c fee against 35% of 40c is too much
+        do
+            local was = ns.Deals.cfg.maxSpend
+            ns.Deals.cfg.maxSpend = 0.35
+            local purse = ns.Deals.cfg.smallPurse
+            ns.Deals.cfg.smallPurse = 30
+            gold = 40; S.poor = {}
+            S:OnSweep(6002, 15, 303)
+            check(S:PoorCount() == 1 and S.triggers[6002] == nil, "a flip that would take more than your share-per-flip of the gold in hand is skipped at the radar too (it was checked every 20 seconds and refused each time)")
+            ns.Deals.cfg.maxSpend, ns.Deals.cfg.smallPurse = was, purse
+        end
         gold = 900; S.poor = {}; S.sweep, S.ownSweep = {}, {}
         S:OnSweep(6002, 15, 302)
         check(S.triggers[6002] ~= nil or S.searching ~= nil or S.verified[6002] ~= nil, "with gold in hand the same listing is alerted as before")
@@ -1474,6 +1498,7 @@ do
         local st = strip(AuctionMeshFrame.status._text)
         print("     " .. st:match("[^\n]+"))
         check(st:find("Gold is low: vendor deals only. You hold 2s50c; posting the 2 items you bought takes 4s", 1, true), "the Trades tab says it, with the figures")
+        check(st:find("MODE: VENDOR ONLY (gold is low).", 1, true), "and the mode on the Trades tab reads VENDOR ONLY (gold is low)")
         -- a flip is not offered now; a vendor deal still is
         LIST[2589] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
         LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
@@ -1494,6 +1519,11 @@ do
         -- everything listed or sold: nothing is owed
         gold = 100; AuctionMeshDB.flips[2592] = nil; AuctionMeshDB.flips[4306] = nil; S.feesCache = nil; advance(2)
         check(S.lowGold == nil, "little gold but nothing waiting to be posted: no switch")
+        gold = 900
+        UI:SetVendorOnly(true); UI.notice = nil; UI:Render()
+        check(strip(AuctionMeshFrame.status._text):find("^MODE: VENDOR ONLY%."), "your own vendor-only setting shows as MODE: VENDOR ONLY")
+        UI:SetVendorOnly(false); UI.notice = nil; UI:Render()
+        check(strip(AuctionMeshFrame.status._text):find("^MODE: VENDOR %+ FLIPS%."), "and with flips on as MODE: VENDOR + FLIPS")
         C_AuctionHouse.CalculateCommodityDeposit = realFee; S.ClearFees()
         LIST[2589], LIST[2770] = nil, nil
         for _, k in ipairs({ 2592, 4306 }) do ns.Journal:Dropped(k, nil, "test") end
@@ -1822,6 +1852,8 @@ do
     UI:Render()
     print("     " .. label() .. "  |  " .. strip(btn.hint._text))
     check(label():find("^ARMED") and (label():find("every request goes to the radar and its alerts", 1, true) or label():find("radar first; %d+ listings? still being read for instant flips")) and strip(btn.hint._text):find("^Armed%."), "rolling in the box with no deal: ARMED, and it says where the requests go")
+    print("     " .. strip(btn.hint._text))
+    check(strip(btn.hint._text):find("^Armed%. An input every 200 ms%."), "the line under the box shows how fast the inputs come: one every 200 ms")
     check(S:SnipeMode(), "snipe mode is on while you roll: routine item checks and side classes wait")
     check(gold == 900 and S.buying == nil, "nothing is bought while there is no deal")
     check(ns.Swarm.stats.queries > before, "the radar keeps reading while you roll")
@@ -1962,6 +1994,25 @@ do
             print(("     posted %d, chat lines %d: %s"):format(#posted - np, #chat - nchat, tostring(chat[#chat])))
             check(#posted == np + 1 and posted[#posted].qty == 5 and posted[#posted].price == 149, "5 Wool Cloth in the bags: the same key, pressed with no deal up, gets the live price and posts them once, at 1s49c")
             check(#chat - nchat <= 2 and chat[#chat]:find("Posted 5x", 1, true), "chat has the 'Posted' line and no line per press")
+            UI:Render()
+            print("     " .. label())
+            check(label():find("^POSTED 5 x Wool Cloth at 1s49c each. Nothing left to post."), "the snipe box says what was posted and that nothing is left (posting from the Trades tab used to show nothing)")
+            do  -- each step of a post is shown while it happens
+                local Se3 = ns.Seller
+                Se3:Note(2592, "Getting the live price first. Press Post again in a second.")
+                UI:Render()
+                check(label():find("^Posting Wool Cloth: Getting the live price first"), "while the price is being fetched the box says so")
+                UI.tab = "SELL"; UI:Render()
+                check(strip(AuctionMeshFrame.status._text):find("^Posting Wool Cloth: Getting the live price first"), "and so does the top of the Bags tab")
+                check(rawget(btn, "result") and rawget(btn, "result")._shown == false, "the 'Last: GOT IT' line of the snipe box is not left showing over the Bags tab")
+                UI.tab = "HISTORY"; UI:Render()
+                check(rawget(btn, "result")._shown == false, "nor over the Setup tab")
+                UI.tab = "BUY"; UI:Render()
+                check(rawget(btn, "result")._shown == true, "it is back on the Trades tab")
+                advance(5); UI:Render()
+                check(not label():find("^Posting"), "after a few seconds the box is back to sniping")
+                Se3.note = nil
+            end
             check(AuctionMeshDB.flips[2592] == nil and AuctionMeshDB.listed[2592] ~= nil, "it is booked as listed, like a post made with the Post button")
             -- a deal and something to post at the same time: the deal comes first
             AuctionMeshDB.flips[4306] = { kind = "FLIP", units = 3, cost = 90, sell = 200, at = GetServerTime(), proof = "test" }
