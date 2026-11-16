@@ -1452,6 +1452,54 @@ do
         advance(1); AuctionMeshDB.sales = nil; reset(); S.poor = {}
     end
 
+    -- GOLD TOO LOW TO POST WHAT YOU HOLD: vendor deals only, by itself, and back by itself
+    do
+        reset(); gold = 900; S.poor = {}; S.lowGold, S.goldAt, S.feesCache = nil, nil, nil
+        local realFee = C_AuctionHouse.CalculateCommodityDeposit
+        C_AuctionHouse.CalculateCommodityDeposit = function(id, d, q) return math.max(100, 5 * q) end -- 1s at least, 5c a unit
+        S.ClearFees()
+        ITEMS[2592] = { "Wool Cloth", 33 }
+        AuctionMeshDB.flips[2592] = { kind = "FLIP", units = 60, cost = 34, sell = 160, at = GetServerTime(), proof = "test" } -- fee 3s
+        AuctionMeshDB.flips[4306] = { kind = "FLIP", units = 10, cost = 90, sell = 200, at = GetServerTime(), proof = "test" } -- fee 1s
+        local fees, n = S:FeesOwed()
+        check(fees == 400 and n == 2, "what is bought and not listed is tracked with its posting fees: 4s for 2 items")
+        advance(2)
+        check(S.lowGold == nil and ns.Deals.cfg.flips == true, "9s in hand covers 4s of fees: nothing changes")
+        local nchat = #chat
+        gold = 250; S.feesCache = nil; advance(2)
+        print("     " .. chat[#chat])
+        check(S.lowGold ~= nil and ns.Deals.cfg.flips == false and AuctionMeshDB.cfg.flips ~= false, "2s50c in hand, 4s owed: the addon goes to vendor deals only by itself; your own setting is not touched")
+        check(#chat == nchat + 1 and chat[#chat]:find("Gold is low: 2s50c in hand", 1, true) and chat[#chat]:find("takes 4s", 1, true), "and says so once, in chat")
+        UI.tab = "BUY"; UI.notice = nil; UI.wheelSeen = nil; UI:Render()
+        local st = strip(AuctionMeshFrame.status._text)
+        print("     " .. st:match("[^\n]+"))
+        check(st:find("Gold is low: vendor deals only. You hold 2s50c; posting the 2 items you bought takes 4s", 1, true), "the Trades tab says it, with the figures")
+        -- a flip is not offered now; a vendor deal still is
+        LIST[2589] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
+        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+        S.priority = 2589; advance(1); S.priority = 2770; advance(1)
+        check(S.verified[2589] == nil and S.verified[2770] ~= nil and S.verified[2770].kind == "VENDOR", "while it lasts: no flip is offered, a vendor deal is")
+        S.verified = {}
+        advance(30)
+        check(#chat <= nchat + 2, "it is not repeated every second")
+        -- gold arrives: flips are back by themselves
+        nchat = #chat
+        gold = 460; advance(2)
+        check(S.lowGold ~= nil, "4s60c against 4s owed: not yet (a little to spare is wanted, so it does not switch back and forth)")
+        gold = 520; advance(2)
+        print("     " .. chat[#chat])
+        check(S.lowGold == nil and ns.Deals.cfg.flips == true and chat[#chat]:find("Gold is back", 1, true), "5s20c in hand: flips are on again by themselves, and chat says so")
+        S.checkedAt = {}; S.priority = 2589; advance(1)
+        check(S.verified[2589] ~= nil and S.verified[2589].kind == "FLIP", "and the flip is offered again")
+        -- everything listed or sold: nothing is owed
+        gold = 100; AuctionMeshDB.flips[2592] = nil; AuctionMeshDB.flips[4306] = nil; S.feesCache = nil; advance(2)
+        check(S.lowGold == nil, "little gold but nothing waiting to be posted: no switch")
+        C_AuctionHouse.CalculateCommodityDeposit = realFee; S.ClearFees()
+        LIST[2589], LIST[2770] = nil, nil
+        for _, k in ipairs({ 2592, 4306 }) do ns.Journal:Dropped(k, nil, "test") end
+        reset(); gold = 900; S.feesCache, S.poor = nil, {}
+    end
+
     -- AFTER A PURCHASE the radar is back at once: no re-check unless cheap units may be left
     do
         reset(); gold = 900; cfg.autoConfirm = nil

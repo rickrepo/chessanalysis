@@ -6,6 +6,17 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.35.0 (2026-11-16)
+
+- **Low gold: vendor deals only, by itself, and back by itself.** The addon keeps count of the posting fees still owed on everything you have bought and not listed (each auction costs its fee up front; it comes back when the item sells). When the gold in hand no longer covers them:
+  - it stops offering flips and offers vendor deals only (gold back at the next vendor, no fee);
+  - it tells you once: a line in chat with the figures, a sound, and the first status line of the Trades tab (`Gold is low: vendor deals only. You hold 2s50c; posting the 2 items you bought takes 4s. Flips come back by themselves. Next sale gold in 27 min.`);
+  - it switches flips back on by itself when the gold in hand covers the fees with a little to spare (a fifth, at least 1s), or when nothing is left to post, and says so.
+  - Your own setting (Vendor deals + flips) is not changed; the Setup tab shows `Vendor deals + flips (off: low gold)` meanwhile.
+  - Something bought under vendor price that the auction house pays more for is still shown as "Post it", and its fee is counted.
+- Snapshot, MONEY: `posting fees owed for what is bought and not listed`, and whether flips are off because of it.
+- Not yet tried in the real game.
+
 ## 3.34.1 (2026-11-16)
 
 From a Snapshot that listed 10 Mageweave Cloth as "sell to a vendor".

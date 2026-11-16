@@ -227,7 +227,15 @@ local function buyStatus(n)
     end
 
     local poor = S.PoorCount and S:PoorCount() or 0
-    if poor > 0 then
+    local low = S.lowGold
+    if low then
+        -- flips are off by themselves: what is owed, what you hold, and when gold arrives
+        mode = ""
+        lines[#lines + 1] = ("%sGold is low: vendor deals only.|r You hold %s; posting the %d item%s you bought takes %s. Flips come back by themselves.%s"):format(
+            ORANGE, ns.Seller.short(GetMoney()), low.items or 0, (low.items or 0) == 1 and "" or "s", ns.Seller.short(low.fees or 0),
+            cap.nextIn and (" Next sale gold in %s."):format(cap.nextIn >= 90 and (floor(cap.nextIn / 60 + 0.5) .. " min") or (floor(cap.nextIn) .. "s"))
+                or ((cap.onway or 0) + (cap.waiting or 0) > 0 and " Sale gold is waiting at the mailbox." or " Sell to a vendor (Bags tab) to get there."))
+    elseif poor > 0 then
         -- cheap listings are there, your gold is not: say so, and when some arrives
         lines[#lines + 1] = ("%sNot enough gold in hand:|r you hold %s. %d cheap listing%s in the last minute cost%s more than that (a flip needs its posting fee too) and %s skipped.%s"):format(
             ORANGE, ns.Seller.short(GetMoney()), poor, poor == 1 and "" or "s", poor == 1 and "s" or "", poor == 1 and "was" or "were",
@@ -844,7 +852,8 @@ end
 
 function UI:RenderSetup()
     local sp, cfg = frame.setup, AuctionMeshDB.cfg
-    sp.flips:SetText(ns.Deals.cfg.flips and "Vendor deals + flips" or "Vendor deals only")
+    -- your own setting (while gold is low the addon runs on vendor deals only without changing it)
+    sp.flips:SetText(AuctionMeshDB.cfg.flips ~= false and (ns.Sniper.lowGold and "Vendor deals + flips (off: low gold)" or "Vendor deals + flips") or "Vendor deals only")
     sp.scope:SetText(ns.Do.SCOPE_NAMES[cfg.scope] or ns.Do.SCOPE_NAMES.mats)
     sp.tied:SetText(("%d%% of what you own"):format(floor(ns.Deals.cfg.maxTied * 100 + 0.5)))
     sp.dock:SetText(cfg.dock ~= false and "Inside the auction house" or "A window of its own")
@@ -1430,7 +1439,7 @@ function UI:Create()
     upTo(L, sp.margin)
 
     L, at = row("Show")
-    sp.flips = tip(button(sp, 190, "", function() UI:SetVendorOnly(ns.Deals.cfg.flips) end),
+    sp.flips = tip(button(sp, 190, "", function() UI:SetVendorOnly(AuctionMeshDB.cfg.flips ~= false) end),
         "Vendor deals are guaranteed profit: the item is listed for less than a vendor pays. Flips are resold on the auction house and are not guaranteed.")
     sp.flips:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.flips)
@@ -1782,6 +1791,7 @@ function UI:SetVendorOnly(on)
     cfg.flips = not on
     ns.Deals.cfg.flips = cfg.flips
     local S = ns.Sniper
+    S.lowGold, S.goldAt = nil, nil -- looked at afresh with the new setting
     S.verified, S.background, S.lastScreen, S.lastBg = {}, nil, 0, 0
     self:Notice(on and "|cff33ff66Vendor-only mode:|r only items listed below what a vendor pays. Every deal is guaranteed profit."
         or "|cffffd100Vendor + Flips mode:|r also shows auction house resale deals (not guaranteed).", true)

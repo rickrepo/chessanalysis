@@ -492,6 +492,13 @@ function Scout:Snapshot(o)
     for _, l in ipairs(listedLines) do add(l) end
     add("bought, not listed: ", coin(held))
     for _, l in ipairs(heldLines) do add(l) end
+    do  -- the posting fees still owed, and whether the addon has gone to vendor deals only because of them
+        local S = ns.Sniper
+        local fees, items = 0, 0
+        if S and S.FeesOwed then fees, items = S:FeesOwed() end
+        add("posting fees owed for what is bought and not listed: ", coin(fees), " (", tostring(items), " item(s))",
+            (S and S.lowGold) and " | LOW GOLD: flips are off until the gold in hand covers them" or "")
+    end
     add("TOTAL when it has all sold: ", coin(gold + waiting + onway + listed + held))
     do
         local r = self:Day()

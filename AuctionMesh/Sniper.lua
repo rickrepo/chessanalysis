@@ -703,6 +703,77 @@ function Sniper:StakeNotch()
     return true
 end
 
+-- GOLD FOR POSTING. Every auction costs a posting fee up front (it comes back
+-- when the item sells). What you have bought and not listed yet still needs
+-- its fee, so that much gold is spoken for. When the gold in hand no longer
+-- covers it, more flips only add to what cannot be listed: the addon then
+-- switches itself to VENDOR DEALS ONLY (gold back at the next vendor, no
+-- fee), says so, and switches flips back on by itself the moment the gold in
+-- hand covers the fees again. Your own setting is not touched.
+-- Returns the fees owed and how many items they are for.
+function Sniper:FeesOwed()
+    local now = GetTime()
+    local c = self.feesCache
+    if c and now - c.at < 2 then return c.fees, c.items end
+    local fees, items = 0, 0
+    local Se = ns.Seller
+    for key, f in pairs((AuctionMeshDB and AuctionMeshDB.flips) or {}) do
+        local units = f.units or 0
+        -- to be posted: a flip, or something bought under vendor price that the auction house pays more for
+        if units > 0 and (f.kind == "FLIP" or (f.kind == "VENDOR" and Se and Se.BestExit and Se:BestExit(key, f) == "AH")) then
+            local per, dmin = self.depositInfo(key, not self.isItem[key])
+            if per ~= math.huge then
+                fees = fees + math.max(dmin or 0, math.ceil(per * units))
+                items = items + 1
+            end
+        end
+    end
+    self.feesCache = { at = now, fees = fees, items = items }
+    return fees, items
+end
+
+-- Once a second while the auction house is open.
+function Sniper:GoldWatch()
+    local now = GetTime()
+    if self.goldAt and now - self.goldAt < 1 then return end
+    self.goldAt = now
+    local cfg = AuctionMeshDB.cfg
+    local fees, items = self:FeesOwed()
+    local gold = GetMoney()
+    local low = self.lowGold
+    if not low then
+        if cfg.flips ~= false and items > 0 and gold < fees then
+            self.lowGold = { at = now, fees = fees, items = items }
+            Deals.cfg.flips = false
+            for k, d in pairs(self.verified) do
+                if d.kind == "FLIP" and not (self.buying and self.buying.key == k) then self.verified[k] = nil end
+            end
+            self.background, self.lastBg, self.lastScreen = nil, 0, 0
+            local msg = ("|cffff8040Gold is low:|r %s in hand, and posting the %d item%s you have bought and not listed takes %s. Vendor deals only from now; flips come back by themselves when you have the gold.")
+                :format(plain(gold), items, items == 1 and "" or "s", plain(fees))
+            say(msg)
+            ns.Log("LOW GOLD: %d in hand, %d owed in posting fees for %d item(s): flips off until it is covered", gold, fees, items)
+            if PlaySound then pcall(PlaySound, 847) end
+            dirty()
+        end
+    else
+        low.fees, low.items = fees, items
+        -- back on when the fees are covered with a little to spare (so it does not flip back and forth on a few copper)
+        if cfg.flips == false or items == 0 or gold >= fees + math.max(100, floor(fees * 0.2)) then
+            self.lowGold = nil
+            Deals.cfg.flips = cfg.flips ~= false
+            self.background, self.lastBg, self.lastScreen = nil, 0, 0
+            if cfg.flips ~= false then
+                say(("|cff33ff66Gold is back:|r %s in hand covers the posting fees (%s). Flips are on again."):format(plain(gold), plain(fees)))
+                ns.Log("LOW GOLD over: %d in hand, %d owed: flips on again", gold, fees)
+            end
+            dirty()
+        elseif Deals.cfg.flips then
+            Deals.cfg.flips = false -- (something set it back, a settings code for example: still low)
+        end
+    end
+end
+
 -- SNIPE MODE: you are rolling the wheel in the snipe box (a notch in the last
 -- 3 seconds). Every request then goes to the radar and to alerts: no routine
 -- item checks, no side classes, no housekeeping. A routine check costs one
@@ -1247,6 +1318,7 @@ function Sniper:Tick()
     self.queued, self.arming = nil, nil -- clicks are never held back any more (see Buy)
     -- The radar finds new deals; this pass over the whole price table only has
     -- to expire old ones and catch what the radar could not see, so it runs rarely.
+    self:GoldWatch()
     if now - (self.lastScreen or 0) > 15 then self:Screen(); self.lastScreen = now end
     -- Re-pick the watch list every 5 minutes (or right away while it is still empty).
     local bg = self.background
