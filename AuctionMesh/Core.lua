@@ -183,7 +183,8 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             end
             db.cfg.channel, db.cfg.password, db.cfg.route, db.cfg.share = nil, nil, nil, nil
         end
-        db.cfg.v = 11
+        if (db.cfg.v or 0) < 12 then Seller.RepairCancelRecord() end
+        db.cfg.v = 12
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)

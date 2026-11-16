@@ -6,6 +6,17 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.33.1 (2026-11-16)
+
+From the first real logs of 3.33.0.
+
+- **Fixed: a cancel made with the Cancel button could be booked as an auction that ran out unsold.** The game confirms a cancel with a number that is not the auction's (113 for auction 93521571 in the log), so the addon did not recognise its own cancel. When the 2 Wool Cloth came back by mail they were booked as expired, and Wool Cloth (26 flips sold out of 26) was put on hold for 12 hours: every Wool Cloth flip was refused with "did not sell last time".
+  - The confirmation is now recognised without that number. The game fires the same event when an auction SELLS (right after its "sold" notice); that is told apart and never taken for a cancel.
+  - A cancel you sent is remembered for an hour: whatever the confirmation looks like, what the mail brings back is booked as a cancelled auction, not as a flip that failed.
+  - **One-time repair on first login:** if the only "ran out unsold" on record is a recent one, it is that wrong booking and it is taken back (chat says so). Wool Cloth is flipped again at once.
+- **The second click on Cancel goes through.** The radar now keeps the auction house locked nearly all the time, so the click that cancels kept finding it busy (four clicks for one cancel in the log). After the first click nothing else is sent for 3 seconds.
+- **Confirmed in game (3.33.0):** the radar leaves the moment the lock opens. Reads are 0.73 to 0.76 seconds apart, steadily (the server answers in about 0.23s here, then the 0.5s lock); on the Trades tab 8 radar reads go out between any two other requests. No refused request, no error, no back-off in either log.
+
 ## 3.33.0 (2026-11-16)
 
 Sniping first. Every request slot the auction house allows (one per 0.65s) now goes to the radar, to the checks its alerts ask for and to your purchases; everything else waits its turn behind them. Figures below are from the offline lock model (`tests/pace_test.lua`: the game's lock as measured in your logs), not from the game.

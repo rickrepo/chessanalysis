@@ -577,6 +577,18 @@ function Seller:Returned(key, n, why)
     n = min(n or 0, L.qty or 0)
     if n <= 0 then return 0 end
     local now = GetServerTime()
+    do  -- A cancel YOU sent with the Cancel button in the last hour: what comes
+        -- back is that auction, whatever the game's confirmation looked like.
+        -- (A real log: the confirmation carried another number than the
+        -- auction's, the cancel was not recognised, and the units coming back
+        -- were booked as an auction that ran out: Wool Cloth, sold 26 times
+        -- out of 26, was then not flipped for 12 hours.)
+        local cs = AuctionMeshDB.cancelSent
+        if cs and cs[key] then
+            if why ~= "cancelled" and now - cs[key] < 3600 then why = "cancelled" end
+            cs[key] = nil
+        end
+    end
     local cancelled = why == "cancelled"
     local f = flips()[key]
     if f then
@@ -676,6 +688,11 @@ function Seller:CancelClick(key)
     local arm = self.cancelArm
     if not (arm and arm.id == a.id and GetTime() - arm.at < 5) then
         self.cancelArm = { id = a.id, key = key, at = GetTime() }
+        -- The radar reads back to back, so the auction house is locked nearly
+        -- all the time: the second click would find it busy (a real log: four
+        -- clicks for one cancel). Nothing else is sent for 3 seconds, so the
+        -- next click goes straight through.
+        self.quietUntil = math.max(self.quietUntil or 0, GetTime() + 3)
         local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
         local fee = (L and (L.fee or 0) > 0) and floor(L.fee * min(1, a.qty / max(1, L.qty)) + 0.5) or 0
         self:Note(key, ("Click again to cancel %d at %s each.%s It comes back by mail; then post it again on the Bags tab.")
@@ -685,7 +702,7 @@ function Seller:CancelClick(key)
     end
     if not ns.Gate:ReadyForUser() then
         arm.at = GetTime() -- stays armed: the next click cancels
-        self.quietUntil = GetTime() + 1.0
+        self.quietUntil = GetTime() + 3
         self:Note(key, "The auction house is busy for a moment. Click again.", "cancel")
         return
     end
@@ -693,25 +710,47 @@ function Seller:CancelClick(key)
     ns.Gate:Use(("cancel auction %s: %dx %s @%d"):format(tostring(a.id), a.qty, tostring(key), a.price or 0))
     ns.Gate.ignoreErrorUntil = math.max(ns.Gate.ignoreErrorUntil or 0, GetTime() + 3) -- a refused cancel is not the server pushing back
     self.cancelling = { key = key, id = a.id, qty = a.qty, price = a.price, at = GetTime(), a = a }
+    AuctionMeshDB.cancelSent = AuctionMeshDB.cancelSent or {}
+    AuctionMeshDB.cancelSent[key] = GetServerTime() -- remembered: what the mail brings back is a cancelled auction, not one that ran out
     self.note = nil -- the row now says "Cancelling..."
     self.quietUntil = GetTime() + 2
     if not pcall(AH.CancelAuction, a.id) then
         self.cancelling = nil
+        AuctionMeshDB.cancelSent[key] = nil
         self:Note(key, "The game refused the cancel.", "cancel")
     end
     self:Refresh()
 end
 
--- The auction house confirmed a cancel (event AUCTION_CANCELED).
+-- The auction house reports an auction of yours removed (event AUCTION_CANCELED).
+-- Two things seen in real logs decide how it is read:
+--   * The game fires it for a SALE as well, right after its "sold" notice
+--     (notice 4, the item's name, the auction's number).
+--   * For a cancel the notice is 1 and the number is NOT the auction's (113
+--     for auction 93521571), so the number cannot be used to recognise our
+--     own cancel. It used to be, and the cancel then went unrecognised.
+-- So: while a cancel of ours is waiting for its answer, this event is that
+-- answer unless a "sold" notice came with it or its number is another of your
+-- auctions.
 function Seller:OnCancelled(auctionID)
     local c = self.cancelling
-    if not c or (auctionID and auctionID ~= 0 and c.id ~= auctionID) then
-        -- cancelled in the game's own Auctions tab: read your auctions again; the mailbox does the rest
-        if ns.Sniper then ns.Sniper.needOwned = true end
+    local S = ns.Sniper
+    local n = self.lastNotice
+    local SOLD = (Enum and Enum.AuctionHouseNotification and Enum.AuctionHouseNotification.AuctionSold) or 4
+    local sale = n ~= nil and GetTime() - n.at < 0.5 and n.kind == SOLD
+    local other = false
+    if c and auctionID and auctionID ~= c.id and S and S.ownIds then
+        for _, list in pairs(S.ownIds) do
+            for _, a in ipairs(list) do if a.id == auctionID then other = true end end
+        end
+    end
+    if not c or sale or other then
+        -- a sale, or a cancel made in the game's own Auctions tab: read your auctions again; the mailbox does the rest
+        if S then S.needOwned = true end
         return
     end
     self.cancelling = nil
-    local S = ns.Sniper
+    ns.Log("CANCEL confirmed for %s (the event's number was %s, the auction's %s)", tostring(c.key), tostring(auctionID), tostring(c.id))
     if S then
         c.a.gone = true -- until the auction house's list is read again
         local o = S.own and S.own[c.key]
@@ -725,6 +764,36 @@ function Seller:OnCancelled(auctionID)
     self:Returned(c.key, c.qty, "cancelled")
     self.note = nil
     self:Refresh()
+end
+
+-- ONE-TIME REPAIR (first login with 3.33.1). Up to 3.33.0 an auction
+-- cancelled with the Cancel button could be booked as one that ran out
+-- unsold, which stops flips of that item for 12 hours. If the ONLY "ran out"
+-- on record is a recent one, it is that booking, and it is taken back. With
+-- more than one on record nothing is touched: a block ends by itself.
+-- Returns the item it corrected, or nil.
+function Seller.RepairCancelRecord()
+    local L = ns.Learn and ns.Learn.d
+    if not L or (L.fail or 0) ~= 1 then return nil end
+    for key, it in pairs(L.items or {}) do
+        if (it.fail or 0) == 1 and (it.streak or 0) == 1 and it.last and GetServerTime() - it.last < 48 * 3600 then
+            it.fail, it.streak = 0, 0
+            L.fail, L.n, L.mine = 0, max(0, (L.n or 1) - 1), max(0, (L.mine or 1) - 1)
+            for i = #(L.recent or {}), 1, -1 do
+                if L.recent[i] == 0 then table.remove(L.recent, i); break end
+            end
+            for _, t in ipairs(ns.Journal and ns.Journal.list or {}) do
+                if t.key == key and (t.expired or 0) > 0 then
+                    t.expired, t.cancelled = t.expired - 1, (t.cancelled or 0) + 1
+                    break
+                end
+            end
+            say(("%s: a cancel had been recorded as an auction that ran out unsold. Corrected: it is flipped again."):format(nameOf(key)))
+            ns.Log("REPAIR: the one 'expired' outcome on record (%s) was a cancel; taken back", tostring(key))
+            return key
+        end
+    end
+    return nil
 end
 
 -- With the real bag + mailbox contents known, fix anything the Flip Bag got wrong:
@@ -1015,6 +1084,7 @@ function Seller:OnError(msg)
         local key = self.cancelling.key
         ns.Log("CANCEL error for %s: %s", tostring(key), tostring(msg))
         self.cancelling = nil
+        if AuctionMeshDB.cancelSent then AuctionMeshDB.cancelSent[key] = nil end
         self:Note(key, "Not cancelled. The game says: " .. tostring(msg), "cancel")
         return self:Refresh()
     end
@@ -1303,6 +1373,8 @@ function Seller:Init()
         f:RegisterEvent(e)
     end
     pcall(f.RegisterEvent, f, "AUCTION_CANCELED")
+    pcall(f.RegisterEvent, f, "AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION")
+    pcall(f.RegisterEvent, f, "AUCTION_HOUSE_SHOW_NOTIFICATION")
     Seller.goldSeen = GetMoney()
     f:SetScript("OnEvent", function(_, event, a1, a2)
         if event == "PLAYER_MONEY" then
@@ -1310,6 +1382,8 @@ function Seller:Init()
             local delta = now - (Seller.goldSeen or now)
             Seller.goldSeen = now
             if delta > 0 and mailOpen() then Seller:MailGold(delta); Seller:Refresh() end
+        elseif event == "AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION" or event == "AUCTION_HOUSE_SHOW_NOTIFICATION" then
+            Seller.lastNotice = { kind = a1, at = GetTime() } -- 4 = sold, 1 = removed: tells a sale from a cancel (see OnCancelled)
         elseif event == "AUCTION_CANCELED" then
             Seller:OnCancelled(a1)
         elseif event == "MERCHANT_SHOW" then

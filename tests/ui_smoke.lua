@@ -190,7 +190,7 @@ check(W == nil, "no window until it is needed")
 do
     local c = AuctionMeshDB.cfg
     advance(11)
-    check(leftChannel == "GoldCrew7" and c.channel == nil and c.password == nil and c.route == nil and c.share == nil and c.v == 11,
+    check(leftChannel == "GoldCrew7" and c.channel == nil and c.password == nil and c.route == nil and c.share == nil and c.v == 12,
         "an install that had joined a sharing channel leaves it once, and the channel settings are forgotten")
     check(#sentAddon == 0, "and nothing was sent while doing so")
 end
@@ -651,6 +651,7 @@ do
     print("     " .. strip(r.state._text) .. " | [" .. r.btn._text .. "]")
     check(#cancelled == 0 and r.btn._text == "Sure?" and strip(r.state._text):find("^Click again to cancel 5 at 1s60c each. The posting fee of 10c is not returned."),
         "first click: nothing is cancelled; the row says what a cancel costs and the button asks 'Sure?'")
+    check(Se:Busy() and S:YieldTo("swarm") == false, "and nothing else is sent for the next seconds, so the second click finds the auction house free (a real log: four clicks for one cancel, the radar kept it locked)")
     advance(6); UI:Render(); r = rowOf(2592)
     check(#cancelled == 0 and r.btn._text == "Cancel", "left alone for 5 seconds it goes back to Cancel: one stray click never cancels")
     -- busy auction house: the second click is not lost
@@ -677,7 +678,13 @@ do
     check(#cancelled == 1 and cancelled[1] == 9001 and strip(r.state._text) == "Cancelling..." and not r.btn._shown, "two clicks: the auction is cancelled at the auction house (its own id), and the row says Cancelling...")
     press()
     check(#cancelled == 1, "more clicks while it is being cancelled do nothing")
-    fire("AUCTION_CANCELED", 9001); UI:Render()
+    -- another auction of yours SELLS meanwhile: the game fires the same event for it, after its "sold" notice
+    fire("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", 4, "Wool Cloth", 777); fire("AUCTION_CANCELED", 777)
+    check(Se.cancelling ~= nil and AuctionMeshDB.listed[2592] ~= nil, "a sale reported while the cancel is waiting is not taken for its confirmation")
+    advance(0.6)
+    -- the confirmation, as a real log shows it: notice 1, and a number that is NOT the auction's
+    fire("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", 1, "", 113); fire("AUCTION_CANCELED", 113); UI:Render()
+    check(Se.cancelling == nil, "the game confirms the cancel with another number than the auction's (113 for auction 9001): recognised all the same")
     local f = AuctionMeshDB.flips[2592]
     check(AuctionMeshDB.listed[2592] == nil and f and f.units == 5 and f.cost == 34 and f.retPending == 5, "confirmed by the auction house: the 5 units are among your holdings again, at what they cost you")
     check((AuctionMeshDB.realized or 0) == banked - 10, "the posting fee is booked as lost (10c)")
@@ -712,6 +719,58 @@ do
     r = rowOf(2592); r.btn._scripts.OnClick(r.btn); advance(2)
     check(#posted == np + 1 and posted[#posted].qty == 5 and posted[#posted].price == 119 and AuctionMeshDB.listed[2592] and AuctionMeshDB.listed[2592].price == 119,
         "one click on Post: listed again, 5 at 1s19c")
+    do  -- A CANCEL WHOSE CONFIRMATION NEVER CAME: what the mail brings back is still a cancelled auction
+        C_AuctionHouse.GetNumOwnedAuctions = function() return 1 end
+        C_AuctionHouse.GetOwnedAuctionInfo = function()
+            return { auctionID = 9002, itemKey = { itemID = 2592 }, status = 0, quantity = 5, buyoutAmount = 119, timeLeftSeconds = 30000 }
+        end
+        ns.Store:Put(2592, 110, 400, GetServerTime() + 1)
+        S:ReadOwned(); Se.note = nil
+        UI.tab = "SELL"; UI:Render()
+        advance(4); UI:Render() -- (the hold after the post is over)
+        local nc = #cancelled
+        press(); press()
+        check(#cancelled == nc + 1 and Se.cancelling ~= nil and AuctionMeshDB.cancelSent[2592] ~= nil, "a cancel is sent, and remembered")
+        advance(7) -- no confirmation at all
+        check(Se.cancelling == nil and AuctionMeshDB.listed[2592] ~= nil, "no confirmation in 6 seconds: nothing is booked yet")
+        local learnN, blocked = ns.Learn.d.n, ns.Learn:Blocked(2592)
+        C_AuctionHouse.GetNumOwnedAuctions = function() return 0 end
+        S:ReadOwned()
+        local invWas2 = GetInboxInvoiceInfo
+        GetInboxInvoiceInfo = function(i) return inbox[i] and inbox[i].invoice end
+        for s2 = 1, 16 do bags[s2] = nil end
+        fire("BAG_UPDATE_DELAYED")
+        inbox = { { itemID = 2592, stackCount = 5 } }
+        AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
+        MailFrame:Show(); fire("MAIL_SHOW"); advance(4)
+        local f2 = AuctionMeshDB.flips[2592]
+        print("     " .. tostring(f2 and f2.proof))
+        check(f2 and f2.units == 5 and f2.proof == "auction cancelled, returned by mail" and AuctionMeshDB.listed[2592] == nil,
+            "the units come back by mail: booked as the auction you cancelled")
+        check(ns.Learn.d.n == learnN and ns.Learn:Blocked(2592) == blocked, "not as a flip that failed to sell: the item is not put on hold for 12 hours (a real log: Wool Cloth was)")
+        check(AuctionMeshDB.cancelSent[2592] == nil, "(the remembered cancel is used once)")
+        MailFrame:Hide(); fire("MAIL_CLOSED")
+        GetInboxInvoiceInfo = invWas2
+        AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
+        -- (back to where this section was: one auction listed, nothing held)
+        AuctionMeshDB.flips[2592] = nil; ns.Journal:Dropped(2592, nil, "test")
+        for s2 = 1, 16 do bags[s2] = nil end
+        fire("BAG_UPDATE_DELAYED")
+        AuctionMeshDB.listed[2592] = { qty = 5, price = 119, cost = 34, plan = 119, fee = 10, at = GetServerTime() }
+    end
+    do  -- THE ONE-TIME REPAIR of a cancel that an earlier version booked as "ran out unsold"
+        local d = ns.Learn.d
+        local keep = { n = d.n, ok = d.ok, fail = d.fail, mine = d.mine, recent = d.recent, items = d.items }
+        d.n, d.ok, d.fail, d.mine, d.recent = 27, 26, 1, 27, { 1, 1, 0 }
+        d.items = { [2592] = { ok = 26, fail = 1, streak = 1, last = GetServerTime() - 600 } }
+        check(ns.Learn:Blocked(2592) ~= nil, "(as in the real log: 26 sold, then one cancel booked as expired; Wool Cloth on hold for 12 hours)")
+        local fixed = Se.RepairCancelRecord()
+        print("     " .. chat[#chat])
+        check(fixed == 2592 and ns.Learn:Blocked(2592) == nil and d.fail == 0 and d.n == 26 and #d.recent == 2, "first login with the fix: the one wrong record is taken back and Wool Cloth is flipped again")
+        d.fail, d.items[2592].fail, d.items[2592].streak = 2, 1, 1
+        check(Se.RepairCancelRecord() == nil and ns.Learn:Blocked(2592) ~= nil, "with more than one expiry on record nothing is touched (it cannot be told which was the cancel)")
+        d.n, d.ok, d.fail, d.mine, d.recent, d.items = keep.n, keep.ok, keep.fail, keep.mine, keep.recent, keep.items
+    end
     -- no button where it cannot work
     ns.Store:Put(2592, 110, 400, GetServerTime() + 1)
     S.own, S.ownIds, S.ownRead = {}, {}, false
