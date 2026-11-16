@@ -202,6 +202,18 @@ function Sniper:Search(key, src, waited, from)
     ns.lastQuery = "sniper"
 end
 
+-- A deal has just been put on the panel: what the inputs are doing goes to
+-- the log (after the redraw, so the bindings are the ones in force), and the
+-- input count is kept so that, if it leaves unbought, the log can say how
+-- many inputs arrived while it was up.
+function Sniper:TraceInputs(key)
+    local U = ns.UI
+    if not (U and U.InputTrace) then return end
+    self.inputsAt = self.inputsAt or {}
+    self.inputsAt[key] = U.inputCount or 0
+    ns.Log("INPUTS as the deal appeared (%s): %s", tostring(key), U.InputTrace())
+end
+
 -- PER-ITEM SETTINGS (from an imported settings code). An item can have its own
 -- smallest profit, and an item can be ignored altogether.
 local itemCfg = {}
@@ -322,6 +334,7 @@ function Sniper:Evaluate(key, rows, commodity)
             -- right away so that your first click is the purchase itself.
             if Sniper.hold > 0 then ns.Gate.holdUntil = GetTime() + Sniper:HoldFor() end
             if ns.UI and ns.UI.Now then ns.UI:Now() end
+            self:TraceInputs(key)
         end
         ns.Log("DEAL %s %s: buy %d for %d, sell %d each, profit %d, sells %s/h, eta %s min (rows: %s)", deal.kind, tostring(key),
             deal.units, deal.cost, deal.sell, deal.profit, tostring(deal.rate and floor(deal.rate)), tostring(deal.eta and floor(deal.eta)),
@@ -340,6 +353,11 @@ function Sniper:Evaluate(key, rows, commodity)
             if seen then
                 self.dealSeen[key] = nil
                 self:Result("gone", key, ("GONE  %s: someone else bought it, %d seconds after it appeared."):format(nameOf(key), floor(GetTime() - seen + 0.5)), GetTime() - seen)
+                if ns.UI and ns.UI.InputTrace then
+                    local at = self.inputsAt and self.inputsAt[key]
+                    ns.Log("INPUTS for the deal that went (%s): %s", tostring(key), ns.UI.InputTrace(at or 0))
+                    if self.inputsAt then self.inputsAt[key] = nil end
+                end
             end
         end
         ns.Log("NO DEAL %s: %s (rows: %s)", tostring(key), tostring(reason), self.RowsText(rows))
@@ -432,6 +450,7 @@ function Sniper:InstantVendor(key, price, qty, v, prev)
         tostring(key), n, price, v, profit)
     if Sniper.hold > 0 then ns.Gate.holdUntil = now + Sniper:HoldFor() end
     if ns.UI and ns.UI.Now then ns.UI:Now() end
+    self:TraceInputs(key)
     return true
 end
 
@@ -516,6 +535,7 @@ function Sniper:InstantFlip(key, price, qty, prev)
         tostring(key), deal.units, price, prev.p, tostring(wall), deal.sell, deal.profit, age, last.gone or 0)
     if Sniper.hold > 0 then ns.Gate.holdUntil = now + Sniper:HoldFor() end
     if ns.UI and ns.UI.Now then ns.UI:Now() end
+    self:TraceInputs(key)
     return true
 end
 

@@ -6,6 +6,14 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.39.1 (2026-11-16)
+
+From a real log of 3.39.0 (00:47 to 00:48): the radar read every 0.72 to 0.76s as before and found five vendor deals in 90 seconds (Silk Cloth three times, worth up to 19s38c). Not one input reached the addon while they were up: the box was not armed, no purchase was started, and each deal left after 10 to 21 seconds. The log could not say why, so this version makes the log say it.
+
+- **The log says what the inputs were doing.** When a deal appears: `INPUTS as the deal appeared (4306): 0 input(s) in the last 5s, last input never | panel open, tab BUY, buy with one (key F), wheel bound: no, key bound: F`. When a deal leaves unbought: `INPUTS for the deal that went (4306): 0 input(s) while it was up, ...`.
+- **Addon errors are caught and reported.** The game hides addon errors unless you switch them on, so one in the panel's redraw or in the input handler would only show as "it stopped working". Both now run guarded: an error is written to the log once with where it happened, counted, shown on the panel (`AuctionMesh hit an error ... send a Snapshot`), and listed at the top of the Snapshot. The rest of the addon carries on.
+- Nothing else is changed: no request, timing or rule is different from 3.39.0.
+
 ## 3.39.0 (2026-11-16)
 
 Details (the handle on the panel's right edge) now holds everything that is not needed to buy, and the Trades tab is down to what is.

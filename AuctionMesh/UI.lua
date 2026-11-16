@@ -755,6 +755,7 @@ function UI.InputPress(inBox, via)
         UI.inputTimes = t
         t[#t + 1] = GetTime()
         if #t > 60 then table.remove(t, 1) end
+        UI.inputCount = (UI.inputCount or 0) + 1
     end
     if UI.tab == "SELL" and via == "key" and UI.BuyMode() == "one" then return UI.OnePost() end -- the one key, on the Bags tab: it posts
     if UI.tab ~= "BUY" then return false end
@@ -2961,6 +2962,70 @@ function UI:Init()
             UI:Dirty()
         end
     end)
+end
+
+-- FOR THE LOG: what the inputs were doing, so that "a deal sat there and was
+-- not bought" can be told apart from "no input reached the addon".
+--   since = the input count when the deal appeared (nil: the last 5 seconds)
+function UI.InputTrace(since)
+    local t, now = UI.inputTimes or {}, GetTime()
+    local n
+    if since then
+        n = (UI.inputCount or 0) - since
+    else
+        n = 0
+        for i = #t, 1, -1 do
+            if now - t[i] > 5 then break end
+            n = n + 1
+        end
+    end
+    local cfg = (AuctionMeshDB and AuctionMeshDB.cfg) or {}
+    local mode = UI.BuyMode and UI.BuyMode() or "?"
+    return ("%d input(s) %s, last input %s | panel %s, tab %s, buy with %s%s, wheel bound: %s, key bound: %s"):format(
+        n, since and "while it was up" or "in the last 5s",
+        t[#t] and ("%.2fs ago"):format(now - t[#t]) or "never",
+        (frame and frame:IsShown()) and "open" or "shut", tostring(UI.tab), tostring(mode),
+        (mode == "key" or mode == "one") and (" (key " .. tostring(cfg.buyKey or "none chosen") .. ")") or "",
+        UI.wheelBound and "yes" or "no", UI.keyBound and tostring(UI.keyBound) or "no")
+end
+
+-- ERRORS ARE NOT SWALLOWED IN SILENCE. The game hides addon errors unless
+-- you switch them on, so one in here would only show as "it stopped
+-- working". The redraw and the input handler run guarded: an error goes to
+-- the log and the Snapshot with where it happened (once per kind, counted),
+-- and everything else carries on.
+do
+    local function catcher(name)
+        return function(e)
+            local msg = tostring(e)
+            ns.errs = ns.errs or {}
+            ns.errList = ns.errList or {}
+            local rec = ns.errs[msg]
+            if not rec then
+                rec = { n = 0, name = name, msg = msg }
+                ns.errs[msg] = rec
+                ns.errList[#ns.errList + 1] = rec
+                local st = debugstack and tostring(debugstack(2, 5, 0) or "") or ""
+                rec.stack = (st:gsub("%s*\n%s*", " < "))
+                if ns.Log then ns.Log("ERROR in %s: %s | %s", name, msg, rec.stack) end
+                UI.notice = { text = "|cffff4040AuctionMesh hit an error|r (" .. name .. "). It is in the log: send a Snapshot.", till = GetTime() + 20 }
+            end
+            rec.n, rec.at = rec.n + 1, GetTime()
+        end
+    end
+    local realRender, onRenderErr = UI.Render, catcher("the redraw")
+    local function runRender() return realRender(UI) end
+    function UI:Render()
+        if not xpcall(runRender, onRenderErr) then self.fast = nil end
+    end
+    local realPress, onPressErr = UI.InputPress, catcher("an input")
+    local a1, a2
+    local function runPress() return realPress(a1, a2) end
+    function UI.InputPress(inBox, via)
+        a1, a2 = inBox, via
+        local ok, r = xpcall(runPress, onPressErr)
+        return ok and r or false
+    end
 end
 
 return UI

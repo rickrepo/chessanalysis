@@ -448,6 +448,15 @@ function Scout:Snapshot(o)
     add("=== AUCTIONMESH SNAPSHOT v1 ===")
     add("addon ", tostring(o.version or "?"), " | realm ", tostring(o.realm or "?"), " | server time ", date("%Y-%m-%d %H:%M", now),
         " | this session ", mins(ns.sessionStart and (GetTime() - ns.sessionStart) or nil))
+    do  -- addon errors (the game hides them): each kind once, with how often and where
+        local list = ns.errList or {}
+        if #list > 0 then
+            add("ADDON ERRORS this session: ", #list, " kind(s)")
+            for i = 1, math.min(#list, 5) do
+                add("  ", list[i].n, " x in ", list[i].name, ": ", list[i].msg, " | ", tostring(list[i].stack or ""))
+            end
+        end
+    end
 
     -- MONEY
     local waiting, onway, nextIn, soldKeys = 0, 0, nil, {}

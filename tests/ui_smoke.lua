@@ -1709,6 +1709,66 @@ do
         reset()
     end
 
+    -- THE LOG SAYS WHAT THE INPUTS WERE DOING when a deal appeared and when it left unbought
+    do
+        reset(); gold = 900; S.cool, S.streak, S.muted = {}, {}, {}
+        local leather = LIST[2319]; LIST[2319] = nil
+        local lines, realLog = {}, ns.Log
+        ns.Log = function(fmt, ...) local ok, l = pcall(string.format, fmt, ...); lines[#lines + 1] = ok and l or tostring(fmt); return realLog(fmt, ...) end
+        local function logged(pat) for _, l in ipairs(lines) do if l:find(pat) then return l end end end
+        UI.inputTimes, UI.inputCount = nil, nil
+        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+        S.dealSeen[2770] = nil
+        S.priority = 2770; advance(1)
+        local l = logged("^INPUTS as the deal appeared %(2770%)")
+        print("     " .. tostring(l))
+        check(S.verified[2770] and l and l:find("0 input%(s%) in the last 5s, last input never | panel open, tab BUY, buy with wheel, wheel bound: yes, key bound: no"),
+            "a deal appears: the log says how many inputs came in the last 5 seconds, the tab, the buy mode and what is bound")
+        -- nobody presses; the units are bought by someone else
+        LIST[2770] = { { 9, 200 }, { 10, 300 } }
+        advance(8); S.checkedAt = {}; G.holdUntil = nil; S.priority = 2770; advance(1)
+        l = logged("^INPUTS for the deal that went %(2770%)")
+        print("     " .. tostring(l))
+        check(S.verified[2770] == nil and l and l:find("^INPUTS for the deal that went %(2770%): 0 input%(s%) while it was up, last input never"),
+            "it leaves unbought: the log says no input arrived while it was up")
+        -- with inputs, they are counted
+        lines = {}
+        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+        S.checkedAt = {}; S.priority = 2770; advance(1)
+        local realStart = C_AuctionHouse.StartCommoditiesPurchase
+        C_AuctionHouse.StartCommoditiesPurchase = function() end -- the price never comes back: the inputs lead nowhere
+        UI.InputPress(true, "wheel"); UI.InputPress(true, "wheel"); UI.InputPress(true, "wheel")
+        advance(5)
+        C_AuctionHouse.StartCommoditiesPurchase = realStart
+        LIST[2770] = { { 9, 200 }, { 10, 300 } }
+        S.checkedAt = {}; S.priority = 2770; advance(1)
+        l = logged("^INPUTS for the deal that went %(2770%)")
+        print("     " .. tostring(l))
+        check(l and l:find("3 input%(s%) while it was up"), "inputs that did arrive are counted: 3 while it was up")
+        -- AN ERROR IN THE REDRAW is caught, logged once with where it was, shown on the panel, and listed in the Snapshot
+        lines = {}
+        local realStatus = rawget(AuctionMeshFrame.status, "SetText")
+        rawset(AuctionMeshFrame.status, "SetText", function() error("boom in the status line") end)
+        local ok = pcall(function() UI:Render(); UI:Render() end)
+        rawset(AuctionMeshFrame.status, "SetText", realStatus)
+        local e = ns.errList and ns.errList[1]
+        check(ok and e and e.n == 2 and e.name == "the redraw" and e.msg:find("boom in the status line", 1, true), "an error in the redraw does not stop the addon: it is caught and counted")
+        local n = 0
+        for _, x in ipairs(lines) do if x:find("^ERROR in the redraw: .-boom in the status line") then n = n + 1 end end
+        check(n == 1, "it is written to the log once, however often it happens")
+        UI:Render()
+        check(strip(AuctionMeshFrame.status._text or ""):find("AuctionMesh hit an error (the redraw). It is in the log: send a Snapshot.", 1, true), "and the panel says so")
+        check(ns.Scout:Snapshot():find("ADDON ERRORS this session: 1 kind%(s%)\n  2 x in the redraw: .-boom in the status line"), "the Snapshot lists it, with how often")
+        local okp, r = pcall(UI.InputPress, true, "wheel")
+        check(okp and r == true, "inputs still work after it")
+        ns.errs, ns.errList, UI.notice = nil, nil, nil
+        ns.Log = realLog
+        LIST[2770] = nil; LIST[2319] = leather
+        S.result, S.lastTry, UI.flashUntil, UI.wheelSeen, UI.inputTimes = nil, nil, nil, nil, nil
+        S.tally.won, S.tally.lost, S.tally.gone, S.tally.armed = 0, 0, 0, nil
+        advance(1); reset(); UI:Render()
+    end
+
     -- AFTER A PURCHASE the radar is back at once: no re-check unless cheap units may be left
     do
         reset(); gold = 900; cfg.autoConfirm = nil
@@ -3098,5 +3158,8 @@ do
     UI.tab = "BUY"; UI:Render()
 end
 
+-- nothing in the whole run raised an error inside the redraw or an input (they are caught, so they must be looked for)
+for _, e in ipairs(ns.errList or {}) do print("  ERROR caught " .. e.n .. " x in " .. e.name .. ": " .. e.msg) end
+check(#(ns.errList or {}) == 0, "no error was caught in a redraw or an input during the whole run")
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)
