@@ -6,6 +6,14 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.34.1 (2026-11-16)
+
+From a Snapshot that listed 10 Mageweave Cloth as "sell to a vendor".
+
+- **Listings under vendor price are not the market.** A vendor pays 2s50c for Mageweave Cloth and its market was about 4s40c, but piles at 2s00c kept being listed (the deals you were buying). A price check that caught one of those piles concluded "the auction house pays no more than a vendor", and that stood for ten minutes: 25s at a vendor for ten cloth the auction house would pay about 41s for. Rows listed at or under a vendor deal's price are now left out before the price is worked out, because anyone can buy them and vendor them at once and they are gone in seconds.
+  - The same goes for the posting price: a post no longer undercuts such a pile.
+  - If everything listed is under vendor price, or the market is not 10% better than the vendor after the cut, a vendor is still the advice.
+
 ## 3.34.0 (2026-11-16)
 
 - **One key for buying and posting** (Setup, **Buy with**: `One key: buys and posts`; it uses the key chosen with **Key**). Each press does the next useful thing:

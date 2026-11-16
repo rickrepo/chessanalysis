@@ -2002,6 +2002,27 @@ do
             ns.Store.fp[4306] = 198
             check(Se2:BestExit(4306, f) == "VENDOR", "a live price check that said the vendor pays as much is believed for 10 minutes")
             Se2.prices[4306] = was; ns.Store.fp[4306], ns.Store.ft[4306] = nil, nil
+            do  -- LISTINGS UNDER VENDOR PRICE ARE NOT THE MARKET (a real Snapshot: Mageweave Cloth shown as "sell to a vendor" with the market at 4s40c)
+                ITEMS[4338] = { "Mageweave Cloth", 250 }
+                ns.Sniper.vendor[4338] = nil
+                local fl = { kind = "VENDOR", units = 10, cost = 181, sell = 250 }
+                AuctionMeshDB.flips[4338] = fl
+                local function R(t) local r = {}; for i, x in ipairs(t) do r[i] = { price = x[1], qty = x[2] } end return r end
+                -- a pile of 120 at 2s02c (under what a vendor pays) on top of a market at 4s59c
+                Se2:OnResults(4338, R({ { 202, 120 }, { 459, 289 }, { 465, 18 }, { 470, 309 }, { 473, 20 } }), true)
+                local pr = Se2.prices[4338]
+                print("     Mageweave, 120 listed at 2s02c over a 4s59c market: " .. tostring(pr and (pr.price or pr.hold)))
+                check(pr and pr.price == 458 and Se2:BestExit(4338, fl) == "AH", "a pile listed under vendor price is not the market: the price is 4s58c and the advice is the auction house, not a vendor")
+                -- the whole market really is under vendor price: then the vendor it is
+                Se2:OnResults(4338, R({ { 202, 500 }, { 205, 800 }, { 210, 900 } }), true)
+                pr = Se2.prices[4338]
+                check(pr and pr.hold and Se2:BestExit(4338, fl) == "VENDOR", "when everything listed is under vendor price, a vendor is the better way out")
+                -- a market above vendor price but not 10% better after the cut: vendor, as before
+                Se2:OnResults(4338, R({ { 270, 500 }, { 272, 800 }, { 275, 900 } }), true)
+                pr = Se2.prices[4338]
+                check(pr and pr.hold == "a vendor pays as much", "a market only a little over vendor price: still the vendor")
+                AuctionMeshDB.flips[4338] = nil; Se2.prices[4338] = nil; ITEMS[4338] = nil; ns.Sniper.vendor[4338] = nil
+            end
         end
         cfg.buyMode, cfg.buyBlocked, cfg.buyKey = nil, nil, nil
         SetOverrideBindingClick, ClearOverrideBindings = nil, nil

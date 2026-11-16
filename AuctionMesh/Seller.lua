@@ -931,9 +931,37 @@ function Seller:OnResults(key, rows, commodity)
         local qty = max(commodity and min(bagCount[key] or 0, f.units or 0) or 1, 1)
         feeEach = math.ceil(self:DepositTotal(key, commodity, qty) / qty)
     end
-    local price, why = Deals.postPrice(rows, f.cost or 0, f.sell or 0, nil, feeEach)
-    ns.Log("PRICE %s: lowest=%s cost=%s -> %s (%s)", tostring(key), tostring(rows[1] and rows[1].price),
-        tostring(f.cost), tostring(price), tostring(why))
+    -- LISTINGS UNDER VENDOR PRICE ARE NOT THE MARKET. Anyone can buy them and
+    -- sell them to a vendor at once, so they are gone within seconds; they are
+    -- exactly the deals this addon buys. Pricing against them is wrong twice:
+    -- a post would undercut a pile that is about to vanish, and something you
+    -- hold would be sent to a vendor because "the auction house pays no more".
+    -- (A real Snapshot: Mageweave Cloth, market about 4s40c, a vendor pays
+    -- 2s50c. Piles at 2s00c kept appearing; a price check that caught one said
+    -- "sell to a vendor", and that stood for ten minutes: 25s at a vendor for
+    -- ten cloth that the auction house would pay about 41s for.)
+    -- So the rows at or under what a vendor deal is (vendor price less its
+    -- margin) are left out before the price is worked out, unless they are
+    -- the whole listing.
+    local priced, skipped = rows, 0
+    do
+        local v = ns.Sniper and ns.Sniper.vendorOf and ns.Sniper.vendorOf(key)
+        local bar = (v and v > 0) and floor(v / (1 + Deals.cfg.vendorMargin)) or nil
+        if bar then
+            local i = 1
+            while rows[i] and rows[i].price <= bar do skipped = skipped + (rows[i].qty or 0); i = i + 1 end
+            if i > 1 and rows[i] then
+                priced = {}
+                for j = i, #rows do priced[#priced + 1] = rows[j] end
+            else
+                skipped = 0
+            end
+        end
+    end
+    local price, why = Deals.postPrice(priced, f.cost or 0, f.sell or 0, nil, feeEach)
+    ns.Log("PRICE %s: lowest=%s cost=%s -> %s (%s)%s", tostring(key), tostring(rows[1] and rows[1].price),
+        tostring(f.cost), tostring(price), tostring(why),
+        skipped > 0 and (" [%d unit(s) listed under vendor price left out: they are bought at once]"):format(skipped) or "")
     if price and f.kind == "VENDOR" and floor(price * (1 - Deals.cfg.cut)) - feeEach < (f.sell or 0) * self.AH_EDGE then
         -- bought under vendor price, and the auction house does not beat the vendor by enough: sell it to a vendor
         price, why = nil, "a vendor pays as much"
