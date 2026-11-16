@@ -6,6 +6,14 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.33.2 (2026-11-16)
+
+From a log and a Snapshot with 5 copper in hand ("not getting any bites").
+
+- **The panel says when you cannot pay.** The radar passes over any listing that costs more than the gold you hold (for a flip: one unit plus its posting fee, 1s at least on this realm). It did so silently: 115 radar reads without one alert and nothing on the panel to say why. The Trades tab now reads `Not enough gold in hand: you hold 5c. 4 cheap listings in the last minute cost more than that ... and were skipped. Next sale gold in 27 min.`
+- **No item check for a flip you cannot pay the fee of.** With about 1s in hand the radar raised alerts on cheap listings, each cost a request while you were armed, and each was refused with "more than you have". They are now counted on that line instead.
+- **An unanswered radar read is sent again after 2.5 to 4 seconds** (6 in 3.33.0, 60 before). The Snapshot showed one in 800 reads, right after a refused purchase.
+
 ## 3.33.1 (2026-11-16)
 
 From the first real logs of 3.33.0.

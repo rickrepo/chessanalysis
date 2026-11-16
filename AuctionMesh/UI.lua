@@ -226,7 +226,14 @@ local function buyStatus(n)
         mode = set and (TEAL .. ("Focus on %d item%s.|r "):format(#flist, #flist == 1 and "" or "s")) or (GREY .. "Focus: still measuring.|r ")
     end
 
-    if cap.paused then
+    local poor = S.PoorCount and S:PoorCount() or 0
+    if poor > 0 then
+        -- cheap listings are there, your gold is not: say so, and when some arrives
+        lines[#lines + 1] = ("%sNot enough gold in hand:|r you hold %s. %d cheap listing%s in the last minute cost%s more than that (a flip needs its posting fee too) and %s skipped.%s"):format(
+            ORANGE, ns.Seller.short(GetMoney()), poor, poor == 1 and "" or "s", poor == 1 and "s" or "", poor == 1 and "was" or "were",
+            cap.nextIn and (" Next sale gold in %s."):format(cap.nextIn >= 90 and (floor(cap.nextIn / 60 + 0.5) .. " min") or (floor(cap.nextIn) .. "s"))
+                or ((cap.onway or 0) + (cap.waiting or 0) > 0 and " Sale gold is waiting at the mailbox." or ""))
+    elseif cap.paused then
         -- your money is out of reach: say so, and when some of it comes back
         lines[#lines + 1] = ("%sBig flips paused:|r %s of your %s is in auctions that have not sold (limit %d%%).%s Small flips and vendor deals are still shown."):format(
             ORANGE, ns.Seller.short(cap.listed), ns.Seller.short(cap.worth), floor(ns.Deals.cfg.maxTied * 100 + 0.5),

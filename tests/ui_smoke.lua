@@ -1424,6 +1424,34 @@ do
         LIST[6001] = nil; S.judged = {}
     end
 
+    -- NO GOLD IN HAND: cheap listings are counted and the panel says so (a real log: 5 copper, no alert in 115 radar reads, nothing on the panel)
+    do
+        reset(); gold = 5; S.poor = {}
+        ITEMS[6002] = { "Bolt of Felt", 0 }
+        ns.Store.fp[6002], ns.Store.ft[6002] = 100, GetServerTime()
+        S.ownSweep, S.sweep = {}, {}
+        local n0 = #sent
+        S:OnSweep(6002, 15, 300); advance(1)
+        local asked = false
+        for i = n0 + 1, #sent do if sent[i] == "search6002" then asked = true end end
+        check(S.triggers[6002] == nil and not asked and S:PoorCount() == 1, "15c under a 1s market with 5c in hand: no alert, no request, and it is counted as skipped for lack of gold")
+        AuctionMeshDB.sales = { waiting = 0, pending = { { amount = 5000, at = GetServerTime() + 27 * 60, key = 2592 } } }
+        UI.tab = "BUY"; UI.notice = nil; UI.wheelSeen = nil; UI:Render()
+        local st = strip(AuctionMeshFrame.status._text)
+        print("     " .. st:match("[^\n]+"))
+        check(st:find("Not enough gold in hand: you hold 5c. 1 cheap listing in the last minute costs more than that", 1, true) and st:find("Next sale gold in 27 min", 1, true),
+            "the Trades tab says why nothing is offered, and when sale gold arrives")
+        check(select(2, st:gsub("\n", "")) <= 2, "still three lines at most")
+        -- a flip also needs its posting fee: 20c in hand does not buy a 15c flip with a 1c fee... but 16c does
+        gold = 15; S.poor = {}
+        S:OnSweep(6002, 15, 301)
+        check(S:PoorCount() == 1, "gold for the unit but not for its posting fee: still skipped (the deal rules would refuse it)")
+        gold = 900; S.poor = {}; S.sweep, S.ownSweep = {}, {}
+        S:OnSweep(6002, 15, 302)
+        check(S.triggers[6002] ~= nil or S.searching ~= nil or S.verified[6002] ~= nil, "with gold in hand the same listing is alerted as before")
+        advance(1); AuctionMeshDB.sales = nil; reset(); S.poor = {}
+    end
+
     -- AFTER A PURCHASE the radar is back at once: no re-check unless cheap units may be left
     do
         reset(); gold = 900; cfg.autoConfirm = nil

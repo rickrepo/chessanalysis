@@ -249,7 +249,12 @@ function Swarm:Step()
                 return
             end
         elseif cur.phase == "query" then
-            if clock - cur.at > self.cfg.unitTimeout then
+            -- An answer takes 0.2 to 0.4 seconds. One that has not come in the
+            -- time an item check is given (2 to 4 seconds, from the measured
+            -- pace) is not coming. (A real log: one radar read in 800 went
+            -- unanswered, right after a refused purchase, and 6 seconds passed.)
+            local limit = math.min(self.cfg.unitTimeout, math.max(2.5, ns.Tuner and ns.Tuner.Timeout and ns.Tuner:Timeout() or 3))
+            if clock - cur.at > limit then
                 if ns.Watch then ns.Watch:Add("NO-ANSWER", clock - cur.at, ("a radar read was not answered in %.1fs; given up and sent again"):format(clock - cur.at)) end
                 self.current = nil -- give up; it is read again at once
                 return

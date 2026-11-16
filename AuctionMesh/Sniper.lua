@@ -805,24 +805,49 @@ function Sniper:OnSweep(key, price, qty)
     local ft = Store.ft[key]
     local market = (ft and GetServerTime() - ft <= 1800) and Store.fp[key] or nil
     if ns.Scout then ns.Scout:Read(key, price, market) end -- counted for every item, affordable or not
-    if price > self:Budget() then return end
     if self:Muted(key) or self:Ignored(key) then return end -- missed five times running, or on your ignore list
-    local why
+    -- Is the price worth a look at all? Decided before your gold is, so that a
+    -- cheap listing you cannot pay for is COUNTED (the panel says so) instead
+    -- of silently passed over. (A real log: 5 copper in hand, 115 radar reads
+    -- with not one alert, and nothing on the panel to say why.)
+    local why, flip
     local v = self.vendorOf(key)
     if v and price <= floor(v / (1 + Deals.cfg.vendorMargin)) then
         why = "at or under vendor price"
-        if not shared and self:InstantVendor(key, price, qty, v, prevOwn) then return end
     elseif VENDOR_SOLD[key] or not Deals.cfg.flips then return
     elseif not self:InFocus(key) then return -- laser focus: flips only on the focus items
     elseif market and price <= market * self.TriggerRatio() then
-        why = "under market"
-        if not shared and self:InstantFlip(key, price, qty, prevOwn) then return end
+        why, flip = "under market", true
     elseif prev and price <= prev.p * 0.85 then
-        why = "price just dropped"
-        if not shared and self:InstantFlip(key, price, qty, prevOwn) then return end
+        why, flip = "price just dropped", true
     end
     if not why then return end
+    do  -- YOUR GOLD. One unit must be payable; for a flip, with its posting fee on top (the deal rules keep it back).
+        local need = price
+        if flip then
+            local _, feeMin = self.depositInfo(key, true)
+            need = price + (feeMin or 0)
+        end
+        if need > self:Budget() then
+            self.poor = self.poor or {}
+            self.poor[key] = now
+            return
+        end
+    end
+    if why == "at or under vendor price" then
+        if not shared and self:InstantVendor(key, price, qty, v, prevOwn) then return end
+    elseif not shared and self:InstantFlip(key, price, qty, prevOwn) then return end
     self:AddTrigger(key, why, price, market, nil, qty)
+end
+
+-- How many cheap listings the radar passed over in the last minute because
+-- one unit (with the posting fee, for a flip) costs more than the gold you hold.
+function Sniper:PoorCount()
+    local n, now = 0, GetTime()
+    for key, at in pairs(self.poor or {}) do
+        if now - at <= 60 then n = n + 1 else self.poor[key] = nil end
+    end
+    return n
 end
 
 -- May the radar ask for a check of this item now? Second value: true when it
