@@ -83,6 +83,14 @@ function Sniper.FocusEvery()
     return math.max(20, math.min(300, v or FOCUS_MIN))
 end
 local TRIGGER_MIN = 20            -- never fully re-read the same item sooner than this on a trigger
+local JUDGED_TTL = 300            -- a listing judged "no deal" is not checked again this long while the radar shows nothing new on it
+local FOCUS_KEEP = 300            -- a listing the radar saw no change in is still re-read at this age
+local ARMED_KEEP = 780            -- while armed: only a listing about to become too old for a flip straight from the radar
+local LADDER_MAX = 900            -- a listing older than this is never used for a flip straight from the radar
+local LADDER_ROWS = 20            -- rows of a listing that are remembered for it
+-- UPKEEP BUDGET: of every N+1 requests, N are radar reads (see Sniper:UpkeepTurn)
+Sniper.upkeep = { every = 8, bags = 3 }
+local ALERT_SRC = { vendor = true, market = true, drop = true }
 local SEARCH_TIMEOUT = 3 -- default; the Tuner replaces it with a figure from the measured pace
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
 
@@ -183,7 +191,9 @@ function Sniper:Search(key, src, waited, from)
         end
         return false
     end
-    ns.Gate:Use("search " .. tostring(key), "search")
+    -- booked by the throttle watch: an alert's check, a re-check of a deal, or upkeep
+    local purpose = ALERT_SRC[src or ""] and "alert" or ((src == nil or src == "recheck") and "buy") or (src == "price" and ns.Seller and ns.Seller.pressedAt and GetTime() - ns.Seller.pressedAt < 3 and "sell") or "upkeep"
+    ns.Gate:Use(("search %s (%s)"):format(tostring(key), src or "re-check"), "search", purpose)
     C_AuctionHouse.SendSearchQuery(C_AuctionHouse.MakeItemKey(key), SORTS, true)
     -- src: what asked for this check (scored by the Tuner when the answer is in)
     self.searching = { key = key, at = GetTime(), sent = ns.Gate.sentCount, src = src, waited = waited, from = from }
@@ -251,9 +261,14 @@ function Sniper:Evaluate(key, rows, commodity)
     if commodity and #rows > 0 then
         -- the listing as last read in full (first rows): what a flip straight from the radar is judged against
         local keep = {}
-        for i = 1, min(8, #rows) do keep[i] = { price = rows[i].price, qty = rows[i].qty } end
+        for i = 1, min(LADDER_ROWS, #rows) do keep[i] = { price = rows[i].price, qty = rows[i].qty } end
         self.lastRows = self.lastRows or {}
-        self.lastRows[key] = { rows = keep, at = GetTime() }
+        -- p0, q0: what the radar showed for the item when this listing was
+        -- read. gone: units the radar has seen leave the item since.
+        -- broken: the radar did not watch the item without a gap since.
+        local own, now = self.ownSweep and self.ownSweep[key], GetTime()
+        local seen = own and now - own.at <= 10
+        self.lastRows[key] = { rows = keep, at = now, gone = 0, p0 = seen and own.p or nil, q0 = seen and own.q or nil, broken = not seen or nil }
     end
     if not commodity then
         -- Non-stackable items are priced for selling only; they are not offered as deals.
@@ -263,7 +278,8 @@ function Sniper:Evaluate(key, rows, commodity)
     end
     self:Turnover(key, rows)
     local deal, wall, reason = Deals.evaluate(rows, self:DealOptions(key, commodity), self:CfgFor(key))
-    if deal and self:Ignored(key) then deal, reason = nil, "on your ignore list (settings code)" end
+    local hidden -- a deal that exists but is not shown (ignored, muted): not a verdict on the listing
+    if deal and self:Ignored(key) then deal, reason, hidden = nil, "on your ignore list (settings code)", true end
     do  -- deals that exist but are hidden by your own minimum: counted, so the panel can say so
         local p = not deal and reason and tonumber(tostring(reason):match("profit %$(%d+) is under your"))
         if p and p >= 50 then
@@ -274,7 +290,7 @@ function Sniper:Evaluate(key, rows, commodity)
     end
     if wall then Book:ObserveFair(key, wall) end
     if deal and self:Muted(key) then
-        deal, reason = nil, "its deals were missed five times in a row: not shown for 3 minutes"
+        deal, reason, hidden = nil, "its deals were missed five times in a row: not shown for 3 minutes", true
     end
     if self.buying and self.buying.key == key then
         -- never replace a deal while its purchase is in flight
@@ -334,7 +350,25 @@ function Sniper:Evaluate(key, rows, commodity)
             ns.Tuner:Checked(sr.src, deal ~= nil, deal and deal.profit or 0, sr.waited)
         end
     end
-    self.last = { key = key, deal = deal ~= nil, reason = reason, at = GetTime() }
+    do  -- what was just judged, as the radar sees it: the same standing listing is not checked over and over
+        self.judged = self.judged or {}
+        if deal or hidden or not commodity then
+            self.judged[key] = nil
+        else
+            local own = self.ownSweep and self.ownSweep[key]
+            local r = tostring(reason or "")
+            self.judged[key] = { p = (own and own.p) or (rows[1] and rows[1].price) or 0, q = (own and own.q) or math.huge, at = GetTime(), gold = GetMoney(),
+                                 sig = self:RuleSig(key),
+                                 pile = (r:find("too many to clear", 1, true) or r:find("more than you can spend", 1, true)) and true or nil }
+        end
+    end
+    do
+        local sr = self.searching
+        local src = sr and sr.key == key and sr.src or nil
+        self.last = { key = key, deal = deal ~= nil, reason = reason, at = GetTime(), src = src }
+        -- the last answer to something the radar asked about (shown on the Trades tab)
+        if deal or ALERT_SRC[src or ""] then self.lastAlert = self.last end
+    end
     self.reasons = self.reasons or {}
     self.reasons[key] = deal and "DEAL FOUND" or reason -- why this item was or was not a deal, by item
     if self.searching and self.searching.key == key then self.searching = nil end
@@ -379,9 +413,11 @@ function Sniper:InstantVendor(key, price, qty, v, prev)
     local profit = n * (v - price)
     local need = self:CfgFor(key).minProfit
     local gold = GetMoney()
-    if gold < 500 then need = min(need, max(10, floor(gold * 0.10))) end
+    if gold < 500 then need = min(need, math.max(10, floor(gold * 0.10))) end
     if profit < need then return false end
     local deal = { kind = "VENDOR", units = n, cost = n * price, deposit = 0, profit = profit, sell = v, buys = {}, counts = {},
+                   -- more: cheap units may be left after this purchase (the count was not clear, or your gold ran out first)
+                   more = (unsure or n < qty - prev.q) and true or nil,
                    commodity = true, key = key, instant = true, from = "me", next = prev.p, rowsText = unsure and ("radar: price fell to %d, count not known, asking for %d"):format(price, n) or ("radar: %d new at %d"):format(n, price),
                    -- trusted for 8 seconds only; then the item gets its full look like any other
                    at = now - VERIFIED_TTL + 8 }
@@ -401,13 +437,28 @@ end
 
 -- A FLIP STRAIGHT FROM THE RADAR. The radar shows an item's cheapest price
 -- and total quantity. When the cheapest price falls and N units appeared
--- since the radar's last read (under 2.5 seconds ago), those N units are the
--- new cheap listing. If the item's full listing was read in the last two
--- minutes, the deal rules are run on "N units at the new price, on top of
--- that listing", and a deal is shown at once, without the item check that
--- used to come first (0.65 seconds, plus half a second before the click's own
--- request may be sent). Your click asks the server what N units cost; it
--- buys only if that is N x the price seen, exactly as for every other deal.
+-- since the radar's last read (under 5 seconds ago), those N units are the
+-- new cheap listing. The deal rules are then run on "N units at the new
+-- price, on top of the item's listing as last read in full", and a deal is
+-- shown at once, without the item check that used to come first (0.65
+-- seconds, plus half a second before the click's own request may be sent).
+-- Your click asks the server what N units cost; it buys only if that is
+-- N x the price seen, exactly as for every other deal.
+--
+-- WHICH LISTING IS GOOD ENOUGH. It used to be "read in the last 2 minutes".
+-- While you are armed no listing is re-read, so two minutes into a session
+-- every flip was back to waiting for an item check. Now:
+--   * The bottom of the market is never taken from the old listing. It is the
+--     radar's own cheapest price just before the drop (under 5 seconds old):
+--     rows the listing showed below it have sold, and the planned resale
+--     price can never be above it. (The old listing alone could plan a resale
+--     at 1s65c with 200 units sitting at 1s20c.)
+--   * A listing up to 2 minutes old is used as before.
+--   * An older one, up to 15 minutes, is used only if the radar has watched
+--     the item without a gap since it was read, and the market it showed is
+--     still deep enough after taking off EVERY unit the radar has seen leave
+--     the item since then (sold or cancelled, wherever it was).
+-- Anything else goes to an item check, as before.
 function Sniper:InstantFlip(key, price, qty, prev)
     if self.verified[key] or self.buying or not prev then return false end
     local now = GetTime()
@@ -415,19 +466,40 @@ function Sniper:InstantFlip(key, price, qty, prev)
     local n = qty - prev.q
     if n <= 0 then return false end
     local last = self.lastRows and self.lastRows[key]
-    if not last or now - last.at > 120 then return false end
+    if not last then return false end
+    local age = now - last.at
+    local old = age > 120
+    if old and (age > LADDER_MAX or last.broken) then return false end
     local cl = self.cool and self.cool[key]
     if cl and now < cl.till and price <= cl.price then return false end
+    -- the ladder: the new units, then the radar's bottom, then the listing above it
     local rows = { { price = price, qty = n } }
+    local bottom
     for _, r in ipairs(last.rows) do
-        if r.price > price then rows[#rows + 1] = { price = r.price, qty = r.qty } end
+        if r.price == prev.p then bottom = r.qty end
     end
-    if #rows < 2 then return false end
-    local deal, wall = Deals.evaluate(rows, self:DealOptions(key, true), self:CfgFor(key))
-    -- only the new units: anything more needs the real listing
+    rows[2] = { price = prev.p, qty = bottom or 1 }
+    for _, r in ipairs(last.rows) do
+        if r.price > prev.p then rows[#rows + 1] = { price = r.price, qty = r.qty } end
+    end
+    local cfg = self:CfgFor(key)
+    -- Only the new units are bought. Whatever sits above them, the radar's
+    -- bottom included, is competition: the resale is planned under it.
+    local opts = self:DealOptions(key, true)
+    opts.maxRows = 1
+    local deal, wall = Deals.evaluate(rows, opts, cfg)
     if not deal or deal.kind ~= "FLIP" or deal.units > n then return false end
+    if old then
+        -- an older listing: the market must still be deep enough without the units that left since
+        local left = (deal.depth or 0) - (last.gone or 0)
+        if left < cfg.depthUnits or deal.units > floor(left * cfg.share) then return false end
+    end
     deal.commodity, deal.key, deal.from = true, key, "me"
     deal.instant, deal.next, deal.hi = true, rows[2].price, wall
+    do  -- more: the row above the new units is itself cheap enough to buy at the market's price, so the item is checked again after this purchase
+        local top = wall and floor(floor(Deals.round(wall - cfg.undercut, cfg) * (1 - cfg.cut)) / (1 + cfg.margin)) or 0
+        deal.more = (deal.partial or rows[2].price <= top) and true or nil
+    end
     deal.rowsText = ("radar: %d new at %d"):format(n, price)
     deal.rows = nil
     deal.at = now - VERIFIED_TTL + 8 -- trusted for 8 seconds only; then the item gets its full look
@@ -435,14 +507,26 @@ function Sniper:InstantFlip(key, price, qty, prev)
     self.dealSeen = self.dealSeen or {}
     self.dealSeen[key] = now
     self.stats.deals = self.stats.deals + 1
+    self.stats.instantFlips = (self.stats.instantFlips or 0) + 1
+    if old then self.stats.instantOld = (self.stats.instantOld or 0) + 1 end
     if ns.Scout then ns.Scout:Deal(key, deal) end
     if ns.Auto then ns.Auto:Shown() end
     if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
-    ns.Log("DEAL FLIP %s straight from the radar: %d new units at %d, market %s, sell %d each, profit %d (listing read %.0fs ago; the quote decides)",
-        tostring(key), deal.units, price, tostring(wall), deal.sell, deal.profit, now - last.at)
+    ns.Log("DEAL FLIP %s straight from the radar: %d new units at %d, bottom was %d, market %s, sell %d each, profit %d (listing read %.0fs ago, %d units left the item since; the quote decides)",
+        tostring(key), deal.units, price, prev.p, tostring(wall), deal.sell, deal.profit, age, last.gone or 0)
     if Sniper.hold > 0 then ns.Gate.holdUntil = now + Sniper:HoldFor() end
     if ns.UI and ns.UI.Now then ns.UI:Now() end
     return true
+end
+
+-- Is this item's listing good enough for a flip straight from the radar right
+-- now? (For the panel: how many of the watched items are "ready".)
+function Sniper:ListingReady(key)
+    local last = self.lastRows and self.lastRows[key]
+    if not last then return false end
+    local age = GetTime() - last.at
+    if age <= 120 then return true end
+    return age <= LADDER_MAX and not last.broken
 end
 
 -- How long the radar stays quiet when a deal appears: 6 seconds, unless the
@@ -611,7 +695,9 @@ function Sniper:StakeNotch()
     self.react = { key = st.key, secs = 0, via = "stake-out" }
     st.asked = st.asked + 1
     self:StakeRecord(st.key, 1, 0)
-    ns.Gate:Use(("stake-out price request %dx %s (buys at %d or less each)"):format(q, tostring(st.key), max))
+    ns.Gate:Use(("stake-out price request %dx %s (buys at %d or less each)"):format(q, tostring(st.key), max), nil, "buy")
+    ns.Gate.ignoreErrorUntil = math.max(ns.Gate.ignoreErrorUntil or 0, now + 2) -- an error now answers this price request, not the pace
+    self.inputCallAt = now
     C_AuctionHouse.StartCommoditiesPurchase(st.key, q)
     self:ArmPurchaseTimeout(4)
     return true
@@ -625,6 +711,35 @@ function Sniper:SnipeMode()
     local U = ns.UI
     return (U and U.wheelSeen and GetTime() - U.wheelSeen < 3) and true or false
 end
+
+-- THE UPKEEP BUDGET. Sniping is the radar, the checks its alerts ask for, and
+-- your purchases: those never wait for anything else. Everything else is
+-- UPKEEP (a listing kept ready, a side class, the price of something you
+-- hold, the list of your own auctions) and gets one request only after the
+-- radar has had N reads in a row:
+--   * 8 on every tab but Bags: at least 8 of every 9 requests are radar reads;
+--   * 3 on the Bags tab, where you are posting and want current prices.
+-- It used to be one for one: every item check took the turn of a radar read,
+-- so twelve focus items a minute meant sixteen seconds of every minute with
+-- the radar at half speed.
+-- WHILE YOU ARE ARMED the only upkeep is a listing that a flip straight from
+-- the radar needs and does not have (see ListingDue): each one read makes a
+-- flip on that item buyable one request, 0.65 seconds, sooner. Nothing else:
+-- no prices of what you hold, no side class, no list of your auctions, no
+-- re-read of a listing that is still good.
+-- With no radar running there is nothing to protect and upkeep is free.
+function Sniper:UpkeepEvery()
+    local c = self.upkeep
+    local U = ns.UI
+    if U and U.tab == "SELL" and not self:SnipeMode() then return c.bags end
+    return c.every
+end
+function Sniper:UpkeepTurn()
+    local Sw = ns.Swarm
+    if not (Sw and Sw.active) or Sw.idle then return true end
+    return (ns.radarSince or 0) >= self:UpkeepEvery()
+end
+function Sniper:UpkeepUsed() ns.radarSince = 0; ns.upkeepLast = "item" end
 
 -- How far under the market the cheapest listing must be before a full check
 -- is worth a request: the same bar a flip has to clear (profit margin after
@@ -673,6 +788,19 @@ function Sniper:OnSweep(key, price, qty)
             local gone = own.q - qty
             Store:AddChurn(key, gone > 0 and gone or 0, now - own.at)
         end
+        -- THE LISTING AS LAST READ, FOLLOWED BY THE RADAR. Units that leave
+        -- the item are taken off what that listing may still be trusted for;
+        -- a gap in the watching ends the trust (see InstantFlip).
+        local lr = self.lastRows and self.lastRows[key]
+        if lr then
+            if own and now - own.at <= 10 then
+                if own.q > qty then lr.gone = (lr.gone or 0) + (own.q - qty) end
+            elseif now - lr.at > 10 then
+                lr.broken = true
+            end
+            if lr.p0 == nil then lr.p0, lr.q0 = price, qty end
+            if price ~= lr.p0 or qty ~= lr.q0 then lr.changed = true end
+        end
     end
     local ft = Store.ft[key]
     local market = (ft and GetServerTime() - ft <= 1800) and Store.fp[key] or nil
@@ -694,12 +822,47 @@ function Sniper:OnSweep(key, price, qty)
         if not shared and self:InstantFlip(key, price, qty, prevOwn) then return end
     end
     if not why then return end
-    self:AddTrigger(key, why, price, market)
+    self:AddTrigger(key, why, price, market, nil, qty)
+end
+
+-- May the radar ask for a check of this item now? Second value: true when it
+-- should go ahead of the usual 20 seconds between two checks of one item.
+--   * Cheaper than what was last judged: at once. That is a new listing.
+--   * Checked under 20 seconds ago: no.
+--   * Judged "no deal" and the radar shows the same price and no more units
+--     than it did then: not again for 5 minutes. (A standing listing that is
+--     not a deal, say a vendor profit under your minimum, was checked every 20
+--     seconds without end, while you were armed too, and the radar waited
+--     for each of those checks.)
+--   * Exceptions: you have more gold than when it was judged, or it was
+--     refused for being too big a pile and the pile has shrunk.
+function Sniper:AlertDue(key, price, qty)
+    local since = self:Since(key)
+    local j = self.judged and self.judged[key]
+    if j and price and price < j.p then return since >= 1.5, true end
+    if since < TRIGGER_MIN then return false end
+    if j and GetTime() - j.at < JUDGED_TTL and qty and qty <= j.q then
+        if GetMoney() > (j.gold or 0) then return true end
+        if j.pile and qty < j.q then return true end
+        if j.sig ~= self:RuleSig(key) then return true end -- your settings have changed since: judged by the old ones
+        return false
+    end
+    return true
+end
+
+-- The settings a verdict depends on, as one string (a verdict made under
+-- other settings is not held against a listing).
+function Sniper:RuleSig(key)
+    local c = self:CfgFor(key)
+    return table.concat({ tostring(c.minProfit), tostring(c.margin), tostring(c.flips), tostring(c.maxSpend), tostring(c.maxTied),
+        tostring(c.smallFlip), tostring(c.vendorMargin), tostring(c.requireTurnover), tostring(c.maxSellMinutes) }, "|")
 end
 
 -- Queues one full look at an item that the radar saw something in.
-function Sniper:AddTrigger(key, why, price, market, from)
-    if not self.active or key <= 0 or self.isItem[key] or self.verified[key] or self:Since(key) < TRIGGER_MIN then return end
+function Sniper:AddTrigger(key, why, price, market, from, qty)
+    if not self.active or key <= 0 or self.isItem[key] or self.verified[key] then return end
+    local due, fast = self:AlertDue(key, price, qty)
+    if not due then return end
     self.triggers = self.triggers or {}
     if not self.triggers[key] then
         -- Score = how much there is to gain. Each confirmation costs one of our
@@ -715,28 +878,26 @@ function Sniper:AddTrigger(key, why, price, market, from)
         if ns.Tuner then score = (score + 0.05) * (0.5 + ns.Tuner:HitRate(src)) end
         if src == "vendor" then score = score + 10 end
         self.trigInfo = self.trigInfo or {}
-        self.trigInfo[key] = { src = src, at = GetTime(), from = from or "me" }
+        self.trigInfo[key] = { src = src, at = GetTime(), from = from or "me", fast = fast }
         self.triggers[key] = score
         self.triggers[#self.triggers + 1] = key
         ns.Log("TRIGGER %s: %s (lowest %s, market %s, score %.2f)", tostring(key), tostring(why), tostring(price), tostring(market), score)
     end
 end
 
--- What will be checked next, without taking it (for the timer in the window).
+-- What the panel says about item checks: the alert waiting, if any.
 function Sniper:PeekNext()
     if self.priority then return self.priority end
     if self.triggers and self.triggers[1] then return self.triggers[1] end
-    for _, c in ipairs(self.candidates or {}) do
-        if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then return c.key end
-    end
-    local q = self.background
-    if not q or #q == 0 then return nil end
-    local i = q.i
-    for _ = 1, #q do
-        if i > #q then i = 1 end
-        if not self.isItem[q[i]] and self:Since(q[i]) > (self.watchMin or WATCH_MIN) then return q[i], i end
-        i = i + 1
-    end
+end
+
+-- How many of the watched items have a listing that allows a flip straight
+-- from the radar right now: ready, watched.
+function Sniper:ReadyCount()
+    local q, n = self.background, 0
+    if not q then return 0, 0 end
+    for i = 1, #q do if self:ListingReady(q[i]) then n = n + 1 end end
+    return n, #q
 end
 
 -- Trading volume. Between two readings of the same listing, units that
@@ -831,7 +992,7 @@ function Sniper:OnCommodityResults(itemID)
         -- and can only add dearer units, which make the market deeper, never
         -- the deal worse. Otherwise ask for the rest before judging.
         table.sort(rows, function(a, b) return a.price < b.price end)
-        local deal = Deals.evaluate(rows, self:DealOptions(itemID, true))
+        local deal = Deals.evaluate(rows, self:DealOptions(itemID, true), self:CfgFor(itemID))
         if not deal then
             s.needMore, s.at = "commodity", GetTime()
             return
@@ -871,15 +1032,41 @@ function Sniper:Since(key)
     return at and (GetTime() - at) or math.huge
 end
 
--- What to check next: expired deals, screened candidates, then affordable
--- profession goods whose market price we haven't looked at recently.
-function Sniper:NextCheck()
-    if self.priority then local k = self.priority; self.priority = nil; return k end
-    -- Items you are waiting to post come before everything else.
+-- Is this watched item's listing due for a re-read (upkeep)?
+--   * Never sooner than the item's own interval (60s for a focus item, the
+--     "every=" setting; 5 minutes for the wider watch list).
+--   * From then on: when the radar shows the item has changed since the
+--     listing was read (or lost sight of it), or at 5 minutes whatever the
+--     radar shows. A listing the radar sees no change in is not re-read just
+--     because a minute has passed.
+--   * While you are armed: only a listing that a flip straight from the radar
+--     cannot use (none read yet this visit, or the radar lost sight of the
+--     item), or one about to become too old for it (13 of its 15 minutes).
+function Sniper:ListingDue(key, snipe)
+    local since = self:Since(key)
+    if snipe then
+        if since >= ARMED_KEEP then return true end
+        return since >= 60 and not self:ListingReady(key)
+    end
+    if since < (self.watchMin or WATCH_MIN) then return false end
+    if since >= FOCUS_KEEP then return true end
+    local lr = self.lastRows and self.lastRows[key]
+    return (not lr or lr.changed or lr.broken) and true or false
+end
+
+-- What to check next. Returns key, source, seconds the alert waited, who saw
+-- it, and true when the check is upkeep (it then uses up the upkeep turn).
+--   1. a deal on screen that needs its re-check, and the item you pressed Post on
+--   2. the radar's alerts, best first
+--   3. only when `upkeep` (the upkeep turn is free): prices of what you hold,
+--      the price table's candidates when no radar runs, watched listings
+function Sniper:NextCheck(upkeep)
+    if self.priority then local k = self.priority; self.priority = nil; return k, "recheck" end
     local Se = ns.Seller
-    local snipe = self:SnipeMode()
-    local want = Se and Se.NextToPrice and (not snipe or Se.priority) and Se:NextToPrice()
-    if want then Se.pending = { key = want, at = GetTime() }; return want end
+    if Se and Se.priority and Se.NextToPrice then
+        local want = Se:NextToPrice(true)
+        if want then Se.pending = { key = want, at = GetTime() }; return want, "price" end
+    end
     -- Radar hits: the sweep saw a price worth a full look.
     local tr = self.triggers
     while tr and #tr > 0 do
@@ -889,23 +1076,36 @@ function Sniper:NextCheck()
         tr[k] = nil
         local info = self.trigInfo and self.trigInfo[k]
         if self.trigInfo then self.trigInfo[k] = nil end
-        if not self.verified[k] and self:Since(k) >= TRIGGER_MIN then
+        if not self.verified[k] and self:Since(k) >= ((info and info.fast) and 1.5 or TRIGGER_MIN) then
             return k, info and info.src or "drop", info and (GetTime() - info.at) or 0, info and info.from or "me"
         end
     end
-    if snipe then return nil end -- snipe mode: nothing but the radar and its alerts
-    for _, c in ipairs(self.candidates or {}) do
-        if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then return c.key, "list" end
+    if not upkeep then return nil end
+    local snipe = self:SnipeMode()
+    if not snipe then
+        -- what you hold, priced for posting (every 45s on the Bags tab, every 10 minutes elsewhere)
+        local want = Se and Se.NextToPrice and Se:NextToPrice()
+        if want then Se.pending = { key = want, at = GetTime() }; return want, "price", nil, nil, true end
+        -- The price table's candidates: prices the radar has read that look
+        -- low against what is known of the item. One that was judged "no
+        -- deal" is left alone while its price and quantity stay as they were
+        -- (it was looked at again every 30 seconds).
+        for _, c in ipairs(self.candidates or {}) do
+            if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN
+                and self:AlertDue(c.key, Store.p[c.key], Store.q[c.key]) then
+                return c.key, "list", nil, nil, true
+            end
+        end
     end
-    -- Routine: each watched item gets a full look every few minutes, which keeps
-    -- its market price and volume current. Everything faster comes from the radar.
+    -- Watched listings: what a flip straight from the radar is judged against,
+    -- and what keeps market price and selling speed current.
     local q = self.background
     if not q or #q == 0 then return nil end
     for _ = 1, #q do
         if q.i > #q then q.i = 1; q.rounds = (q.rounds or 0) + 1 end
         local k = q[q.i]
         q.i = q.i + 1
-        if not self.isItem[k] and self:Since(k) > (self.watchMin or WATCH_MIN) then return k, "routine" end
+        if not self.isItem[k] and self:ListingDue(k, snipe) then return k, "routine", nil, nil, true end
     end
     return nil
 end
@@ -975,36 +1175,24 @@ function Sniper:RebuildBackground()
     self.background = list
 end
 
-function Sniper:Pending()
-    local n, now = 0, GetTime()
-    for _, c in ipairs(self.candidates or {}) do
-        if not self.verified[c.key] and not self.isItem[c.key] and self:Since(c.key) > CHECK_AGAIN then n = n + 1 end
-    end
-    return n
-end
-
-function Sniper:HasWork()
-    if self.priority ~= nil or (self.triggers and #self.triggers > 0) then return true end
-    if self:SnipeMode() then return false end -- routine work does not make the radar wait
-    if self:Pending() > 0 then return true end
-    local q = self.background
-    if q then
-        for i = 1, #q do
-            if not self.isItem[q[i]] and self:Since(q[i]) > (self.watchMin or WATCH_MIN) then return true end
-        end
-    end
-    return false
-end
-
 function Sniper:Busy() return self.searching ~= nil or self.buying ~= nil end
 
-function Sniper:YieldTo() -- called by the scanner before each of its queries
+-- Called by the radar before each of its reads. It waits only for a request
+-- of the sniper's that is in flight, for your purchase or post, and for an
+-- alert. Upkeep never makes it wait: that is sent in its own turn (see
+-- UpkeepTurn), and the radar has the next one.
+function Sniper:YieldTo()
     if self:Busy() then return false end
     if self:Staking() then return false end -- a stake-out is running: every request is a price request
     if ns.Seller and ns.Seller:Busy() then return false end
     if self.priority then return false end
     if self.triggers and #self.triggers > 0 then return false end -- an alert is waiting: the radar waits
-    if self.active and ns.lastQuery == "swarm" and self:HasWork() then return false end -- take turns
+    -- the upkeep turn is free: the one upkeep request that is due, if any, goes before this read
+    if self.active and self:UpkeepTurn() then
+        local before = ns.Gate.usedAt
+        self:Tick()
+        if ns.Gate.usedAt ~= before then return false end
+    end
     return true
 end
 
@@ -1038,14 +1226,23 @@ function Sniper:Tick()
     -- Re-pick the watch list every 5 minutes (or right away while it is still empty).
     local bg = self.background
     if now - (self.lastBg or 0) > ((bg and #bg > 0) and 300 or 5) then self:RebuildBackground(); self.lastBg = now end
+    local urgent = self.priority ~= nil or (self.triggers and #self.triggers > 0)
     local s = self.searching
-    if s and s.needMore and ns.Gate:Ready() then
-        local kind = s.needMore
-        s.needMore, s.more, s.at = nil, (s.more or 0) + 1, now
-        ns.Gate:Use(("more results for %s (page %d)"):format(tostring(s.key), s.more + 1), "more")
-        if kind == "commodity" then C_AuctionHouse.RequestMoreCommoditySearchResults(s.key)
-        else C_AuctionHouse.RequestMoreItemSearchResults(s.itemKey) end
-        return
+    if s and s.needMore then
+        -- A check that is upkeep does not go on to further pages while an
+        -- alert waits or while you are armed: each page is another 0.65s with
+        -- the radar and the alert standing still.
+        if not ALERT_SRC[s.src or ""] and s.src ~= "recheck" and s.src ~= "price" and (urgent or self:SnipeMode()) then
+            ns.Log("SEARCH %s: the rest of its listing is not fetched (%s)", tostring(s.key), urgent and "an alert is waiting" or "you are armed")
+            self.searching, s = nil, nil
+        elseif ns.Gate:Ready() and not self.buying then
+            local kind = s.needMore
+            s.needMore, s.more, s.at = nil, (s.more or 0) + 1, now
+            ns.Gate:Use(("more results for %s (page %d)"):format(tostring(s.key), s.more + 1), "more", ALERT_SRC[s.src or ""] and "alert" or "upkeep")
+            if kind == "commodity" then C_AuctionHouse.RequestMoreCommoditySearchResults(s.key)
+            else C_AuctionHouse.RequestMoreItemSearchResults(s.itemKey) end
+            return
+        end
     end
     if ns.Scout then
         -- time the engine is actually working (auction house and panel open), for the daily report
@@ -1064,25 +1261,37 @@ function Sniper:Tick()
         if not last or now - last.at > STAKE_FRESH then self:Search(st.key, "list") end
         return
     end
+    local Sw = ns.Swarm
+    -- a radar answer that has not been read yet: nothing of ours goes out before it is
+    if Sw and Sw.active and Sw.current and Sw.current.phase == "query" then return end
     -- AN ALERT NEVER WAITS. A real log showed alerts sitting 3 to 5 seconds
     -- behind a radar read, a housekeeping query and a re-check, on a realm
     -- where deals last 2. With an alert pending, nothing else gets a turn.
-    local urgent = self.priority ~= nil or (self.triggers and #self.triggers > 0)
-    if self.needOwned and C_AuctionHouse.QueryOwnedAuctions and not urgent and next(self.verified) == nil and not self:SnipeMode() then
+    -- EVERYTHING ELSE IS UPKEEP and is sent only in the upkeep turn, after
+    -- the radar has had its reads (see UpkeepTurn).
+    local Se = ns.Seller
+    if Se and Se.priority ~= nil then urgent = true end -- you pressed Post: its price is asked at once
+    local upkeep = not urgent and self:UpkeepTurn()
+    -- side classes and item upkeep take the upkeep turn in turns: a side class
+    -- that is due is not kept waiting by item after item
+    if upkeep and ns.upkeepLast == "item" and Sw and Sw.active and Sw.SideDue and Sw:SideDue() and not self:SnipeMode() then upkeep = false end
+    if not urgent and not upkeep then return end
+    if upkeep and self.needOwned and C_AuctionHouse.QueryOwnedAuctions and next(self.verified) == nil and not self:SnipeMode() then
         self.needOwned = false
-        ns.Gate:Use("list my own auctions")
+        ns.Gate:Use("list my own auctions", nil, "upkeep")
         C_AuctionHouse.QueryOwnedAuctions({})
+        self:UpkeepUsed()
         return
     end
-    local S = ns.Swarm
-    if S and S.active and S.current and S.current.phase == "query" then return end
-    if not urgent and S and S.active and not S.idle and ns.lastQuery == "sniper" then return end
     -- an item whose details aren't loaded is skipped at no cost; try the next one
     if ns.Tuner then ns.Tuner:Balance(self.triggers and #self.triggers or 0) end
     for _ = 1, 3 do
-        local key, src, waited, from = self:NextCheck()
+        local key, src, waited, from, isUpkeep = self:NextCheck(upkeep)
         if not key then return end
-        if self:Search(key, src, waited, from) ~= false then return end
+        if self:Search(key, src, waited, from) ~= false then
+            if isUpkeep then self:UpkeepUsed() end
+            return
+        end
     end
 end
 
@@ -1268,20 +1477,26 @@ function Sniper:Buy(key)
     end
     if deal.commodity then
         self.buying = { key = key, units = deal.units, max = deal.cost, phase = "quote", deal = deal, at = GetTime() }
-        ns.Gate:Use(("buy start %dx %s, verified total %d"):format(deal.units, tostring(key), deal.cost))
+        ns.Gate:Use(("buy start %dx %s, verified total %d"):format(deal.units, tostring(key), deal.cost), nil, "buy")
+        -- an error in the next seconds answers this price request: it is not the server pushing back on the pace
+        ns.Gate.ignoreErrorUntil = math.max(ns.Gate.ignoreErrorUntil or 0, GetTime() + 2)
+        self.inputCallAt = GetTime()
         C_AuctionHouse.StartCommoditiesPurchase(key, deal.units)
     else
         local row, n = deal.buys[1], deal.counts[1]
         if not row or not row.id then self.verified[key] = nil; return dirty() end
         if row.buyout > GetMoney() then say("Not enough gold for that listing."); return end
         table.remove(deal.buys, 1); table.remove(deal.counts, 1)
-        ns.Gate:Use(("buyout auction %s of %s for %d"):format(tostring(row.id), tostring(key), row.buyout))
+        ns.Gate:Use(("buyout auction %s of %s for %d"):format(tostring(row.id), tostring(key), row.buyout), nil, "buy")
         self.buying = { key = key, units = n, total = row.buyout, phase = "wait", deal = deal, at = GetTime(),
                         auctionID = row.id, moneyBefore = GetMoney(), item = true, vendor = row.vendor }
         C_AuctionHouse.PlaceBid(row.id, row.buyout)
     end
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
-    self:ArmPurchaseTimeout()
+    -- A price that has not come back in 4 seconds is not coming (an answer
+    -- takes 0.15s once the request has left): the deal is checked again
+    -- instead of everything standing still for 10 seconds.
+    self:ArmPurchaseTimeout(deal.commodity and 4 or nil)
 end
 
 -- A purchase that is neither confirmed nor refused within 10s is treated as failed.
@@ -1313,7 +1528,8 @@ function Sniper:Confirm()
     if not b or b.phase ~= "confirm" then return end
     b.phase, b.moneyBefore, b.at = "wait", GetMoney(), GetTime()
     self:ArmPurchaseTimeout()
-    ns.Gate:Use(("buy confirm %dx %s total %s"):format(b.units, tostring(b.key), tostring(b.total)))
+    if not b.auto then self.inputCallAt = GetTime() end -- sent from your input (a blocked one is traced to it)
+    ns.Gate:Use(("buy confirm %dx %s total %s"):format(b.units, tostring(b.key), tostring(b.total)), nil, "buy")
     -- An error in the next seconds belongs to this purchase (someone else got
     -- the units first), not to the pace of requests. A real log showed it being
     -- read as "the server refused a request": the radar stopped for 5 seconds
@@ -1531,6 +1747,7 @@ function Sniper:OnPriceQuote(unitPrice, total)
             :format(b.units, nameOf(b.key), plain(total), plain(b.deal.cost)))
         self.verified[b.key] = nil
         self.checkedAt[b.key] = GetTime() - TRIGGER_MIN + min(TRIGGER_MIN, self.cool[b.key].till - GetTime()) -- the radar may raise it again once the cooldown is over
+        if self.judged then self.judged[b.key] = nil end -- and it is then looked at afresh
         self.buying = nil
         if self.dealSeen then self.dealSeen[b.key] = nil end
         self.streak = self.streak or {}
@@ -1595,10 +1812,29 @@ function Sniper:OnPurchase(ok, why)
             (why == "price no longer available" or why == "server refused the purchase") and "someone was faster" or tostring(why or "refused")))
     end
     self.verified[b.key] = nil
+    if self.judged then self.judged[b.key] = nil end -- the radar may raise this item again at once
     if b.stake then
         if not ok and self.stake then self.stake.q, self.stake.cheap = 1, nil end
+    elseif ok and (b.item or b.deal.more or b.deal.partial or b.deal.leftOf or b.deal.guess) then
+        self.priority = b.key -- re-check: cheap units may be left
+    elseif ok then
+        -- Everything the deal showed was bought. The re-check that used to
+        -- follow cost a request (0.65s with the radar standing still after
+        -- every purchase); the radar's next read sees the item anyway and
+        -- raises it again at once if it is still cheap.
+        self.checkedAt[b.key] = nil
     else
-        self.priority = b.key -- re-check: there may be more
+        -- Refused: someone else got the units. The listing can go on showing
+        -- them for a moment, so they are left alone for a few seconds (as
+        -- after a missed price) instead of being checked and offered again.
+        local d = b.deal
+        local low = d.rows and d.rows[1] and d.rows[1].price or (d.units and d.units > 0 and floor(d.cost / d.units)) or 0
+        self.cool = self.cool or {}
+        local was = self.cool[b.key]
+        local n = (was and was.price == low and GetTime() - was.at < 900) and (was.n + 1) or 1
+        local wait = min(600, MISS_COOL * 4 ^ (n - 1))
+        self.cool[b.key] = { price = low, till = GetTime() + wait, at = GetTime(), n = n }
+        self.checkedAt[b.key] = GetTime() - TRIGGER_MIN + min(TRIGGER_MIN, wait)
     end
     self.buying = nil
     ns.Gate.holdUntil = nil
@@ -1660,6 +1896,9 @@ function Sniper:Start()
     self.checkedAt = {} -- new AH visit: everything may have changed
     self.ownRead = false
     self.sweep, self.triggers = {}, {}
+    self.ownSweep, self.judged = {}, {}
+    -- listings remembered from the last visit: the radar has not been watching them since
+    for _, lr in pairs(self.lastRows or {}) do lr.broken = true end
     depCache = {}       -- fees are asked again each visit
     self.needOwned = true
     self.lastScreen, self.lastBg = 0, 0

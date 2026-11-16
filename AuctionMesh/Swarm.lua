@@ -20,11 +20,11 @@ local floor, random, max = math.floor, math.random, math.max
 Swarm.cfg = {
     fresh = 20,           -- seconds between sweeps of a category; re-tuned from the sweep's measured cost
     sideEvery = 30,       -- each other class of the chosen scope is read this often
-    soloEvery = 0.4,      -- a one-request radar reads again this soon after its last read (back to back)
+    soloEvery = 0,        -- a one-request radar reads again at once: the game's own lock is the pace
     adaptive = true,      -- keep sweeps at about `sweepShare` of the request budget
     sweepShare = 0.30,    -- the rest goes to confirming triggers and routine readings
     perRequest = 0.65,    -- measured seconds per auction house request on this client
-    unitTimeout = 60,     -- give up on a unit whose results never complete
+    unitTimeout = 6,      -- give up on a read whose answer never comes (an answer takes 0.15s; it was 60s of no radar)
     tick = 0.2,
 }
 
@@ -131,11 +131,25 @@ function Swarm:Solo()
     return total <= 2
 end
 
+-- Is a side class due for a read (by its own interval)?
+function Swarm:SideDue()
+    if not self.side or #self.side == 0 then return false end
+    local now, gap = self.serverTime(), self:SideGap()
+    for _, u in ipairs(self.side) do
+        local g = (self.sideItems and self.sideItems[u] and self.sideItems[u] <= 1) and max(gap, 600) or gap
+        if now - (self.doneAt[u] or 0) >= g then return true end
+    end
+    return false
+end
+
 function Swarm:PickUnit()
     local now, clock = self.serverTime(), self.clock()
     local best, bestScore
-    -- a side class that is due
-    if self.side and #self.side > 0 and not (ns.Sniper and ns.Sniper.SnipeMode and ns.Sniper:SnipeMode()) then
+    -- A side class that is due. Side classes come out of the same small budget
+    -- as item upkeep (Sniper:UpkeepTurn): never while you are armed, never
+    -- before the main radar has had its reads, never two in a row.
+    local Sn = ns.Sniper
+    if self.side and #self.side > 0 and not (Sn and Sn.SnipeMode and Sn:SnipeMode()) and not (Sn and Sn.UpkeepTurn and not Sn:UpkeepTurn()) then
         local gap = self:SideGap()
         for _, u in ipairs(self.side) do
             -- a class with nothing (or one item) in it is looked at every 10 minutes, not every 30 seconds
@@ -151,10 +165,11 @@ function Swarm:PickUnit()
     self.myDone = self.myDone or {}
     self.myDoneClock = self.myDoneClock or {}
     for _, u in ipairs(self.units) do
-        -- SOLO: the radar reads again as soon as the last read is `soloEvery`
-        -- old, i.e. back to back (one read every 0.65s), giving way only to
-        -- alerts and routine checks. A read every 3 seconds meant a deal was
-        -- 1.5 seconds old on average before it was even seen.
+        -- SOLO: the radar reads again the moment its last read is in, i.e.
+        -- back to back, one read per lock of the auction house (0.65s). It
+        -- waited 0.4s of its own on top, counted from a 0.2s timer: about
+        -- every second read then missed the instant the lock opened and left
+        -- 0.3s late (0.80s between reads on average instead of 0.65s).
         local age = solo and (clock - (self.myDoneClock[u] or -1e9)) or (now - (self.doneAt[u] or 0))
         local due = solo and self.cfg.soloEvery or self.cfg.fresh
         if age >= due then
@@ -174,7 +189,7 @@ Swarm.exec = {
     ready = function() return ns.Gate:Ready() end,
     start = function(u)
         local c, s = Swarm.unitParts(u)
-        ns.Gate:Use(("swarm browse class %d sub %s"):format(c, tostring(s)), "browse")
+        ns.Gate:Use(("swarm browse class %d sub %s"):format(c, tostring(s)), "browse", (Swarm.sideSet and Swarm.sideSet[u]) and "upkeep" or "radar")
         Swarm.browseSentAt = GetTime()
         C_AuctionHouse.SendBrowseQuery({
             searchString = "",
@@ -184,72 +199,99 @@ Swarm.exec = {
         })
     end,
     full = function() return C_AuctionHouse.HasFullBrowseResults() end,
-    more = function() ns.Gate:Use("swarm next page", "page"); Swarm.browseSentAt = GetTime(); C_AuctionHouse.RequestMoreBrowseResults() end,
+    more = function()
+        local cur = Swarm.current
+        ns.Gate:Use("swarm next page", "page", (cur and Swarm.sideSet and Swarm.sideSet[cur.unit]) and "upkeep" or "radar")
+        Swarm.browseSentAt = GetTime()
+        C_AuctionHouse.RequestMoreBrowseResults()
+    end,
     gotResults = function() return Swarm.resultsSeen end,
 }
 
+-- One call does everything that can be done right now: finish the read whose
+-- answer is in, pick the next one and send it if the auction house is open.
+-- (It used to take one call per stage, from a 0.2s timer, so the next read
+-- left up to 0.4s after the lock had opened.)
 function Swarm:Step()
     if not self.active then return end
-    local ex, clock = self.exec, self.clock()
-    local cur = self.current
-
-    if not cur then
-        local u = self:PickUnit()
-        self.idle = (u == nil)
-        if not u then return end
-        self.current = { unit = u, phase = "claimed", at = clock }
-        return
-    end
-
-    if cur.phase == "claimed" then
-        if not ex.ready() then return end
-        if ns.Sniper and not ns.Sniper:YieldTo("swarm") then return end
-        self.resultsSeen = false
-        self.sideMark = ns.measure and ns.measure.items or 0 -- items counted so far, to tell how many this read adds
-        ex.start(cur.unit)
-        cur.requests = 1
-        ns.lastQuery = "swarm"
-        self.stats.queries = self.stats.queries + 1
-        cur.phase, cur.at = "query", clock
-    elseif cur.phase == "query" then
-        if clock - cur.at > self.cfg.unitTimeout then
-            self.current = nil -- give up; claim expires and someone retries later
-            return
-        end
-        if not ex.gotResults() then return end
-        if ex.full() then
-            self.doneAt[cur.unit] = self.serverTime()
-            self.myDone = self.myDone or {}
-            self.myDone[cur.unit] = self.serverTime()
-            self.myDoneClock = self.myDoneClock or {}
-            self.myDoneClock[cur.unit] = clock
-            if ns.Scout then ns.Scout:Sweep() end
+    local ex = self.exec
+    for _ = 1, 4 do
+        local clock = self.clock()
+        local cur = self.current
+        if not cur then
+            local u = self:PickUnit()
+            self.idle = (u == nil)
+            if not u then return end
+            self.current = { unit = u, phase = "claimed", at = clock }
+        elseif cur.phase == "claimed" then
             local side = self.sideSet and self.sideSet[cur.unit]
-            if side then
-                -- a side class: counted and shared, but it does not set the radar's pace
-                self.sideReq = self.sideReq or {}
-                self.sideReq[cur.unit] = cur.requests or 1
-                do  -- how many items this class holds (three of four were empty in a real log, and were read every 30s all the same)
-                    local M = ns.measure
-                    local seen = M and M.items or nil
-                    if M and self.sideMark then seen = (M.items or 0) - self.sideMark end
-                    self.sideItems = self.sideItems or {}
-                    if seen then self.sideItems[cur.unit] = seen end
-                end
-                if ns.Log then ns.Log("SIDE read of class %d: %d request(s); each side class is read every %ds", floor(cur.unit / 256), cur.requests or 1, self:SideGap()) end
-                self.stats.units = self.stats.units + 1
+            local Sn = ns.Sniper
+            if side and Sn and ((Sn.SnipeMode and Sn:SnipeMode()) or (Sn.UpkeepTurn and not Sn:UpkeepTurn())) then
+                -- armed since it was picked, or the upkeep turn has been used: the main radar goes instead
                 self.current = nil
+            else
+                if not ex.ready() then return end
+                if Sn and not Sn:YieldTo("swarm") then return end
+                self.resultsSeen = false
+                self.sideMark = ns.measure and ns.measure.items or 0 -- items counted so far, to tell how many this read adds
+                ex.start(cur.unit)
+                cur.requests = 1
+                ns.lastQuery = "swarm"
+                -- main radar reads since the last request that was not one (the upkeep budget counts these)
+                if side then ns.radarSince, ns.upkeepLast = 0, "side" else ns.radarSince = (ns.radarSince or 0) + 1 end
+                if not side then
+                    local last = self.mainSentAt
+                    self.mainSentAt = clock
+                    if last and clock - last < 30 then self.mainGap = clock - last end -- seconds between the last two main reads
+                end
+                self.stats.queries = self.stats.queries + 1
+                cur.phase, cur.at = "query", clock
                 return
             end
-            self.stats.units = self.stats.units + 1
-            self:Tune(cur.unit, cur.requests or 1)
-            self.current = nil
-        elseif ex.ready() and not (ns.Sniper and ns.Sniper:Busy()) and not (ns.Seller and ns.Seller:Busy()) then
-            self.resultsSeen = false
-            ex.more()
-            cur.requests = (cur.requests or 1) + 1
-            self.stats.pages = self.stats.pages + 1
-            cur.at = clock
+        elseif cur.phase == "query" then
+            if clock - cur.at > self.cfg.unitTimeout then
+                if ns.Watch then ns.Watch:Add("NO-ANSWER", clock - cur.at, ("a radar read was not answered in %.1fs; given up and sent again"):format(clock - cur.at)) end
+                self.current = nil -- give up; it is read again at once
+                return
+            end
+            if not ex.gotResults() then return end
+            if ex.full() then
+                self.doneAt[cur.unit] = self.serverTime()
+                self.myDone = self.myDone or {}
+                self.myDone[cur.unit] = self.serverTime()
+                self.myDoneClock = self.myDoneClock or {}
+                self.myDoneClock[cur.unit] = clock
+                if ns.Scout then ns.Scout:Sweep() end
+                local side = self.sideSet and self.sideSet[cur.unit]
+                if side then
+                    -- a side class: counted and shared, but it does not set the radar's pace
+                    self.sideReq = self.sideReq or {}
+                    self.sideReq[cur.unit] = cur.requests or 1
+                    do  -- how many items this class holds (three of four were empty in a real log, and were read every 30s all the same)
+                        local M = ns.measure
+                        local seen = M and M.items or nil
+                        if M and self.sideMark then seen = (M.items or 0) - self.sideMark end
+                        self.sideItems = self.sideItems or {}
+                        if seen then self.sideItems[cur.unit] = seen end
+                    end
+                    if ns.Log then ns.Log("SIDE read of class %d: %d request(s); each side class is read every %ds", floor(cur.unit / 256), cur.requests or 1, self:SideGap()) end
+                    self.stats.units = self.stats.units + 1
+                else
+                    self.stats.units = self.stats.units + 1
+                    self.mainReads = (self.mainReads or 0) + 1
+                    self:Tune(cur.unit, cur.requests or 1)
+                end
+                self.current = nil -- and straight on to the next read
+            elseif ex.ready() and not (ns.Sniper and ns.Sniper:Busy()) and not (ns.Seller and ns.Seller:Busy()) then
+                self.resultsSeen = false
+                ex.more()
+                cur.requests = (cur.requests or 1) + 1
+                self.stats.pages = self.stats.pages + 1
+                cur.at = clock
+                return
+            else
+                return
+            end
         end
     end
 end
@@ -263,6 +305,8 @@ function Swarm:Start(quiet)
     end
     if #self.units == 0 then self:BuildUnits() end
     self.active = true
+    ns.radarSince = 0 -- a visit starts with radar reads: upkeep waits its turn
+    self.mainSentAt, self.mainGap, self.mainReads = nil, nil, 0
     if not self.ticker then
         self.ticker = C_Timer.NewTicker(self.cfg.tick, function() Swarm:Step() end)
     end
@@ -388,6 +432,13 @@ function Swarm:Init()
         else
             Swarm.resultsSeen = true
             Swarm.blocked = 0 -- a radar read came back: reads are allowed
+            -- Finish the read on the next frame (the price scanner has read
+            -- the answer by then) instead of at the next 0.2s timer tick, so
+            -- that the next read is picked and ready before the lock opens.
+            if Swarm.active and Swarm.current and Swarm.current.phase == "query" and not Swarm.stepQueued then
+                Swarm.stepQueued = true
+                C_Timer.After(0, function() Swarm.stepQueued = nil; Swarm:Step() end)
+            end
         end
     end)
 end
@@ -398,7 +449,6 @@ function Swarm:ManualStep()
     local was = self.active
     self.active = true
     self:Step()
-    if self.current and self.current.phase == "claimed" then self:Step() end
     self.active = was
 end
 

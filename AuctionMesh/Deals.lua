@@ -102,6 +102,7 @@ end
 local function vendorDeal(rows, o, cfg)
     local left, units, cost, profit = o.budget, 0, 0, 0
     local buys, counts, sell = {}, {}, 0
+    local more -- cheap units are left over: your gold ran out before they did
     for i = 1, #rows do
         local r = rows[i]
         local v = r.vendor or o.vendor or 0
@@ -120,7 +121,7 @@ local function vendorDeal(rows, o, cfg)
                 buys[#buys + 1], counts[#counts + 1] = r, n
                 sell = v
             end
-            if not r.whole and n < r.qty then break end -- out of gold
+            if not r.whole and n < r.qty then more = true; break end -- out of gold
         elseif not r.whole then
             break -- commodity rows are sorted and share one vendor price
         end
@@ -136,7 +137,7 @@ local function vendorDeal(rows, o, cfg)
         return nil, ("vendor profit $%d is under your $%d minimum"):format(profit, need)
     end
     return { kind = "VENDOR", units = units, cost = cost, deposit = 0, profit = profit, sell = sell,
-             buys = buys, counts = counts }
+             buys = buys, counts = counts, more = more }
 end
 
 -- Returns deal, wall, reason (reason = plain words when there is no deal).
@@ -188,7 +189,10 @@ local function flipDeal(rows, o, cfg)
         gross = floor(sell * (1 - cfg.cut))
         maxBuy = floor((gross - (asCost and ceil(per) or 0)) / (1 + cfg.margin))
         k = 0
-        while k + 1 < wi and rows[k + 1].price <= maxBuy do k = k + 1 end
+        -- o.maxRows: buy from the first rows only (a deal straight from the
+        -- radar is the new units and nothing else); the row after them is
+        -- then competition, like any other cheap row that is not bought.
+        while k + 1 < wi and rows[k + 1].price <= maxBuy and (not o.maxRows or k < o.maxRows) do k = k + 1 end
         if k + 1 < wi and rows[k + 1].price < ref then
             ref = rows[k + 1].price -- an unbought cheap row becomes our competition; try again
         else

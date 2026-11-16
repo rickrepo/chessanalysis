@@ -6,6 +6,30 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.33.0 (2026-11-16)
+
+Sniping first. Every request slot the auction house allows (one per 0.65s) now goes to the radar, to the checks its alerts ask for and to your purchases; everything else waits its turn behind them. Figures below are from the offline lock model (`tests/pace_test.lua`: the game's lock as measured in your logs), not from the game.
+
+- **The radar no longer leaves late.** It waited 0.4s of its own after each read, counted from a 0.2s timer, so about every second read missed the moment the lock opened and left 0.3s late: 0.80s between reads on average instead of 0.65s. The next read is now ready before the lock opens and leaves in that frame. Armed: 71-75 reads a minute before, 90-91 now.
+- **Item checks no longer take the radar's turn.** They used to alternate one for one with radar reads whenever any were due (twelve focus items a minute: sixteen seconds of every minute at half radar speed). Now anything that is not the radar, an alert or a purchase gets one request only after the radar has had 8 reads in a row (3 on the Bags tab), never two in a row. Not armed: 64-68 radar reads a minute before, 82-91 now.
+  - A focus item's listing is re-read when the radar shows the item has changed (not sooner than its interval), or after 5 minutes; no longer every minute regardless.
+  - While you are armed the only such request is a listing a flip needs and does not have (see next point). No prices of what you hold, no side class, no list of your auctions.
+- **Flips straight from the radar keep working while you are armed.** They needed the item's full listing read in the last 2 minutes, and nothing is re-read while you roll, so two minutes into a session every flip was back to waiting for an item check (0.65s). Now a listing up to 15 minutes old is used if the radar has watched the item without a gap since, and the market it showed is still deep enough after taking off every unit the radar has seen leave since.
+  - The bottom of the market is always the radar's own previous lowest price, never the old listing's: the planned resale cannot be above it, and rows that have sold out no longer count.
+  - Only the new units are bought; whatever sits above them is treated as competition.
+- **A listing that is not a deal is not checked over and over.** A standing cheap listing that the rules refuse (say a vendor profit under your minimum) was checked every 20 seconds, armed or not, with the radar waiting each time. Now it is checked again only when the radar shows a lower price (at once), more units, you have more gold, or after 5 minutes.
+- **A cheaper listing on an item just checked is checked at once** (it used to wait out 20 seconds).
+- **After a purchase the radar is back at once.** The re-check of the item that followed every purchase (one request) is only made when cheap units may be left: your gold ran out, part of a pile was bought, or the count was not clear.
+- **A purchase the server refuses** leaves those units alone for a few seconds (as a missed price already did) instead of checking and offering them again.
+- **The radar starts when the auction house opens** (it waited 1.5 seconds, then let the list of your auctions and side classes go first: 1.6 to 6.9 seconds to the first read). The first request is now a radar read.
+- **A price request that gets no answer** is given up after 4 seconds (was 10, with nothing else sent meanwhile). **A radar read that gets no answer** is sent again after 6 seconds (was 60).
+- **Alerts go ahead of re-pricing what you hold** (they could wait behind it when not armed).
+- **Your auctions moved to the Bags tab**: SOLD, STUCK LISTINGS (with Cancel), ENDED and LISTED are listed there under what you hold. The Trades tab lists deals only.
+- **The Trades tab's status lines show what is really being sent**: armed or not, how many watched items can be flipped straight from the radar, the measured time between radar reads, and what the last minute's requests went to (`Last minute: 91 reads, 2 alert checks, 1 buying, 0 other`). "Next check: ... in 0.0s" is gone: it named checks that were not being sent while you were armed.
+- **Snapshot, THROTTLE WATCH block**: what the session's requests went to (radar, alert checks, buying, upkeep, posting), the last 60 seconds, the average and longest time between radar reads, and how many reads left late with what was sent in between.
+- Fixed: a blocked automatic purchase or radar read while the wheel was rolling could switch wheel buying off (the input was blamed for it).
+- Not yet tried in the real game: all of the above. The first Snapshot will show whether the radar reads every 0.65s (`time between radar reads`).
+
 ## 3.32.0 (2026-11-15)
 
 - **Throttle watch.** Everything that makes an auction house request wait is recorded for the whole session with its cause, as one log line starting with `THROTTLE` and as a block in the Snapshot:

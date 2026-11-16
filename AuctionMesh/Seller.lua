@@ -780,7 +780,10 @@ end
 
 ---------------------------------------------------------------- AH pricing (background) and posting (click)
 
-function Seller:NextToPrice()
+-- onlyPressed: only the item you pressed Post on (asked at once, ahead of
+-- everything). Without it: the periodic re-pricing of what you hold, which
+-- is upkeep and waits for the upkeep turn (Sniper:UpkeepTurn).
+function Seller:NextToPrice(onlyPressed)
     local now = GetTime()
     self.pricedAt = self.pricedAt or {}
     local last = self.pricedAt
@@ -791,6 +794,7 @@ function Seller:NextToPrice()
         if not last[k] or now - last[k] >= 1.5 then last[k] = now; return k end
         self.priority = k -- too soon: keep it for the next turn instead of dropping it
     end
+    if onlyPressed then return nil end
     for key, f in pairs(flips()) do
         -- Everything held is priced live: a flip so it can be posted, and what
         -- was bought under vendor price so the better of the two ways out is
@@ -890,8 +894,8 @@ end
 -- WHY NOTHING HAPPENED. Every press of Post that does not post says why, on
 -- the row itself (next to the button being pressed), for 4 seconds. Chat gets
 -- the message once, not once per press.
--- what = nil for the Post button's notes (Bags tab), "cancel" for the Cancel
--- button's (Trades tab): each row shows only its own.
+-- what = nil for the Post button's notes, "cancel" for the Cancel button's
+-- (both on the Bags tab): each row shows only its own.
 function Seller:Note(key, text, what)
     local was = self.note
     self.note = { key = key, text = text, at = GetTime(), what = what }
@@ -920,6 +924,7 @@ function Seller:Post(key)
     local p = self.prices[key]
     if not p or not p.price or GetTime() - p.at >= PRICE_TTL then
         self.priority = key
+        self.pressedAt = GetTime() -- (the price check that follows is booked as "posting", not upkeep)
         self:Note(key, (p and p.hold) and "Not posted: the market is below what you paid."
             or "Getting the live price first. Press Post again in a second.")
         return
@@ -1248,7 +1253,7 @@ function Seller:Advice(e)
             return ("Wait. Someone lists at %s. Posting again costs a fee of %s first and you have %s.%s")
                 :format(short(low), short(self:DepositTotal(key, true, e.count)), short(GetMoney()), expires), "wait"
         elseif each and each * e.count >= cfg.minProfit then
-            return ("Someone lists at %s. Press Cancel on its row (Trades tab), collect it at a mailbox and post again at %s: still %s. The posting fee is paid again.")
+            return ("Someone lists at %s. Press Cancel on its row (Bags tab), collect it at a mailbox and post again at %s: still %s. The posting fee is paid again.")
                 :format(short(low), short(repost), signed(each * e.count)), "do"
         elseif each then
             return ("Wait. Someone lists at %s; going under that would leave %s, less than your minimum.%s If it runs out it comes back by mail.")

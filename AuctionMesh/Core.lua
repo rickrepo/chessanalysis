@@ -196,9 +196,16 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         local ah = CreateFrame("Frame")
         ah:RegisterEvent("AUCTION_HOUSE_SHOW")
         ah:SetScript("OnEvent", function()
-            C_Timer.After(1.5, function()
+            -- The radar starts with the auction house (it used to wait 1.5
+            -- seconds). The game's window may only be shown a frame after
+            -- this event, so the start is tried again until it has taken.
+            local function start()
                 if AuctionMeshDB.cfg.autoScan and not Swarm.active and not Swarm.manual then Swarm:Start(true) end
-            end)
+            end
+            start()
+            C_Timer.After(0, start)
+            C_Timer.After(0.3, start)
+            C_Timer.After(1.5, start)
         end)
         -- Retail-style AH rejects copper: prices must be whole silver, so undercut by 1s.
         if C_AuctionHouse.SupportsCopperValues and not C_AuctionHouse.SupportsCopperValues() then
@@ -216,10 +223,15 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             local before = ns.Gate.usedAt
             -- a locked-in price becomes BUY NOW the instant the lock opens
             if Sniper.buying and Sniper.buying.phase == "confirm" then UI:Now() end
+            -- A radar read whose answer is in is finished first, so an alert
+            -- it raised is checked in this very frame (the sniper sends
+            -- nothing while a radar answer is still unread).
+            local cur = Swarm.active and Swarm.current
+            if cur and cur.phase == "query" and Swarm.resultsSeen then Swarm:Step() end
+            if ns.Gate.usedAt ~= before and ns.Gate.usedAt == GetTime() then return end
             Sniper:Tick()
             if ns.Gate.usedAt ~= before and ns.Gate.usedAt == GetTime() then return end -- the slot is taken
             Swarm:Step()
-            if Swarm.current and Swarm.current.phase == "claimed" then Swarm:Step() end
         end
         if seeded > 0 or pruned > 0 then
             say(("%d prices loaded (%d from central DB, %d expired)."):format(Store.n, seeded, pruned))

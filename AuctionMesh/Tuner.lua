@@ -341,8 +341,16 @@ function Tuner:Lines()
         end
         add("Pause after the server is ready", text)
     end
-    add("Split of requests", ("radar %d%%, item checks %d%% (adjusts itself each minute)"):format(
-        floor(d.share * 100 + 0.5), 100 - floor(d.share * 100 + 0.5)))
+    do  -- what the requests really went to (counted as they are sent)
+        local W = ns.Watch
+        local m = W and W.LastMinute and W:LastMinute() or {}
+        if (m.n or 0) > 0 then
+            add("Requests in the last minute", ("%d radar reads%s, %d alert checks, %d buying, %d other"):format(m.radar or 0,
+                m.every and (" (one every %.2fs)"):format(m.every) or "", m.alert or 0, m.buy or 0, (m.upkeep or 0) + (m.sell or 0)))
+        else
+            add("Requests in the last minute", "none: open the auction house with this panel open")
+        end
+    end
     do
         local parts = {}
         for _, s in ipairs(self.SOURCES) do

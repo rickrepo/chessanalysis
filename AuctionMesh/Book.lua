@@ -31,7 +31,7 @@ function Book:Observe(key, price, qty, t)
     local op, oq, ot = Store:Get(key)
     if op then
         local changed = op ~= price
-            or math.abs(qty - oq) > max(1, oq * self.cfg.qtyDelta)
+            or math.abs(qty - (oq or 0)) > max(1, (oq or 0) * self.cfg.qtyDelta)
             or (t - ot) >= self.cfg.refresh
         if not changed then return false end
     end

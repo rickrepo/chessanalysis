@@ -12,10 +12,11 @@
 --   DEALS TO BUY NOW (2)    BUY  MARKET  SPREAD  VOLUME  PROFIT
 --   [icon] Copper Ore       ...                              [ Buy ]
 --
--- Trades tab: MONEY (what you hold and what it becomes once everything has
--- sold), then deals verified against live listings with the exact quantity and
--- total you will pay, then your auctions. Bags tab: everything you bought and
--- the one thing to do with it. Setup tab: settings, what the request engine
+-- Trades tab: SNIPING ONLY. MONEY (what you hold and what it becomes once
+-- everything has sold), then deals verified against live listings with the
+-- exact quantity and total you will pay. Bags tab: everything you bought and
+-- the one thing to do with it, then your own auctions (sold, undercut with a
+-- Cancel button, ended, listed). Setup tab: settings, what the request engine
 -- has learned, recent activity. A bar at the top shows what the engine is doing.
 -- Rendering is throttled (5x per second, only while shown and only if changed).
 local _, ns = ...
@@ -208,12 +209,16 @@ local function clock(s)
     return s >= 60 and ("%d:%02d"):format(s / 60, s % 60) or (s .. "s")
 end
 
--- Three short lines: what is being checked and when, the last result, and the scan timer.
+-- Three short lines about sniping, each a measured fact:
+--   1. the state: armed or not, and how many watched items can be bought
+--      straight from the radar (their listing is good enough for a flip)
+--   2. the last answer to something the radar asked about
+--   3. the radar: seconds between its reads, and what the last minute's
+--      requests went to
 local function buyStatus(n)
     if not ahOpen() then return GOLD .. "Open the Auction House to look for deals.|r" end
     local S, Sw, G = ns.Sniper, ns.Swarm, ns.Gate
     local name, lines = S.nameOf, {}
-    local q = S.background
     local mode = ns.Deals.cfg.flips and "" or (GREEN .. "Vendor-only.|r ")
     local cap = S:Capital()
     if ns.Deals.cfg.flips and (AuctionMeshDB.cfg.focusMode or "off") ~= "off" then
@@ -221,43 +226,57 @@ local function buyStatus(n)
         mode = set and (TEAL .. ("Focus on %d item%s.|r "):format(#flist, #flist == 1 and "" or "s")) or (GREY .. "Focus: still measuring.|r ")
     end
 
-    -- line 1: now / next
-    if G:UserBusy() then
-        lines[1] = ORANGE .. "Paused for a moment (a click is in progress).|r"
-    elseif S.searching then
-        lines[1] = mode .. "Checking now: " .. name(S.searching.key)
-    else
-        local key, pos = S:PeekNext()
-        local wait = math.max(0, (G.nextAt or 0) - GetTime())
-        if key then
-            lines[1] = ("%sNext check: %s in %.1fs%s"):format(mode, name(key), wait,
-                (pos and q) and ("  %s(%d of %d, round %d)|r"):format(GREY, pos, #q, (q.rounds or 0) + 1) or "")
-        else
-            lines[1] = mode .. "Nothing to check yet: waiting for the first price scan."
-        end
-    end
     if cap.paused then
         -- your money is out of reach: say so, and when some of it comes back
-        table.insert(lines, 1, ("%sBig flips paused:|r %s of your %s is in auctions that have not sold (limit %d%%).%s Small flips and vendor deals are still shown."):format(
+        lines[#lines + 1] = ("%sBig flips paused:|r %s of your %s is in auctions that have not sold (limit %d%%).%s Small flips and vendor deals are still shown."):format(
             ORANGE, ns.Seller.short(cap.listed), ns.Seller.short(cap.worth), floor(ns.Deals.cfg.maxTied * 100 + 0.5),
-            cap.nextIn and (" Next pay-out in %s."):format(cap.nextIn >= 90 and (floor(cap.nextIn / 60 + 0.5) .. " min") or (floor(cap.nextIn) .. "s")) or ""))
+            cap.nextIn and (" Next pay-out in %s."):format(cap.nextIn >= 90 and (floor(cap.nextIn / 60 + 0.5) .. " min") or (floor(cap.nextIn) .. "s")) or "")
     end
-    -- line 2: last result
-    local l = S.last
-    if l then
-        lines[2] = ("%sLast: %s: %s (%s ago)|r"):format(l.deal and GREEN or GREY, name(l.key),
+    -- line 1: the state
+    if G:UserBusy() then
+        lines[#lines + 1] = ORANGE .. "Paused for a moment (a click is in progress).|r"
+    else
+        local sr = S.searching
+        local alert = S:PeekNext()
+        local ready, watched = S:ReadyCount()
+        local flips = (ns.Deals.cfg.flips and watched > 0) and ("  %s%d of %d items can be flipped straight from the radar.|r"):format(GREY, ready, watched) or ""
+        if sr and (sr.src == "vendor" or sr.src == "market" or sr.src == "drop") then
+            lines[#lines + 1] = mode .. "Checking an alert: " .. name(sr.key)
+        elseif alert then
+            lines[#lines + 1] = mode .. "Alert next: " .. name(alert)
+        elseif S:SnipeMode() then
+            -- exact: while a watched listing is still missing, one request in nine reads one
+            local missing = ns.Deals.cfg.flips and watched - ready or 0
+            lines[#lines + 1] = mode .. GREEN .. "Armed:|r " .. (missing > 0
+                and ("the radar has 8 of every 9 requests; the 9th reads a listing (%d to go) so that flips on it need no item check."):format(missing)
+                or "every request goes to the radar and its alerts.") .. flips
+        else
+            lines[#lines + 1] = mode .. "Not armed: the radar reads back to back." .. flips
+        end
+    end
+    -- line 2: the last answer to an alert (or the last deal found); it gives way when there is no room
+    local l = S.lastAlert
+    if l and GetTime() - l.at < 600 and #lines < 2 then
+        lines[#lines + 1] = ("%sLast alert: %s: %s (%s ago)|r"):format(l.deal and GREEN or GREY, name(l.key),
             l.deal and "DEAL FOUND" or ((l.reason or "no deal"):gsub("%$(%d+)", function(c) return ns.Seller.short(tonumber(c)) .. GREY end)),
             clock(GetTime() - l.at))
     end
-    -- line 3: scan timer
+    -- line 3: the radar, measured
     if Sw and Sw.active and #Sw.units > 0 then
-        local fresh, total = Sw:Coverage()
-        local left = Sw:NextRescan() or 0
-        local M, G = ns.measure and ns.measure.last, ns.Gate
-        local measured = M and (" %d items in %d request%s,"):format(M.items, M.requests, M.requests == 1 and "" or "s") or ""
-        local limit = G.cycle and (" limit %.1f/s."):format(1 / G.cycle) or ""
-        lines[#lines + 1] = ("%sRadar:%s re-read every %ds (next in %s).%s|r"):format(
-            GREY, measured, Sw.cfg.fresh, clock(left), limit)
+        local M = ns.measure and ns.measure.last
+        local W = ns.Watch
+        local m = W and W.LastMinute and W:LastMinute() or {}
+        local items = M and (" %d items,"):format(M.items) or ""
+        local every = m.every and (" a read every %.2fs"):format(m.every) or " starting"
+        local limit = G.cycle and (" (limit %.2fs)."):format(G.cycle) or "."
+        local minute = ""
+        if (m.n or 0) > 0 then
+            -- everything that is not a radar read, an alert's check or your own buying is "other"
+            local other = (m.upkeep or 0) + (m.sell or 0)
+            minute = (" Last minute: %d read%s, %d alert check%s, %d buying, %d other."):format(
+                m.radar or 0, (m.radar or 0) == 1 and "" or "s", m.alert or 0, (m.alert or 0) == 1 and "" or "s", m.buy or 0, other)
+        end
+        lines[#lines + 1] = ("%sRadar:%s%s%s%s|r"):format(GREY, items, every, limit, minute)
     end
     return table.concat(lines, "\n")
 end
@@ -323,8 +342,9 @@ local function undercut(e)
 end
 
 -- What a tab lists, as one sequence of heading rows and item rows.
---   Trades: deals to buy, then your auctions (stuck, ended, listed)
---   Bags:   what you hold, grouped by what to do with it
+--   Trades: deals to buy, and nothing else
+--   Bags:   what you hold, grouped by what to do with it, then your auctions
+--           (sold, stuck, ended, listed)
 --   Setup:  no list (it is all controls)
 local function buildList(tab, deals, entries)
     local list = {}
@@ -333,6 +353,16 @@ local function buildList(tab, deals, entries)
         if #deals == 0 then
             list[#list + 1] = { note = ahOpen() and "None right now. A sound plays when one appears." or "Open the auction house to look for deals." }
         end
+    elseif tab == "SELL" then
+        local by = { AH = {}, VENDOR = {}, MAIL = {}, HOLD = {} }
+        for _, e in ipairs(entries) do
+            local t = by[e.action]
+            if t then t[#t + 1] = e end
+        end
+        if #by.AH > 0 then section(list, "TO POST AT THE AUCTION HOUSE", CAPS.entry, by.AH) end
+        if #by.VENDOR > 0 then section(list, "TO SELL TO A VENDOR", CAPS.entry, by.VENDOR) end
+        if #by.MAIL > 0 then section(list, "IN THE MAILBOX", CAPS.entry, by.MAIL) end
+        if #by.HOLD > 0 then section(list, "HELD, PRICE TOO LOW", CAPS.entry, by.HOLD) end
         local stuck, ended, ok, sold = {}, {}, {}, {}
         local _, _, _, soldKeys = ns.Seller:SalesMoney()
         local S = ns.Sniper
@@ -358,16 +388,6 @@ local function buildList(tab, deals, entries)
         if #stuck > 0 then section(list, "STUCK LISTINGS", CAPS.entry, stuck) end
         if #ended > 0 then section(list, "ENDED, CHECK A MAILBOX", CAPS.entry, ended) end
         if #ok > 0 then section(list, "LISTED", CAPS.entry, ok) end
-    elseif tab == "SELL" then
-        local by = { AH = {}, VENDOR = {}, MAIL = {}, HOLD = {} }
-        for _, e in ipairs(entries) do
-            local t = by[e.action]
-            if t then t[#t + 1] = e end
-        end
-        if #by.AH > 0 then section(list, "TO POST AT THE AUCTION HOUSE", CAPS.entry, by.AH) end
-        if #by.VENDOR > 0 then section(list, "TO SELL TO A VENDOR", CAPS.entry, by.VENDOR) end
-        if #by.MAIL > 0 then section(list, "IN THE MAILBOX", CAPS.entry, by.MAIL) end
-        if #by.HOLD > 0 then section(list, "HELD, PRICE TOO LOW", CAPS.entry, by.HOLD) end
         if #list == 0 then list[1] = { note = "Nothing to sell. Items you buy on the Trades tab appear here." } end
     end
     return list
@@ -631,7 +651,13 @@ function UI:RenderSnipe(short)
     if armed and not d then
         -- rolling with nothing to buy yet: say that it is working
         colour, fill = { 0.2, 1, 0.4 }, { 0.04, 0.14, 0.07 }
-        if not res and not S:StakeKey() then text = GREEN .. "ARMED|r    the next deal is bought the moment it appears    " .. GREY .. "radar only: nothing else is being sent|r" end
+        if not res and not S:StakeKey() then
+            local ready, watched = S:ReadyCount()
+            local missing = ns.Deals.cfg.flips and watched - ready or 0
+            text = GREEN .. "ARMED|r    the next deal is bought the moment it appears    " .. GREY
+                .. (missing > 0 and ("radar first; %d listing%s still being read for instant flips|r"):format(missing, missing == 1 and "" or "s")
+                    or "every request goes to the radar and its alerts|r")
+        end
     end
     sn.label:SetText(text)
     do  -- one line under it: how to buy, in the mode you chose
@@ -866,7 +892,7 @@ function UI:Render()
         frame.tabPick:SetText((r and r.best and not ns.Sniper:StakeKey()) and "Picks (1)" or "Picks")
     end
 
-    frame.next:SetText(TEAL .. "NEXT|r  " .. nextStep(deals, entries, short))
+    if tab == "SELL" then frame.next:SetText(TEAL .. "NEXT|r  " .. nextStep(deals, entries, short)) end -- (hidden on the other tabs)
     self:RenderSnipe(short)
     local status = tab == "BUY" and buyStatus(#deals) or tab == "SELL" and Se:Instructions(entries) or ""
     local n = self.notice

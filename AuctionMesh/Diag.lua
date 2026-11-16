@@ -101,6 +101,68 @@ local WATCH_KEEP = 40
 function Watch:Reset()
     self.calls, self.times, self.list, self.count, self.lost, self.worst, self.byCall, self.hist = {}, {}, {}, {}, {}, {}, {}, {}
     self.sends, self.slowest, self.firstAt, self.lastCallAt, self.stall, self.queued, self.lastGameUI = 0, 0, nil, nil, nil, nil, nil
+    self.total, self.recent, self.radarAt, self.between = {}, {}, nil, nil
+    self.gapN, self.gapSum, self.gapWorst, self.gapLate, self.gapBy = 0, 0, 0, 0, {}
+end
+
+-- WHAT THE REQUESTS WENT TO. Every request the addon sends is booked under
+-- one purpose, so the panel and the Snapshot can show how many went to the
+-- radar and how many to anything else:
+--   radar    a read of the materials class (the main radar)
+--   alert    an item check the radar asked for (a price worth a look)
+--   buy      your purchases: price request, purchase, re-check of a deal
+--   upkeep   everything else: listings kept ready, side classes, prices of
+--            what you hold, the list of your own auctions
+--   sell     posting and cancelling (your clicks)
+Watch.PURPOSES = { "radar", "alert", "buy", "upkeep", "sell" }
+Watch.PURPOSE_NAMES = { radar = "radar reads", alert = "alert checks", buy = "buying", upkeep = "upkeep", sell = "posting" }
+function Watch:Book(purpose)
+    purpose = purpose or "upkeep"
+    local now = GetTime()
+    self.total = self.total or {}
+    self.total[purpose] = (self.total[purpose] or 0) + 1
+    local r = self.recent or {}
+    self.recent = r
+    r[#r + 1] = { t = now, p = purpose }
+    while r[1] and now - r[1].t > 60 do table.remove(r, 1) end
+    if purpose == "radar" then
+        -- seconds between two radar reads in a row, and what came between them
+        local last = self.radarAt
+        self.radarAt = now
+        if last and now - last < 30 then
+            local g = now - last
+            self.gapN, self.gapSum = (self.gapN or 0) + 1, (self.gapSum or 0) + g
+            if g > (self.gapWorst or 0) then self.gapWorst = g end
+            local usual = (ns.Gate and ns.Gate.cycle) or 0.65
+            if g > usual * 1.35 + 0.1 then
+                self.gapLate = (self.gapLate or 0) + 1
+                self.gapBy = self.gapBy or {}
+                local why = self.between or "nothing (the radar itself was late)"
+                self.gapBy[why] = (self.gapBy[why] or 0) + 1
+            end
+        end
+        self.between = nil
+    else
+        self.between = self.between and (self.between == purpose and purpose or "several") or purpose
+    end
+end
+-- The last 60 seconds: requests by purpose, and seconds between radar reads.
+function Watch:LastMinute()
+    local now, out = GetTime(), { n = 0 }
+    local r = self.recent or {}
+    while r[1] and now - r[1].t > 60 do table.remove(r, 1) end
+    local first, last, reads = nil, nil, 0
+    for _, e in ipairs(r) do
+        out[e.p] = (out[e.p] or 0) + 1
+        out.n = out.n + 1
+        if e.p == "radar" then
+            first = first or e.t
+            last, reads = e.t, reads + 1
+        end
+    end
+    out.every = (reads >= 2) and (last - first) / (reads - 1) or nil
+    out.other = out.n - (out.radar or 0)
+    return out
 end
 
 -- Every auction house call, ours or the game's. desc = what it was for.
@@ -250,6 +312,24 @@ function Watch:Lines()
         for i, b in ipairs(self.BUCKETS) do if (self.hist[i] or 0) > 0 then parts[#parts + 1] = b[2] .. ": " .. self.hist[i] end end
         add("lock time, how many requests: ", #parts > 0 and table.concat(parts, " | ") or "none measured")
     end
+    do  -- where the requests went, and whether the radar read back to back
+        local parts, all = {}, 0
+        for _, p in ipairs(self.PURPOSES) do all = all + ((self.total and self.total[p]) or 0) end
+        for _, p in ipairs(self.PURPOSES) do
+            local n = (self.total and self.total[p]) or 0
+            parts[#parts + 1] = ("%s %d (%d%%)"):format(self.PURPOSE_NAMES[p], n, all > 0 and math.floor(n * 100 / all + 0.5) or 0)
+        end
+        add("what the addon's requests went to: ", table.concat(parts, " | "))
+        local m = self:LastMinute()
+        add("last 60 seconds: ", m.radar or 0, " radar reads", m.every and (", one every %.2fs"):format(m.every) or "", " | ",
+            m.alert or 0, " alert checks | ", m.buy or 0, " buying | ", m.upkeep or 0, " upkeep | ", m.sell or 0, " posting")
+        local n = self.gapN or 0
+        local late = {}
+        for why, c in pairs(self.gapBy or {}) do late[#late + 1] = ("%s: %d"):format(self.PURPOSE_NAMES[why] or why, c) end
+        table.sort(late)
+        add("time between radar reads: ", n > 0 and ("average %.2fs over %d reads, longest %.2fs"):format(self.gapSum / n, n, self.gapWorst or 0) or "not measured yet",
+            " | reads that left late: ", self.gapLate or 0, #late > 0 and (" (what was sent in between: " .. table.concat(late, ", ") .. ")") or "")
+    end
     do
         local parts = {}
         for _, k in ipairs(self.KINDS) do
@@ -347,11 +427,14 @@ end
 -- Call right before sending a request.
 -- kind ("browse", "page", "search", "more") marks a background request the
 -- Tuner learns from; your own clicks pass no kind.
-function Gate:Use(what, kind)
+-- purpose: what the request is for, booked by the throttle watch ("radar",
+-- "alert", "buy", "upkeep", "sell"; see Watch:Book).
+function Gate:Use(what, kind, purpose)
     self.nextAt = GetTime() + self.interval
     self.usedAt = GetTime()
     self.lastWhat = what
     if ns.Tuner then ns.Tuner:Sent(kind) end
+    Watch:Book(purpose)
     Log("SEND %s", what)
 end
 
@@ -419,6 +502,10 @@ local function onEvent(_, event, ...)
                 end
             end
         end
+        -- "Ready" is the game saying nothing of ours is in flight any more. (A
+        -- kind of request the game never sends an answer event for would
+        -- otherwise have held everything back for 5 seconds.)
+        Gate.outstanding = 0
         -- The lock just opened: send the next request this very frame, unless
         -- the Tuner has learned that this server needs a short pause first.
         local gap = ns.Tuner and ns.Tuner:Gap() or 0
@@ -464,8 +551,13 @@ local function onEvent(_, event, ...)
     elseif event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
         -- ours. If it follows the one-click purchase attempt, that feature is switched off.
         local S = ns.Sniper
-        if S and S.autoAt and GetTime() - S.autoAt < 0.5 then S.autoAt = nil; S:AutoBlocked() end
-        if S and S.inputAt and GetTime() - S.inputAt < 0.5 then
+        -- One blocked action has one cause, and the input is only blamed when
+        -- it really sent a price request or a purchase just now. (While you
+        -- roll the wheel an input is always recent: a blocked automatic
+        -- purchase or radar read was then also blamed on the wheel, and wheel
+        -- buying was switched off with it.)
+        if S and S.autoAt and GetTime() - S.autoAt < 0.5 then S.autoAt = nil; S:AutoBlocked()
+        elseif S and S.inputAt and GetTime() - S.inputAt < 0.5 and S.inputCallAt and GetTime() - S.inputCallAt < 0.5 then
             -- the wheel, the key or a held key was not accepted as a real
             -- input: stop using that one and fall back to one that works
             local via = S.inputVia
