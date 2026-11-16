@@ -6,6 +6,14 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.33.4 (2026-11-16)
+
+From a log of "hold a key down" in the real game.
+
+- **"A key: hold it down" is removed.** The game blocks every price request sent from a held key (`ADDON_ACTION_BLOCKED` three times out of three in the log). Each refusal switched buying back to the mouse wheel, which is what "it reverts to scroll" was, and gave the keyboard back to the game, so the held key did what it normally does (action bar 9). Three ways to buy remain: the mouse wheel, a key you tap, clicks. A saved "hold" setting becomes the mouse wheel, with a line in chat.
+- **A blocked input no longer freezes the deal.** The purchase it tried to send was kept "waiting for a price" that was never asked: four seconds with the deal untouchable and the radar standing still, three times in that log (among them 27 Medium Leather that had become 199 by the time it was free again). Now it is dropped in the same instant and the deal stays on screen for the next input that works.
+- **A blocked buy input is no longer counted as a blocked radar read** (three of those in a row would have switched the radar off).
+
 ## 3.33.3 (2026-11-16)
 
 From a Snapshot of 3.33.2 (3 got, 15 missed in 4 minutes).

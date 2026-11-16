@@ -444,7 +444,11 @@ function Swarm:Init()
             -- (Any blocked action used to do it. One blocked Buy click turned
             -- the radar off for the rest of the session, and deals then only
             -- arrived second-hand from friends, after they had seen them.)
-            if arg1 == "AuctionMesh" and Swarm.active and Swarm.browseSentAt and GetTime() - Swarm.browseSentAt < 0.5 then
+            -- ...and not one of the sniper's purchase calls made in that same
+            -- half second (a blocked buy input was counted as a blocked radar read).
+            local Sn = ns.Sniper
+            local buy = Sn and ((Sn.inputCallAt and GetTime() - Sn.inputCallAt < 0.5) or (Sn.autoAt and GetTime() - Sn.autoAt < 0.5))
+            if arg1 == "AuctionMesh" and not buy and Swarm.active and Swarm.browseSentAt and GetTime() - Swarm.browseSentAt < 0.5 then
                 Swarm.blocked = (Swarm.blocked or 0) + 1
                 if ns.Log then ns.Log("RADAR read blocked by the game (%d in a row)", Swarm.blocked) end
                 if Swarm.blocked >= 3 then

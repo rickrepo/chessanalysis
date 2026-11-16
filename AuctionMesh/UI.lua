@@ -467,11 +467,13 @@ end
 -- these supplies them:
 --   wheel   roll the mouse wheel in the snipe box (and anywhere while a deal is up)
 --   key     tap a key of your choice; it works anywhere while the Trades tab is open
---   hold    click the snipe box, then hold any letter key down: each repeat is an input
+--   (Holding a key down was a fourth way. The game refuses it: a real log shows
+--   every purchase sent from a held key blocked, and each one froze the deal
+--   for four seconds. It has been removed.)
 --   click   clicks on the snipe box only
 -- Clicking the box works in every mode.
-UI.BUY_MODES = { "wheel", "key", "hold", "click" }
-UI.BUY_NAMES = { wheel = "Mouse wheel", key = "A key: tap it", hold = "A key: hold it down", click = "Clicks only" }
+UI.BUY_MODES = { "wheel", "key", "click" }
+UI.BUY_NAMES = { wheel = "Mouse wheel", key = "A key: tap it", click = "Clicks only" }
 function UI.BuyMode()
     local cfg = AuctionMeshDB.cfg
     local m = cfg.buyMode
@@ -489,10 +491,8 @@ function UI:SetBuyMode(mode)
     if not UI.BUY_NAMES[mode] then return end
     cfg.buyMode, cfg.wheel = mode, nil
     if cfg.buyBlocked then cfg.buyBlocked[mode] = nil end -- chosen again by hand: try it again
-    if frame and frame.snipe and frame.snipe.holdBox and mode ~= "hold" then frame.snipe.holdBox:ClearFocus() end
     self:Notice(mode == "wheel" and "Buy with the mouse wheel: put the mouse in the snipe box and roll."
         or mode == "key" and (cfg.buyKey and ("Buy with a key: tap %s while the Trades tab is open."):format(cfg.buyKey) or "Buy with a key: now click 'Key' and press the key you want.")
-        or mode == "hold" and "Buy by holding a key: click the snipe box, then hold any letter key down. Esc lets go."
         or "Buy with clicks on the snipe box only.", true)
     self:Dirty()
     return mode
@@ -600,7 +600,6 @@ function UI:RenderSnipe(short)
     frame.next:SetShown(self.tab == "SELL")
     if not show then
         self:BindInputs(false, true)
-        if sn.holdBox then sn.holdBox:ClearFocus() end
         return
     end
     local key = S:Target()
@@ -676,9 +675,6 @@ function UI:RenderSnipe(short)
         elseif mode == "key" then
             how = cfg.buyKey and ("tap " .. cfg.buyKey .. " (it works anywhere while this tab is open), or click here")
                 or "no key chosen yet: Setup tab, Key"
-        elseif mode == "hold" then
-            how = self.holdFocus and "hold any letter key down; Esc lets go (keys go to this box meanwhile)"
-                or "click this box, then hold any letter key down"
         else
             how = "click here"
         end
@@ -1286,8 +1282,6 @@ function UI:Create()
         if btn == "WHEEL" then UI.InputPress(true, "wheel")
         elseif btn == "KEY" then UI.InputPress(true, "key")
         else
-            -- a click on the box: in "hold a key" mode it also gives the box the keyboard
-            if UI.BuyMode() == "hold" and self.holdBox then self.holdBox:SetFocus() end
             UI.InputPress(true, "click")
         end
     end, "AuctionMeshSnipeButton")
@@ -1301,25 +1295,6 @@ function UI:Create()
     if sn.RegisterForClicks then sn:RegisterForClicks("AnyDown", "AnyUp") end
     sn:EnableMouseWheel(true)
     sn:SetScript("OnMouseWheel", function() UI.InputPress(true, "wheel") end)
-    -- HOLD A KEY. The game does not repeat a key binding while the key is held,
-    -- but it does repeat typed characters. So in this mode the box takes the
-    -- keyboard (after a click on it) and every repeat of a held letter is one
-    -- buy input. Whether the game accepts those repeats for buying is not known
-    -- yet: if it blocks one, this mode switches itself off and says so.
-    local hb = CreateFrame("EditBox", nil, sn)
-    hb:SetSize(1, 1)
-    hb:SetPoint("TOPLEFT", 0, 0)
-    hb:SetAutoFocus(false)
-    hb:SetAlpha(0)
-    if hb.SetFontObject then hb:SetFontObject("GameFontHighlightSmall") end
-    hb:SetScript("OnChar", function(self)
-        self:SetText("")
-        if UI.BuyMode() == "hold" then UI.InputPress(true, "hold") else self:ClearFocus() end
-    end)
-    hb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    hb:SetScript("OnEditFocusGained", function() UI.holdFocus = true; UI:Dirty() end)
-    hb:SetScript("OnEditFocusLost", function() UI.holdFocus = false; UI:Dirty() end)
-    sn.holdBox = hb
     sn:SetPoint("TOPLEFT", 12, -178); sn:SetPoint("TOPRIGHT", -12, -178)
     sn.label = sn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     sn.label:SetPoint("TOPLEFT", 10, -8); sn.label:SetPoint("TOPRIGHT", -10, -8)
@@ -1446,7 +1421,7 @@ function UI:Create()
     group("BUYING")
     L, at = row("Buy with")
     sp.buy = tip(button(sp, 190, "", function() UI:SetBuyMode() end),
-        "Click to change.\nMouse wheel: put the mouse in the snipe box and roll.\nA key, tap it: pick a key below; tapping it buys, anywhere, while the Trades tab is open.\nA key, hold it down: click the snipe box, then hold any letter key; every repeat buys. Esc lets go.\nClicks only: click the snipe box.\nClicking the box works in every mode.")
+        "Click to change.\nMouse wheel: put the mouse in the snipe box and roll.\nA key, tap it: pick a key below; tapping it buys, anywhere, while the Trades tab is open.\nClicks only: click the snipe box.\nClicking the box works in every mode.")
     sp.buy:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.buy)
 
@@ -2303,7 +2278,6 @@ function UI:Close()
     if frame then
         self:BindInputs(false, true)
         self:StopKeyCapture()
-        if frame.snipe and frame.snipe.holdBox then frame.snipe.holdBox:ClearFocus() end
         frame:Hide()
     end
     if self.ahTab then selectTab(self.ahTab, false) end

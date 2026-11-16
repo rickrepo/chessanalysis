@@ -1805,7 +1805,7 @@ do
     cfg.buyMode, cfg.buyBlocked = nil, nil
     LIST[2770] = nil
 
-    -- BUY WITH: the wheel, a key you tap, a key you hold down, or clicks only
+    -- BUY WITH: the wheel, a key you tap, or clicks only
     do
         local bound = {}
         SetOverrideBindingClick = function(owner, _, key, target, mouse) bound[owner] = bound[owner] or {}; bound[owner][key] = target .. ":" .. mouse end
@@ -1867,36 +1867,29 @@ do
         end
         AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test"); LIST[2770] = nil
         reset(); gold = 900; UI.wheelSeen = nil
-        -- HOLD A KEY DOWN: click the box, then every repeat of a held letter is an input
-        UI:SetBuyMode("hold"); UI:Render()
-        check(UI.BuyMode() == "hold" and not keyBound() and strip(btn.hint._text):find("click this box, then hold any letter key down", 1, true), "hold mode: no key is bound; the box says to click it and hold a letter")
-        local hb = btn.holdBox
-        local focused
-        rawset(hb, "SetFocus", function() focused = true; hb._scripts.OnEditFocusGained(hb) end)
-        rawset(hb, "ClearFocus", function() if focused then focused = false; hb._scripts.OnEditFocusLost(hb) end end)
-        btn._scripts.OnClick(btn, "LeftButton"); advance(1); UI:Render()
-        check(focused and strip(btn.hint._text):find("hold any letter key down; Esc lets go", 1, true), "a click on the box gives it the keyboard")
-        for _ = 1, 6 do hb._scripts.OnChar(hb, "f"); advance(0.1) end
-        UI:Render()
-        check(label():find("^ARMED") and S:SnipeMode() and gold == 900, "holding a letter with no deal: ARMED, nothing bought")
-        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
-        S.priority = 2770
-        at, t0 = nil, GetTime()
-        for _ = 1, 60 do
-            hb._scripts.OnChar(hb, "f"); advance(0.05)
-            if gold < 900 and not at then at = GetTime() - t0 end
+        -- HOLDING A KEY DOWN IS GONE: the game blocks every purchase sent from a held key (a real log)
+        check(UI:SetBuyMode("hold") == nil and UI.BuyMode() ~= "hold" and rawget(btn, "holdBox") == nil, "there is no 'hold a key' way to buy any more")
+        cfg.buyMode = "hold"
+        check(UI.BuyMode() == "wheel", "a setting saved as 'hold' buys with the wheel")
+        cfg.buyMode = nil
+        do  -- AN INPUT THE GAME BLOCKS: the purchase is dropped at once and the deal stays (it froze for 4 seconds)
+            UI:SetBuyMode("key"); UI:Render()
+            LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+            S.priority = 2770; advance(1)
+            local realStart = C_AuctionHouse.StartCommoditiesPurchase
+            C_AuctionHouse.StartCommoditiesPurchase = function() fire("ADDON_ACTION_BLOCKED", "AuctionMesh", "UNKNOWN()") end
+            local blockedWas = ns.Swarm.blocked or 0
+            ns.Swarm.browseSentAt = GetTime() -- a radar read went out in the same half second
+            btn._scripts.OnClick(btn, "KEY")
+            check(S.buying == nil and S.verified[2770] ~= nil, "the game blocks the price request an input sent: nothing is left waiting for a price, and the deal is still on screen")
+            check((ns.Swarm.blocked or 0) == blockedWas, "and it is not counted as a blocked radar read (three of those switch the radar off)")
+            check(UI.BuyMode() == "wheel" and cfg.buyBlocked.key, "that way of buying is dropped for one that works")
+            C_AuctionHouse.StartCommoditiesPurchase = realStart
+            btn._scripts.OnMouseWheel(btn, 1); advance(1.5)
+            check(gold == 900 - 36, "the next input that works buys it at once")
+            AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test"); LIST[2770] = nil
+            reset(); gold = 900; UI.wheelSeen = nil; cfg.buyBlocked = nil
         end
-        check(gold == 900 - 36 and at and at <= 2.5, ("a deal appears while the key is held: bought %.1fs after it was listed, no click"):format(at or -1))
-        check(AuctionMeshDB.outcomes[#AuctionMeshDB.outcomes].v == "hold", "recorded as bought with a held key")
-        hb._scripts.OnEscapePressed(hb)
-        check(focused == false and not UI.holdFocus, "Esc gives the keyboard back")
-        AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test"); LIST[2770] = nil
-        reset(); gold = 900; UI.wheelSeen = nil
-        -- the game refuses a held key as an input: that mode is dropped for one that works
-        S.inputAt, S.inputVia, S.inputCallAt = GetTime(), "hold", GetTime(); fire("ADDON_ACTION_BLOCKED", "AuctionMesh", "UNKNOWN()")
-        print("     " .. strip(UI.notice and UI.notice.text or "?"))
-        check(UI.BuyMode() == "wheel" and cfg.buyBlocked.hold and strip(UI.notice.text):find("does not accept 'A key: hold it down'", 1, true),
-            "if the game refuses a held key, buying falls back to the wheel and the panel says so")
         -- clicks only
         UI:SetBuyMode("click"); UI:Render()
         check(UI.WheelPress(true) == false and not keyBound() and strip(btn.hint._text):find("click here", 1, true), "clicks only: no wheel, no key")
@@ -1908,7 +1901,8 @@ do
         -- the settings code carries it
         UI:SetBuyMode("key")
         check(ns.Do.SettingsCode():find(";buy=key;key=F;", 1, true), "the settings code says buy=key;key=F")
-        ns.Do.Import("AMS1:buy=hold"); check(UI.BuyMode() == "hold", "a code can set the way to buy (buy=hold)")
+        ns.Do.Import("AMS1:buy=click"); check(UI.BuyMode() == "click", "a code can set the way to buy (buy=click)")
+        ns.Do.Import("AMS1:buy=hold"); check(UI.BuyMode() == "click", "(buy=hold in an old code is ignored)")
         ns.Do.Import("AMS1:buy=key;key=shift-g"); check(UI.BuyMode() == "key" and cfg.buyKey == "SHIFT-G", "and the key (key=shift-g)")
         ns.Do.Import("AMS1:wheel=0"); check(UI.BuyMode() == "click", "an older code with wheel=0 still means clicks only")
         ns.Do.Import("AMS1:wheel=1"); check(UI.BuyMode() == "wheel", "and wheel=1 the mouse wheel")
@@ -2457,7 +2451,12 @@ do
         Sw.current = { unit = Sw.side[1], phase = "claimed", at = Sw.clock() }
         local q0 = #sent
         Sw:Step()
-        check(Sw.current and Sw.current.unit == Sw.units[1] and #sent == q0 + 1, "a side class picked just before you armed is dropped: the read that goes out is the main radar's")
+        -- (the upkeep turn is free and you are armed: a listing a flip needs may go first; then the main radar, never the side class)
+        local guard = 0
+        while not (Sw.current and Sw.current.phase == "query") and guard < 20 do advance(0.3); Sw:Step(); guard = guard + 1 end
+        local browses = 0
+        for i = q0 + 1, #sent do if sent[i] == "browse" then browses = browses + 1 end end
+        check(Sw.current and Sw.current.unit == Sw.units[1] and browses == 1, "a side class picked just before you armed is dropped: the read that goes out is the main radar's")
         UI.wheelSeen = nil; S.upkeep.every = was; Sw.current = nil; advance(0.5)
     end
     for _, su in ipairs(Sw.side) do Sw.doneAt[su] = Sw.serverTime() end

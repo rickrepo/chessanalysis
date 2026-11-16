@@ -432,6 +432,7 @@ end
 function Gate:Use(what, kind, purpose)
     self.nextAt = GetTime() + self.interval
     self.usedAt = GetTime()
+    self.uses = (self.uses or 0) + 1 -- a count, for "did that call send something?" (two sends can share one clock reading)
     self.lastWhat = what
     if ns.Tuner then ns.Tuner:Sent(kind) end
     Watch:Book(purpose)
@@ -563,6 +564,7 @@ local function onEvent(_, event, ...)
             local via = S.inputVia
             S.inputAt = nil
             Log("INPUT %s was refused by the game for buying", tostring(via))
+            if S.InputRefused then S:InputRefused() end -- nothing left the client: do not wait for a price that was never asked
             if ns.UI and ns.UI.InputBlocked then ns.UI:InputBlocked(via) end
         end
     end

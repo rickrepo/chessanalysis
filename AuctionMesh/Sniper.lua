@@ -1214,9 +1214,9 @@ function Sniper:YieldTo()
     if self.triggers and #self.triggers > 0 then return false end -- an alert is waiting: the radar waits
     -- the upkeep turn is free: the one upkeep request that is due, if any, goes before this read
     if self.active and self:UpkeepTurn() then
-        local before = ns.Gate.usedAt
+        local before = ns.Gate.uses
         self:Tick()
-        if ns.Gate.usedAt ~= before then return false end
+        if ns.Gate.uses ~= before then return false end
     end
     return true
 end
@@ -1453,6 +1453,27 @@ function Sniper:AutoBlocked()
         ns.UI:Notice("The game requires a second input to buy. Flick the mouse wheel or click again: BUY NOW.", true)
         if ns.UI.Now then ns.UI:Now() end
     end
+end
+
+-- The game blocked the price request or the purchase that an input just
+-- sent (it does not count that input as a real one). Nothing left the
+-- client, so the purchase is dropped at once and the deal stays where it
+-- is: the next input that works buys it. (A real log: with "hold a key"
+-- each blocked request left the deal frozen for four seconds, until the
+-- wait for a price that was never asked ran out.)
+function Sniper:InputRefused()
+    local b = self.buying
+    if not b or GetTime() - (b.at or 0) > 0.5 then return end
+    if b.phase == "quote" then
+        self.buying = nil
+        if b.stake and self.stake then self.stake.asked = math.max(0, (self.stake.asked or 1) - 1) end
+        ns.Log("PURCHASE of %s dropped: the game blocked the input that sent it; the deal stays on screen", tostring(b.key))
+    elseif b.phase == "wait" and not b.auto then
+        b.phase = "confirm" -- the price is still locked in: the next input buys
+    else
+        return
+    end
+    if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
 end
 
 -- EVERY click on a deal's Buy button comes here. It is safe to spam: a click

@@ -184,6 +184,14 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             db.cfg.channel, db.cfg.password, db.cfg.route, db.cfg.share = nil, nil, nil, nil
         end
         if (db.cfg.v or 0) < 12 then Seller.RepairCancelRecord() end
+        if db.cfg.buyMode == "hold" then
+            -- "Hold a key down" is gone: the game blocks every purchase sent from a held key.
+            db.cfg.buyMode = nil
+            if db.cfg.buyBlocked then db.cfg.buyBlocked.hold = nil end
+            C_Timer.After(8, function()
+                say("Buying by holding a key down has been removed: the game refuses a held key as an input, and each refusal froze the deal for four seconds. Buy with: the mouse wheel (Setup tab to change).")
+            end)
+        end
         db.cfg.v = 12
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
@@ -221,7 +229,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         -- then the sweep. The slow timers remain only as a safety net.
         ns.OnAHReady = function()
             if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
-            local before = ns.Gate.usedAt
+            local before = ns.Gate.uses
             -- a locked-in price becomes BUY NOW the instant the lock opens
             if Sniper.buying and Sniper.buying.phase == "confirm" then UI:Now() end
             -- A radar read whose answer is in is finished first, so an alert
@@ -229,9 +237,9 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             -- nothing while a radar answer is still unread).
             local cur = Swarm.active and Swarm.current
             if cur and cur.phase == "query" and Swarm.resultsSeen then Swarm:Step() end
-            if ns.Gate.usedAt ~= before and ns.Gate.usedAt == GetTime() then return end
+            if ns.Gate.uses ~= before then return end
             Sniper:Tick()
-            if ns.Gate.usedAt ~= before and ns.Gate.usedAt == GetTime() then return end -- the slot is taken
+            if ns.Gate.uses ~= before then return end -- the slot is taken
             Swarm:Step()
         end
         if seeded > 0 or pruned > 0 then
