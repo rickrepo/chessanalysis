@@ -6,7 +6,27 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
-## 3.38.0 (2026-11-16)
+## 3.39.0 (2026-11-16)
+
+Details (the handle on the panel's right edge) now holds everything that is not needed to buy, and the Trades tab is down to what is.
+
+- **Details, Session** (new view). Charts fixed at the top, figures under them:
+  - **Tries**: one bar, green bought, red missed, orange gone with no input, with the count and percentage of each.
+  - **Gold**: a column for every stretch of the session (gold in hand), a teal line above it (what you are worth when everything has sold, after the cut), and paler columns for the next hour, with sale gold that is already sold arriving when the auction house pays it. Nothing in it is a guess. Under it: in hand, when all has sold, the change since the start, sale gold due within the hour.
+  - **Speed**: a column for each of the last 40 tries, in seconds from the deal showing to its end: green you bought it, red someone else had it first, orange gone with no input. Under it, your purchases against the buyer who was first: how many, the average, the fastest, and where the time of your purchases goes (input, the game's lock, the price answer, the purchase).
+  - **Last tries, newest first**, each with its time against yours: `BOUGHT in 1.21s`, `TAKEN within 0.95s` (the other buyer's purchase was in before your price request was answered), `TAKEN between 0.80s and 1.30s` (still there for your price request, gone for your purchase), `GONE after 3.20s` (no input from you), with your own input, lock and price-answer times on the line below. The other buyer's time is a limit, not a measurement: the server only tells the addon that the units were gone when its own request arrived.
+  - Presses in time and the two pressing limits, the radar's figures (time between reads, the last minute's requests, listings ready for an instant flip) and the last alert: all moved here from the Trades tab.
+- **Details, Items** (new view): the items the addon goes for, best first (with laser focus off: the most active items), then your own list, then what you ignore. Two tick boxes on each:
+  - **Always**: on your own list, watched whatever the addon picks (it counts once laser focus is on).
+  - **Ignore**: never offered, flip or vendor deal. A deal on screen for it goes at once, without counting as a miss.
+  - An item is one or the other. A row stays where it is while you tick; the list is put together again when the view is opened.
+- **The Trades tab says less.** Status: one line, the mode and the radar's time between reads (a second line only for a warning: gold low, not enough gold, big flips paused). The gauge: the figure and the verdict (`An input every 100 ms: OPTIMAL`); the target is named only when you are not on it. "Last try", "Last alert", the last-minute counts and the presses-in-time count are in Details, Session.
+- **Faster where it matters**: when a deal appears the panel is redrawn at once, and Details used to be rebuilt in that same redraw (ledger, market lists and all). It is now left alone on that path and brought up to date a fifth of a second later. No request is sent for any of the new views; with Details shut none of it is worked out.
+- Snapshot: each of the last outcomes carries its timings (deal shown to its end, input, lock, price answer).
+- The session chart of 3.38.0 (never sent out) sat under the deals on the Trades tab; it is in Details, Session instead.
+- Not yet tried in the real game: all of the above, and 3.37.0's gauge.
+
+## 3.38.0 (2026-11-16, not sent out: see 3.39.0)
 
 - **A session chart under the deals** on the Trades tab. It takes the room the list does not need: shown while at most three deals are up (two on a short panel), and it gives way to the list when more are.
   - **Tries**: one bar, green for bought, red for missed, orange for gone before an input, with the count and the percentage of each: `24 bought (24%)   68 missed (68%)   8 gone before an input (8%)`.

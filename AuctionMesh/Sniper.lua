@@ -339,7 +339,7 @@ function Sniper:Evaluate(key, rows, commodity)
             local seen = self.dealSeen and self.dealSeen[key]
             if seen then
                 self.dealSeen[key] = nil
-                self:Result("gone", key, ("GONE  %s: someone else bought it, %d seconds after it appeared."):format(nameOf(key), floor(GetTime() - seen + 0.5)))
+                self:Result("gone", key, ("GONE  %s: someone else bought it, %d seconds after it appeared."):format(nameOf(key), floor(GetTime() - seen + 0.5)), GetTime() - seen)
             end
         end
         ns.Log("NO DEAL %s: %s (rows: %s)", tostring(key), tostring(reason), self.RowsText(rows))
@@ -1495,23 +1495,31 @@ end
 -- count for the session. A different sound plays for a win and for a miss.
 Sniper.tally = { won = 0, lost = 0, gone = 0 }
 local FLASH = { won = { 0.2, 1, 0.4 }, lost = { 1, 0.25, 0.25 }, gone = { 1, 0.6, 0.25 } }
-function Sniper:Result(kind, key, text)
+function Sniper:Result(kind, key, text, lasted)
     self.result = { kind = kind, key = key, text = text, at = GetTime() }
     self.tally[kind] = (self.tally[kind] or 0) + 1
-    do  -- kept for the snapshot: the last outcomes, how fast the input came and what it was
+    local rec
+    do  -- kept for the snapshot and the Session view: the last outcomes, how fast the input came and what it was
         local list = AuctionMeshDB.outcomes or {}
         AuctionMeshDB.outcomes = list
         local r = self.react
         local mine = r and r.key == key and kind ~= "gone"
-        list[#list + 1] = { t = GetServerTime(), k = kind, r = mine and r.secs or nil, v = mine and r.via or nil,
-                            m = (tostring(text):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) }
+        rec = { t = GetServerTime(), k = kind, r = mine and r.secs or nil, v = mine and r.via or nil, key = key,
+                g = kind == "gone" and lasted or nil, -- how long a deal nobody pressed for was there
+                m = (tostring(text):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) }
+        list[#list + 1] = rec
         while #list > 40 do table.remove(list, 1) end
         if mine then self.react = nil end
     end
     ns.Log("RESULT %s: %s", kind, text)
-    do  -- how this try went, in time (shown on the Trades tab)
+    do  -- how this try went, in time (Details, Session)
         local ti = self.tryInfo
         if ti and ti.key == key and kind ~= "gone" then
+            -- the same, kept with the outcome. All in seconds: i = the deal
+            -- showing to your input, h = the game holding the price request
+            -- for its lock, q = your input to the price answer, e = the deal
+            -- showing to the end (bought, or the server saying it is gone).
+            rec.i, rec.h, rec.q, rec.e = ti.input or 0, ti.held, ti.quote, (ti.input or 0) + (GetTime() - ti.t0)
             -- IN TIME: the game held the price request for its lock (it could not
             -- have left sooner), or the input came inside the window anyway.
             -- LATE: the lock was already open when the input came.

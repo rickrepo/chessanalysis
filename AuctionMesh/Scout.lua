@@ -587,14 +587,16 @@ function Scout:Snapshot(o)
         end
         if #muted > 0 then add("muted after 5 misses in a row: ", table.concat(muted, ", ")) end
     end
-    add("last outcomes, newest first (time | result | input came this long after the deal appeared | input | what happened):")
+    add("last outcomes, newest first (time | result | input after the deal appeared | input | what happened | deal shown to its end: input, lock, price back):")
     do
         local list = AuctionMeshDB.outcomes or {}
         if #list == 0 then add("  none yet") end
         for i = #list, max(1, #list - 19), -1 do
             local e = list[i]
             add("  ", date("%H:%M:%S", e.t), " | ", e.k == "won" and "GOT" or e.k == "lost" and "MISSED" or "GONE", " | ",
-                e.r and ("%.1fs"):format(e.r) or "-", " | ", tostring(e.v or "-"), " | ", tostring(e.m))
+                e.r and ("%.1fs"):format(e.r) or "-", " | ", tostring(e.v or "-"), " | ", tostring(e.m),
+                e.e and (" | %.2fs: %.2f, %.2f, %s"):format(e.e, e.i or 0, e.h or 0, e.q and ("%.2f"):format((e.i or 0) + e.q) or "never")
+                    or e.g and (" | up %.1fs"):format(e.g) or "")
         end
     end
 

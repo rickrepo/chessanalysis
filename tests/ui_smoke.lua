@@ -160,6 +160,18 @@ LeaveChannelByName = function(name) leftChannel = name end
 fire("ADDON_LOADED", "AuctionMesh")
 fire("PLAYER_LOGIN")
 local UI, S, Se = ns.UI, ns.Sniper, ns.Seller
+-- what a view of the Details drawer says, as plain text (the drawer is left as it was)
+local function drawerText(view)
+    local was, wasView, wasSel = AuctionMeshDB.cfg.drawer, UI.dview, UI.sel
+    UI.sel, UI.dview, UI.chartAt, UI.itemsCache = nil, view, nil, nil
+    UI:ToggleDrawer(true)
+    local t = {}
+    for _, ln in ipairs(UI.drawerLines or {}) do t[#t + 1] = strip((ln.head or ln.l or "") .. (ln.r and ("  |  " .. ln.r) or "")) end
+    local lines = UI.drawerLines
+    UI.dview, UI.sel = wasView, wasSel
+    UI:ToggleDrawer(was == true)
+    return table.concat(t, "\n"), lines
+end
 AuctionMeshDB.cfg.minProfit, ns.Deals.cfg.minProfit = 20, 20 -- the walkthrough uses small deals
 -- The walkthrough below drives the two-click path (first click asks for the price, second buys),
 -- which is what happens when the game does not allow a price request without a click.
@@ -1039,27 +1051,33 @@ S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price
 UI.notice = nil; UI.wheelSeen = nil; UI:Render()
 local st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
-check(st:find("Next check", 1, true) == nil and st:find("Not armed: the radar reads back to back", 1, true) ~= nil,
-    "the Trades tab no longer announces item checks: it says the radar reads back to back")
+check(st:find("Next check", 1, true) == nil and select(2, st:gsub("\n", "")) == 0,
+    "the Trades tab's status is one line: the mode and what the radar is doing")
 check(st:find("Peacebloom", 1, true) == nil, "a routine look at an item is not reported on the Trades tab")
-check(st:find("Radar:.- a read every %d+%.%d%ds") ~= nil and st:find("Last minute: %d+ reads?, %d+ alert checks?, %d+ buying, %d+ other%.") ~= nil,
-    "the radar line shows the measured time between reads and what the last minute's requests went to")
+check(st:find("^MODE: VENDOR %+ FLIPS%. .-Radar: a read every %d+%.%d%ds%.$") ~= nil, "it gives the measured time between radar reads")
+do
+    local dt = drawerText("session")
+    check(dt:find("RADAR\nA read every  |  %d+%.%d%ds") ~= nil and dt:find("Requests in the last minute  |  %d+ radar, %d+ alerts, %d+ buying, %d+ other") ~= nil,
+        "what the last minute's requests went to is in Details, Session")
+end
 -- the answer to something the radar asked about is shown
 S.lastEval = nil; S.searching = { key = 2447, at = GetTime(), src = "market" }
 S:Evaluate(2447, { { price = 21, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)
 UI.notice = nil; UI:Render()
 st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
-check(st:find("Last alert: Peacebloom: 500 cheap units is too many to clear", 1, true) ~= nil, "the last answer to a radar alert is shown, with why it was not a deal")
+check(st:find("Last alert", 1, true) == nil and drawerText("session"):find("Last alert, %d+s ago: Peacebloom\n   500 cheap units is too many to clear") ~= nil,
+    "the last answer to a radar alert, with why it was not a deal, is in Details, Session (not on the Trades tab)")
 UI.wheelSeen = GetTime(); UI:Render()
 st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
-check(st:find("Armed: 8 of every 9 requests go to the radar; the 9th reads a listing %(%d+ to go%)") ~= nil and st:find("^MODE: VENDOR %+ FLIPS%.") ~= nil, "armed with listings still unread: the first line starts with the mode in capitals and says exactly what the one other request in nine is for")
+check(st:find("^MODE: VENDOR %+ FLIPS%.") ~= nil and select(2, st:gsub("\n", "")) == 0, "armed: still one line, starting with the mode in capitals")
+check(strip(AuctionMeshFrame.snipe.label._text):find("ARMED.-radar first; %d+ listings? still being read for instant flips") ~= nil, "the snipe box says what is still being read for instant flips")
 do
     local was = S.ListingReady
     S.ListingReady = function() return true end
     UI:Render(); st = strip(AuctionMeshFrame.status._text)
-    check(st:find("Armed: every request goes to the radar and its alerts", 1, true) ~= nil, "armed with every listing ready: every request goes to the radar and its alerts")
+    check(strip(AuctionMeshFrame.snipe.label._text):find("every request goes to the radar and its alerts", 1, true) ~= nil, "armed with every listing ready: every request goes to the radar and its alerts")
     S.ListingReady = was
 end
 check(select(2, st:gsub("\n", "")) <= 2, "never more than three lines")
@@ -1354,9 +1372,11 @@ do
         local lt = S.lastTry
         check(lt and lt.key == 2770 and lt.kind == "won" and lt.quote and lt.total and lt.total >= lt.quote, "how the try went in time is kept: when the price was back, when it was over")
         UI.tab = "BUY"; UI.notice = nil; UI:Render()
-        local st = strip(AuctionMeshFrame.status._text)
-        for l in st:gmatch("[^\n]+") do if l:find("Last try", 1, true) then print("     " .. l) end end
-        check(st:find("Last try %(Copper Ore, bought%):.- input %d+ ms after the deal") and st:find("price back after %d+ ms, over after %d+ ms"), "the Trades tab shows the last try's timing in milliseconds")
+        local dt = drawerText("session")
+        for l in dt:gmatch("[^\n]+") do if l:find("Copper Ore", 1, true) or l:find("you:", 1, true) then print("     " .. l) end end
+        check(strip(AuctionMeshFrame.status._text):find("Last try", 1, true) == nil
+            and dt:find("%d%d:%d%d:%d%d  Copper Ore  |  BOUGHT in %d+%.%d%ds\n   you: input at %d+%.%d%ds.-, price back at %d+%.%d%ds"),
+            "how the try went in time is in Details, Session (not on the Trades tab): bought in so many seconds, with your input and the price answer")
         advance(2)
         check(UI.flashKind == nil and not e[1]._shown, "the flash is gone after a second and a half")
     end
@@ -1530,10 +1550,10 @@ do
         reset(); gold = 900; S.feesCache, S.poor = nil, {}
     end
 
-    -- THE SESSION CHART under the deals: tries in percent, gold over the session, the next hour's sale gold
+    -- DETAILS, SESSION: tries in percent, gold over the session with the next hour's sale gold, and how fast
     do
         reset(); gold = 900; S.verified = {}
-        local histWas, salesWas, payWas = AuctionMeshDB.goldHist, AuctionMeshDB.sales, S.ownSoldPay
+        local histWas, salesWas, payWas, outWas = AuctionMeshDB.goldHist, AuctionMeshDB.sales, S.ownSoldPay, AuctionMeshDB.outcomes
         local t = GetServerTime()
         -- an hour of play: 5s in hand rising to 9s, worth 12s rising to 20s
         AuctionMeshDB.goldHist = {}
@@ -1541,47 +1561,151 @@ do
         S.ownSoldPay = nil
         AuctionMeshDB.sales = { waiting = 0, pending = { { amount = 300, at = t + 600 }, { amount = 500, at = t + 2400 }, { amount = 900, at = t + 7200 } } }
         S.tally.won, S.tally.lost, S.tally.gone = 24, 68, 8
-        UI.tab = "BUY"; UI.notice = nil; UI.chartAt = nil; UI:Render()
-        local c, d = AuctionMeshFrame.chart, UI.chartState
-        check(c and c._shown and d ~= nil, "with no deal up, the session chart is shown under the deals")
-        print("     " .. strip(c.triesText._text))
-        check(strip(c.triesText._text) == "24 bought (24%)   68 missed (68%)   8 gone before an input (8%)", "TRIES: bought, missed and gone, with their percentages")
+        -- three tries with their timings: one bought, one lost at the price request, one refused at the purchase; one gone with no input
+        AuctionMeshDB.outcomes = {
+            { t = t - 300, k = "won", key = 2770, i = 0.05, h = 0.44, q = 0.70, e = 1.21, m = "GOT IT" },
+            { t = t - 200, k = "lost", key = 2770, i = 0.10, h = 0.40, q = 0.85, e = 0.95, m = "MISSED" },
+            { t = t - 100, k = "lost", key = 2770, i = 0.05, q = 0.75, e = 1.30, m = "MISSED" },
+            { t = t - 50, k = "gone", key = 2770, g = 3.2, m = "GONE" },
+            { t = t - 20, k = "lost", key = 2770, m = "MISSED (kept by an older version: no timings)" },
+        }
+        local c = AuctionMeshFrame.chart
+        do
+            local calls, realData = 0, UI.ChartData
+            UI.ChartData = function(...) calls = calls + 1; return realData(...) end
+            UI.tab = "BUY"; UI.notice = nil; UI.chartAt = nil; UI:Render()
+            check(c and calls == 0 and not AuctionMeshDrawer._shown, "the Trades tab has no chart: with the drawer shut nothing of it is drawn or worked out")
+            UI.ChartData = realData
+        end
+        local text = drawerText("session")
+        local d = UI.chartState
+        for l in text:gmatch("[^\n]+") do print("     | " .. l) end
+        check(strip(c.triesText._text) == "TRIES   24 bought (24%)   68 missed (68%)   8 gone, no input (8%)", "TRIES: bought, missed and gone, with their percentages")
         check(d.cols[1] and d.cols[1].g <= 520 and d.cols[#d.cols].g >= 880 and d.cols[#d.cols].w >= 1900, "GOLD: a column for each stretch of the session, from 5s in hand at the start to 9s now, and what it is all worth above it")
         check(d.next[1].g == 900 and d.next[5].g == 1200 and d.next[24].g == 1700, "FORECAST: the next hour, with sale gold that is already sold arriving when it is due (3s after 10 minutes, 5s more after 40)")
         check(d.coming == 800, "only what is due within the hour is counted (the 9s due in two hours is not)")
-        print("     " .. strip(c.title._text))
-        print("     " .. strip(c.axisL._text) .. " ... " .. strip(c.axisN._text) .. " ... " .. strip(c.axisR._text))
-        check(strip(c.title._text):find("GOLD THIS SESSION   in hand 9s00c", 1, true) and strip(c.axisR._text) == "next hour: + 8s00c of sale gold already sold" and strip(c.axisL._text) == "60 min ago",
-            "the chart is labelled: gold in hand, what it is worth when sold, the change since the start, and the sale gold due")
-        -- cheap: the figures are worked out once a second at most, and at once when a try has ended
+        check(text:find("GOLD THIS SESSION\nIn hand  |  9s00c\nWhen all has sold (after the cut)  |  26s00c\nSince the start of the session  |  + 14s00c\nSale gold already sold, due within the hour  |  + 8s00c", 1, true),
+            "the figures are under the chart: in hand, worth when sold, the change since the start, the sale gold due")
+        -- how fast: yours against whoever was first
+        local sp = d.speed
+        check(#sp.rows == 4 and sp.won.n == 1 and sp.lost.n == 2 and sp.gone.n == 1, "SPEED: every try that was timed has a column (an old record with no timings has none)")
+        check(text:find("You bought  |  1, 1.21s on average, fastest 1.21s", 1, true) and text:find("Someone else was first  |  2, within 1.12s on average, fastest 0.95s", 1, true)
+            and text:find("Gone, no input  |  1, after 3.20s on average", 1, true), "your purchases against the buyer who was first: how many, the average and the fastest")
+        check(text:find("Your purchases, on average: input 0.05s, the game's lock 0.44s,\nprice answer 0.26s, purchase 0.46s.", 1, true), "where the time of your purchases goes: input, lock, price answer, purchase")
+        check(text:find("Copper Ore  |  TAKEN within 0.95s\n   you: input at 0.10s, held by the lock 0.40s, price back at 0.95s", 1, true),
+            "a miss at the price request: the other buyer had it within 0.95s, next to your own timings")
+        check(text:find("Copper Ore  |  TAKEN between 0.80s and 1.30s", 1, true), "a refused purchase: it was still there for your price request (0.80s) and gone for your purchase (1.30s)")
+        check(text:find("Copper Ore  |  GONE after 3.20s\n   no input from you while it was up", 1, true) and text:find("Copper Ore  |  BOUGHT in 1.21s", 1, true), "gone with no input, and bought, each with its time")
+        check(text:find("LAST TRIES, NEWEST FIRST (4)", 1, true) and text:find("GONE after.-TAKEN between.-TAKEN within.-BOUGHT in") ~= nil, "newest first")
+        -- a real try is kept with its timings
+        do
+            local n0 = #AuctionMeshDB.outcomes
+            S.tryInfo = { key = 2770, t0 = GetTime() - 0.9, input = 0.1, held = 0.4, quote = 0.7 }; S:Result("lost", 2770, "MISSED  test")
+            local o = AuctionMeshDB.outcomes[#AuctionMeshDB.outcomes]
+            check(#AuctionMeshDB.outcomes == n0 + 1 and o.k == "lost" and o.key == 2770 and math.abs(o.e - 1.0) < 0.01 and o.i == 0.1 and o.h == 0.4 and o.q == 0.7,
+                "a try that ends is kept with its timings: input, lock, price answer, and the deal showing to the end")
+            S:Result("gone", 2770, "GONE  test", 2.5)
+            check(AuctionMeshDB.outcomes[#AuctionMeshDB.outcomes].g == 2.5, "a deal that left with no input is kept with how long it was up")
+            S.tally.won, S.tally.lost, S.tally.gone, S.tally.inTime, S.tally.late = 24, 68, 8, nil, nil
+            S.result, S.lastTry, UI.flashUntil = nil, nil, nil
+        end
+        -- the graphics take the top of the drawer; the lines start under them
+        UI.sel, UI.dview, UI.chartAt = nil, "session", nil
+        UI:ToggleDrawer(true)
+        local dl = AuctionMeshDrawer.lines
+        check(c._shown and strip(dl[1].label._text) == "" and strip(dl[12].label._text) == "" and strip(dl[13].label._text) == "GOLD THIS SESSION", "the charts are fixed at the top of the drawer and the text starts under them")
+        -- cheap: worked out once a second at most, at once when a try has ended, and not at all when a deal appears
         local calls, realData = 0, UI.ChartData
         UI.ChartData = function(...) calls = calls + 1; return realData(...) end
         UI:Render(); UI:Render(); UI:Render()
-        check(calls == 0, "redrawing the panel (a deal appears) does not work the chart out again within the second")
+        check(calls == 0, "redrawing the panel does not work the charts out again within the second")
         S.tally.won = 25; UI:Render()
         check(calls == 1 and strip(c.triesText._text):find("25 bought", 1, true), "a try that has ended shows at once")
+        local built, realLines = 0, UI.DrawerLines
+        UI.DrawerLines = function(...) built = built + 1; return realLines(...) end
+        S.tally.won = 26; UI:Now()
+        check(built == 0 and calls == 1 and UI.dirty == true, "a deal appearing (the fast redraw) leaves the drawer alone: nothing in it is rebuilt on that path")
+        advance(0.5)
+        check(built >= 1 and strip(c.triesText._text):find("26 bought", 1, true), "it is brought up to date by the next ordinary redraw, a fifth of a second later")
+        UI.DrawerLines = realLines
         S.tally.won = 24
         UI.ChartData = realData
-        -- a sample is taken as the session goes on
+        -- a sample is taken as the session goes on, drawer open or not
+        UI:ToggleDrawer(false)
         local n0 = #AuctionMeshDB.goldHist
         advance(45)
         check(#AuctionMeshDB.goldHist >= n0 + 2 and AuctionMeshDB.goldHist[#AuctionMeshDB.goldHist].g == 900, "a gold sample is kept every 20 seconds")
-        -- more than a couple of deals: the list takes the room, the chart gives way
-        for i = 1, 4 do
-            local k = 7000 + i
-            ITEMS[k] = { "Test Ore " .. i, 5 }
-            S.verified[k] = { key = k, kind = "VENDOR", units = 1, cost = 3, sell = 5, profit = 20 + i, deposit = 0, buys = {}, counts = {}, commodity = true, at = GetTime(), from = "me" }
-        end
-        UI:Render()
-        check(not c._shown, "with more than a couple of deals up the chart gives way to the list")
-        S.verified = {}; UI:Render()
-        check(c._shown, "and comes back when they are gone")
-        UI.tab = "SELL"; UI:Render()
-        check(not c._shown, "it is on the Trades tab only")
-        UI.tab = "BUY"
-        for i = 1, 4 do ITEMS[7000 + i] = nil end
-        AuctionMeshDB.goldHist, AuctionMeshDB.sales, S.ownSoldPay = histWas, salesWas, payWas
+        -- the other views do not show the charts
+        UI.dview = "trades"; UI:ToggleDrawer(true)
+        check(not c._shown and strip(dl[1].label._text) ~= "", "the Ledger view has no charts, and its lines start at the top")
+        UI:ToggleDrawer(false)
+        AuctionMeshDB.goldHist, AuctionMeshDB.sales, S.ownSoldPay, AuctionMeshDB.outcomes = histWas, salesWas, payWas, outWas
         S.tally.won, S.tally.lost, S.tally.gone = 0, 0, 0
+        UI.chartAt = nil
+        reset()
+    end
+
+    -- DETAILS, ITEMS: what the addon goes for, with a tick box for Always and one for Ignore
+    do
+        reset(); gold = 900
+        local cfg0 = AuctionMeshDB.cfg
+        local itemsWas, ignoreWas, modeWas = cfg0.focusItems, cfg0.ignore, cfg0.focusMode
+        local realPrime = ns.Scout.Prime
+        ns.Scout.Prime = function() return { { key = 2770, rate = 120, market = 9, score = 3 }, { key = 2589, rate = 45, market = 80, score = 2 } } end
+        ITEMS[2770] = ITEMS[2770] or { "Copper Ore", 5 }
+        ITEMS[2589] = ITEMS[2589] or { "Linen Cloth", 1 }
+        ITEMS[2592] = ITEMS[2592] or { "Wool Cloth", 3 }
+        cfg0.focusItems, cfg0.ignore, cfg0.focusMode = { 2592 }, nil, "off"; ns.Scout:Changed()
+        local text, lines = drawerText("items")
+        for l in text:gmatch("[^\n]+") do print("     | " .. l) end
+        check(text:find("MOST ACTIVE ITEMS (2)", 1, true) and text:find("Copper Ore  |  120 sell/h  9c", 1, true) and text:find("YOUR OWN LIST, NOT AMONG THE ABOVE (1)\nWool Cloth", 1, true),
+            "the Items view lists what the addon goes for, best first, then your own list")
+        check(text:find("Laser focus is off (Setup tab): every material is watched.", 1, true) and text:gsub("\n", " "):find("(it counts once laser focus is on)", 1, true), "with focus off it says so, and that Always counts once focus is on")
+        -- the tick boxes
+        UI.sel, UI.dview, UI.itemsCache = nil, "items", nil
+        UI:ToggleDrawer(true)
+        local dl = AuctionMeshDrawer.lines
+        local function rowOf(key) for i = 1, #dl do if dl[i].always._shown and dl[i].always.key == key then return dl[i] end end end
+        local ore, wool = rowOf(2770), rowOf(2592)
+        check(ore and wool and not ore.always.tick._shown and not ore.ignore.tick._shown and wool.always.tick._shown, "each item has two boxes; Always is ticked for what is on your own list")
+        check(not dl[1].always._shown, "a heading has no boxes")
+        -- Ignore: never offered, and a deal on screen for it goes without counting as a miss
+        S.verified[2770] = { key = 2770, kind = "VENDOR", units = 1, cost = 3, sell = 5, profit = 20, deposit = 0, buys = {}, counts = {}, commodity = true, at = GetTime(), from = "me" }
+        S.dealSeen[2770] = GetTime()
+        local gone0 = S.tally.gone
+        ore.ignore._scripts.OnClick(ore.ignore)
+        check(cfg0.ignore[2770] == true and S:Ignored(2770) and S.verified[2770] == nil and S.tally.gone == gone0, "a tick on Ignore: the item is never offered, and its deal on screen goes without counting as a miss")
+        check(rowOf(2770) == ore and ore.ignore.tick._shown, "the row stays where it is (it does not jump from under the mouse), now ticked")
+        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+        S.priority = 2770; advance(1)
+        check(S.verified[2770] == nil, "a cheap listing of an ignored item is not offered")
+        ore.ignore._scripts.OnClick(ore.ignore)
+        check(not S:Ignored(2770) and not ore.ignore.tick._shown, "a second click takes it off the ignore list")
+        S.checkedAt = {}; S.priority = 2770; advance(1)
+        check(S.verified[2770] ~= nil, "and it is offered again")
+        S.verified[2770] = nil; S.dealSeen[2770] = nil; LIST[2770] = nil
+        -- Always: on your own list; ticking one clears the other
+        ore.always._scripts.OnClick(ore.always)
+        check(ns.Scout:InList(2770) and ore.always.tick._shown, "a tick on Always puts the item on your own list")
+        ore.ignore._scripts.OnClick(ore.ignore)
+        check(S:Ignored(2770) and not ns.Scout:InList(2770) and not ore.always.tick._shown, "Ignore takes it off your own list: an item is one or the other")
+        ore.always._scripts.OnClick(ore.always)
+        check(ns.Scout:InList(2770) and not S:Ignored(2770), "and Always takes it off the ignore list")
+        wool.always._scripts.OnClick(wool.always)
+        check(not ns.Scout:InList(2592), "a click on a ticked Always takes the item off your own list")
+        -- opened again, the list is put together afresh: ignored items have their own section
+        cfg0.ignore[2589] = true
+        text = drawerText("items")
+        check(text:find("MOST ACTIVE ITEMS (1)", 1, true) and text:find("IGNORED (1)\nLinen Cloth", 1, true) and not text:find("Wool Cloth", 1, true),
+            "opened again: an ignored item is under IGNORED and no longer among the picks, and what is on no list any more is gone")
+        -- with focus on, the list is the focus set
+        cfg0.focusMode = "list"; ns.Scout:Changed()
+        text = drawerText("items")
+        check(text:find("ITEMS THE ADDON GOES FOR (1)", 1, true) and text:find("Focused on your list: 1 item.", 1, true), "with laser focus on your own list, the items are that list")
+        UI:ToggleDrawer(false); UI.dview = "trades"
+        ns.Scout.Prime = realPrime
+        cfg0.focusItems, cfg0.ignore, cfg0.focusMode = itemsWas, ignoreWas, modeWas; ns.Scout:Changed()
+        UI.itemsCache = nil
         reset()
     end
 
@@ -1907,9 +2031,9 @@ do
     for _ = 1, 10 do wheel(btn, 1); advance(0.2) end
     UI:Render()
     print("     " .. label() .. "  |  " .. strip(btn.hint._text))
-    check(label():find("^ARMED") and (label():find("every request goes to the radar and its alerts", 1, true) or label():find("radar first; %d+ listings? still being read for instant flips")) and strip(btn.hint._text):find("^Armed%."), "rolling in the box with no deal: ARMED, and it says where the requests go")
+    check(label():find("^ARMED") and (label():find("every request goes to the radar and its alerts", 1, true) or label():find("radar first; %d+ listings? still being read for instant flips")) and strip(btn.hint._text):find("^Armed: keep the inputs coming%.$"), "rolling in the box with no deal: ARMED, and it says where the requests go")
     print("     " .. strip(btn.hint._text))
-    check(strip(btn.hint._text):find("^Armed%. An input every 200 ms%."), "the line under the box shows how fast the inputs come: one every 200 ms")
+    check(strip(AuctionMeshFrame.snipe.pace.text._text):find("^An input every 200 ms: "), "the gauge under the box shows how fast the inputs come: one every 200 ms")
     do  -- THE PACE GAUGE: is that fast enough? Three zones scaled to the game's lock, and a marker where you are
         local pg = rawget(btn, "pace")
         local function pace(gap, n)
@@ -1922,12 +2046,12 @@ do
         ns.Gate.cycle = 0.74 -- the lock as measured in the real logs: the window is 490 ms
         local st, txt = pace(0.1)
         print("     " .. txt)
-        check(st.zone == "optimal" and txt:find("^An input every 100 ms: OPTIMAL") and txt:find("optimal: every 245 ms or faster; too slow: over 490 ms", 1, true) and pg.mark._shown,
-            "an input every 100 ms: the gauge reads OPTIMAL, with the two limits in milliseconds")
+        check(st.zone == "optimal" and txt == "An input every 100 ms: OPTIMAL" and pg.mark._shown,
+            "an input every 100 ms: the gauge reads OPTIMAL, and nothing more")
         st, txt = pace(0.24); check(st.zone == "optimal", "240 ms: still optimal (two inputs always land in the window)")
         st, txt = pace(0.35)
         print("     " .. txt)
-        check(st.zone == "intime" and txt:find("^An input every 350 ms: IN TIME, NOTHING TO SPARE"), "350 ms: in time, with nothing to spare")
+        check(st.zone == "intime" and txt:find("^An input every 350 ms: IN TIME, NOTHING TO SPARE  %(optimal: every 245 ms or faster%)$"), "350 ms: in time, with nothing to spare, and the target is named")
         st, txt = pace(0.8, 2)
         print("     " .. txt)
         check(st.zone == "slow" and txt:find("^An input every 800 ms: TOO SLOW"), "800 ms: too slow, a deal can sit waiting for the next input")
@@ -1943,8 +2067,8 @@ do
         S.tryInfo = { key = 2770, t0 = GetTime(), input = 1.4 }; S:Result("lost", 2770, "MISSED  test")
         check(S.lastTry.late == true and S.tally.late == 1, "an input 1.4 seconds after the deal, sent with the lock already open: LATE")
         UI.tab = "BUY"; UI.notice = nil; UI:Render()
-        check(strip(AuctionMeshFrame.status._text):find("your input was LATE (the lock was already open)", 1, true) and strip(pg.text._text):find("Presses in time this session: 1 of 2", 1, true),
-            "the status line says LATE, and the gauge keeps the count: 1 of 2 presses in time")
+        check(drawerText("session"):find("Presses in time this session  |  1 of 2\nOptimal: an input every 245 ms or faster. Too slow: over 490 ms.", 1, true),
+            "Details, Session keeps the count (1 of 2 presses in time) and the two limits")
         S.tally.won, S.tally.lost, S.tally.gone, S.tally.inTime, S.tally.late = 0, 0, 0, nil, nil
         S.result, S.lastTry, UI.flashUntil = nil, nil, nil
     end
@@ -2421,7 +2545,9 @@ do
         check(has("| GOT | 0.3s | wheel | GOT IT  16 x Silk Cloth") and has("| MISSED | 6.4s | click | MISSED  Silk Cloth"),
             "the last snipes: result, how long after the deal the input came, and whether it was the wheel or a click")
         check(has("Silk Cloth x16 at 1s 0c each") and has("LAST PURCHASES"), "and the last purchases")
-        check(#text < 6000, ("short enough to paste in one go (%d characters)"):format(#text))
+        check(has("| GOT IT  16 x Silk Cloth for 16s00c. Worth + 8s00c when sold. | ") and text:find("| %d+%.%d%ds: %d+%.%d%d, %d+%.%d%d, %d+%.%d%d\n"),
+            "each with its timings: the deal showing to its end, the input, the lock, the price answer")
+        check(#text < 6200, ("short enough to paste in one go (%d characters)"):format(#text))
         AuctionMeshLogFrame:Hide()
         AuctionMeshDB.flips[4306] = nil; ns.Journal:Dropped(4306, nil, "test"); LIST[4306] = nil
         S.ownSoldQty, S.ownSoldPay = {}, {}; AuctionMeshDB.mailSeen = nil; cfg.autoConfirm = false
