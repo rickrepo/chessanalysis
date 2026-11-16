@@ -1854,6 +1854,44 @@ do
     check(label():find("^ARMED") and (label():find("every request goes to the radar and its alerts", 1, true) or label():find("radar first; %d+ listings? still being read for instant flips")) and strip(btn.hint._text):find("^Armed%."), "rolling in the box with no deal: ARMED, and it says where the requests go")
     print("     " .. strip(btn.hint._text))
     check(strip(btn.hint._text):find("^Armed%. An input every 200 ms%."), "the line under the box shows how fast the inputs come: one every 200 ms")
+    do  -- THE PACE GAUGE: is that fast enough? Three zones scaled to the game's lock, and a marker where you are
+        local pg = rawget(btn, "pace")
+        local function pace(gap, n)
+            local t, now = {}, GetTime()
+            for i = n or 4, 0, -1 do t[#t + 1] = now - i * gap end
+            UI.inputTimes = t
+            UI:Render()
+            return UI.paceState, strip(pg.text._text)
+        end
+        ns.Gate.cycle = 0.74 -- the lock as measured in the real logs: the window is 490 ms
+        local st, txt = pace(0.1)
+        print("     " .. txt)
+        check(st.zone == "optimal" and txt:find("^An input every 100 ms: OPTIMAL") and txt:find("optimal: every 245 ms or faster; too slow: over 490 ms", 1, true) and pg.mark._shown,
+            "an input every 100 ms: the gauge reads OPTIMAL, with the two limits in milliseconds")
+        st, txt = pace(0.24); check(st.zone == "optimal", "240 ms: still optimal (two inputs always land in the window)")
+        st, txt = pace(0.35)
+        print("     " .. txt)
+        check(st.zone == "intime" and txt:find("^An input every 350 ms: IN TIME, NOTHING TO SPARE"), "350 ms: in time, with nothing to spare")
+        st, txt = pace(0.8, 2)
+        print("     " .. txt)
+        check(st.zone == "slow" and txt:find("^An input every 800 ms: TOO SLOW"), "800 ms: too slow, a deal can sit waiting for the next input")
+        UI.inputTimes = { GetTime() - 10, GetTime() - 9 }; UI:Render()
+        check(UI.paceState.zone == nil and strip(pg.text._text):find("^Not pressing%.") and not pg.mark._shown, "no inputs: 'Not pressing', and the marker is gone")
+        ns.Gate.cycle = 1.0; pace(0.3)
+        check(UI.paceState.zone == "optimal" and math.abs(UI.paceState.window - 0.75) < 1e-6, "the zones follow the measured lock: a slower server widens the window")
+        ns.Gate.cycle = nil; UI.inputTimes = nil
+        -- the verdict on each try
+        S.tally.inTime, S.tally.late = 0, 0
+        S.tryInfo = { key = 2770, t0 = GetTime(), input = 0.03, held = 0.46 }; S:Result("lost", 2770, "MISSED  test")
+        check(S.lastTry and S.lastTry.late == false and S.tally.inTime == 1, "a price request the game had to hold for its lock: the input was IN TIME (it could not have left sooner)")
+        S.tryInfo = { key = 2770, t0 = GetTime(), input = 1.4 }; S:Result("lost", 2770, "MISSED  test")
+        check(S.lastTry.late == true and S.tally.late == 1, "an input 1.4 seconds after the deal, sent with the lock already open: LATE")
+        UI.tab = "BUY"; UI.notice = nil; UI:Render()
+        check(strip(AuctionMeshFrame.status._text):find("your input was LATE (the lock was already open)", 1, true) and strip(pg.text._text):find("Presses in time this session: 1 of 2", 1, true),
+            "the status line says LATE, and the gauge keeps the count: 1 of 2 presses in time")
+        S.tally.won, S.tally.lost, S.tally.gone, S.tally.inTime, S.tally.late = 0, 0, 0, nil, nil
+        S.result, S.lastTry, UI.flashUntil = nil, nil, nil
+    end
     check(S:SnipeMode(), "snipe mode is on while you roll: routine item checks and side classes wait")
     check(gold == 900 and S.buying == nil, "nothing is bought while there is no deal")
     check(ns.Swarm.stats.queries > before, "the radar keeps reading while you roll")

@@ -6,6 +6,16 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.37.0 (2026-11-16)
+
+- **A gauge for your pressing speed**, under the snipe box on the Trades tab: a bar in three zones with a white marker where you are, and the figures next to it.
+  - **Green, OPTIMAL**: an input at least every half window (245 ms at the 740 ms lock measured on this realm). Two or more inputs always land in the window.
+  - **Yellow, IN TIME, NOTHING TO SPARE**: up to one window (490 ms). One input always lands in it.
+  - **Red, TOO SLOW**: longer than that. A deal can sit waiting for your next input.
+  - The window is the half second the game keeps its lock shut after the answer that showed the deal: a price request made inside it leaves the moment the lock opens, whenever in the window it was made. The zones follow the measured lock, so they move if the server slows down. Pressing faster than the green limit gains nothing.
+  - Next to it: `Presses in time this session: 24 of 27`.
+- **Each try gets a verdict**: `Last try (Silk Cloth, missed): your input was IN TIME.` or `... LATE (the lock was already open).` In time means the purchase could not have left sooner, so a miss was not down to your pressing.
+
 ## 3.36.0 (2026-11-16)
 
 - **The mode is the first thing on the Trades tab**, in capitals and in colour: `MODE: VENDOR + FLIPS.`, `MODE: VENDOR ONLY.`, or `MODE: VENDOR ONLY (gold is low).`

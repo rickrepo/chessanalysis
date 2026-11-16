@@ -278,8 +278,9 @@ local function buyStatus(n)
     local lt = S.lastTry
     if lt and GetTime() - lt.at < 60 and #lines < 2 then
         local function ms(x) return x and ("%d ms"):format(floor(x * 1000 + 0.5)) or nil end
-        lines[#lines + 1] = ("%sLast try (%s, %s):|r%s input %s after the deal%s%s, over after %s.|r"):format(
-            lt.kind == "won" and GREEN or ORANGE, name(lt.key), lt.kind == "won" and "bought" or "missed", GREY,
+        lines[#lines + 1] = ("%sLast try (%s, %s): your input was %s.|r%s input %s after the deal%s%s, over after %s.|r"):format(
+            lt.kind == "won" and GREEN or ORANGE, name(lt.key), lt.kind == "won" and "bought" or "missed",
+            lt.late and "LATE (the lock was already open)" or "IN TIME", GREY,
             ms(lt.input) or "?", lt.held and (", the game held the price request " .. ms(lt.held) .. " for its lock") or ", the price request left at once",
             lt.quote and (", price back after " .. ms(lt.quote)) or ", no price came back", ms(lt.total) or "?")
     elseif l and GetTime() - l.at < 600 and #lines < 2 then
@@ -543,18 +544,38 @@ end
 -- inBox: it is meant for the snipe box (a wheel notch elsewhere on the panel
 -- only counts while a deal is up; otherwise it scrolls the list).
 -- Returns true if the input was used for buying.
--- Seconds between your buy inputs, averaged over the last two seconds (nil
--- when there were fewer than three). A press and its release each count.
+-- Seconds between your buy inputs, averaged over the last four seconds (nil
+-- when the last input is over 1.5 seconds old or there is only one). A press
+-- and its release each count.
 function UI.InputEvery()
     local t, now = UI.inputTimes, GetTime()
-    if not t then return nil end
+    if not t or #t < 2 or now - t[#t] > 1.5 then return nil end
     local first, n = nil, 0
     for i = #t, 1, -1 do
-        if now - t[i] > 2 then break end
+        if now - t[i] > 4 then break end
         first, n = t[i], n + 1
     end
-    if n < 3 then return nil end
+    if n < 2 then return nil end
     return (t[#t] - first) / (n - 1)
+end
+
+-- THE WINDOW. A deal appears with the answer to a radar read or an item
+-- check; the game keeps its lock shut for about half a second after that
+-- answer, and a price request made in that time is held and leaves the
+-- moment the lock opens. So any input inside that window is as fast as
+-- possible, and one after it loses exactly the time it came late.
+--   optimal   an input at least every half window: two or more always land in it
+--   in time   an input at least every window: one always lands in it, with nothing to spare
+--   too slow  longer than the window between inputs: a deal can sit waiting for your next one
+-- Returns the window in seconds (from the measured lock; 0.49s at a 0.74s lock).
+function UI.PaceWindow()
+    local lock = (ns.Gate and ns.Gate.cycle) or 0.74
+    return math.max(0.2, lock - 0.25)
+end
+function UI.PaceZone(every)
+    if not every then return nil end
+    local w = UI.PaceWindow()
+    return every <= w / 2 and "optimal" or every <= w and "intime" or "slow"
 end
 
 function UI.InputPress(inBox, via)
@@ -756,9 +777,9 @@ function UI:RenderSnipe(short)
             hint = GREY .. "Stake-out: " .. how .. ". Stop it in the drawer (click the item).|r"
         elseif armed then
             -- your inputs against the game's lock, measured
-            local every, lock = UI.InputEvery(), ns.Gate and ns.Gate.cycle
+            local every = UI.InputEvery()
             hint = GREEN .. "Armed." .. (every and (" An input every %d ms."):format(floor(every * 1000 + 0.5)) or "")
-                .. (lock and (" The game takes one request every %d ms: an input within about %d ms of a deal is in time."):format(floor(lock * 1000 + 0.5), math.max(100, floor((lock - 0.25) * 1000 + 0.5))) or " Keep going: it stops being armed when the inputs stop.") .. "|r"
+                .. " Keep going: the gauge below shows whether that is fast enough.|r"
         elseif d then
             hint = GREY .. (mode == "wheel" and how or ("To buy: " .. how .. ".")) .. "|r"
         else
@@ -768,6 +789,27 @@ function UI:RenderSnipe(short)
     end
     sn.fill:SetColorTexture(fill[1], fill[2], fill[3], 1)
     UI.outline(sn, colour)
+    do  -- THE PACE GAUGE
+        local pg = sn.pace
+        if pg then
+            local every, w = UI.InputEvery(), UI.PaceWindow()
+            local zone = UI.PaceZone(every)
+            UI.paceState = { every = every, zone = zone, window = w }
+            local ideal = ("optimal: every %d ms or faster; too slow: over %d ms"):format(floor(w / 2 * 1000 + 0.5), floor(w * 1000 + 0.5))
+            local t = S.tally
+            local hits = ((t.inTime or 0) + (t.late or 0) > 0) and ("   %sPresses in time this session: %d of %d|r"):format(GREY, t.inTime or 0, (t.inTime or 0) + (t.late or 0)) or ""
+            if every then
+                local x = math.min(1, every / (2 * w)) * 240
+                pg.mark:ClearAllPoints(); pg.mark:SetPoint("CENTER", pg, "LEFT", x, 0); pg.mark:Show()
+                pg.text:SetText(("%sAn input every %d ms: %s|r  %s(%s)|r%s"):format(
+                    zone == "optimal" and GREEN or zone == "intime" and GOLD or RED, floor(every * 1000 + 0.5),
+                    zone == "optimal" and "OPTIMAL" or zone == "intime" and "IN TIME, NOTHING TO SPARE" or "TOO SLOW", GREY, ideal, hits))
+            else
+                pg.mark:Hide()
+                pg.text:SetText(("%sNot pressing.|r  %s(%s)|r%s"):format(GREY, GREY, ideal, hits))
+            end
+        end
+    end
     -- The line under the button never leaves you guessing: the last outcome
     -- stays there with its age, next to the count for this session.
     local t = S.tally
@@ -1404,6 +1446,30 @@ function UI:Create()
     sn.result = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     sn.result:SetPoint("TOPLEFT", sn, "BOTTOMLEFT", 2, -4); sn.result:SetPoint("TOPRIGHT", sn, "BOTTOMRIGHT", -2, -4)
     sn.result:SetJustifyH("LEFT"); sn.result:SetWordWrap(false)
+    -- THE PACE GAUGE: are your inputs coming fast enough? A bar in three
+    -- zones (green: optimal, yellow: in time with nothing to spare, red: too
+    -- slow), scaled to the game's own lock, and a white marker where you are.
+    local pg = CreateFrame("Frame", nil, sn)
+    pg:SetPoint("TOPLEFT", sn, "BOTTOMLEFT", 2, -21)
+    pg:SetSize(240, 9)
+    pg.zone = {}
+    local ZC = { { 0.15, 0.75, 0.3 }, { 0.9, 0.75, 0.1 }, { 0.8, 0.2, 0.2 } }
+    local ZW = { 0.25, 0.25, 0.5 } -- shares of the bar: 0 to half a window, to one window, to two windows
+    local x = 0
+    for i = 1, 3 do
+        local t = pg:CreateTexture(nil, "ARTWORK")
+        t:SetPoint("TOPLEFT", x, 0); t:SetSize(240 * ZW[i], 9)
+        t:SetColorTexture(ZC[i][1], ZC[i][2], ZC[i][3], 0.85)
+        pg.zone[i] = t
+        x = x + 240 * ZW[i]
+    end
+    pg.mark = pg:CreateTexture(nil, "OVERLAY")
+    pg.mark:SetSize(3, 15); pg.mark:SetColorTexture(1, 1, 1, 1)
+    pg.mark:SetPoint("CENTER", pg, "LEFT", 0, 0)
+    pg.text = pg:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    pg.text:SetPoint("LEFT", pg, "RIGHT", 8, 0)
+    pg.text:SetJustifyH("LEFT"); pg.text:SetWordWrap(false)
+    sn.pace = pg
     -- The mouse resting in this box pauses NOTHING. (It used to: "the mouse
     -- on it means a click is coming". With the mouse parked on the Buy button
     -- waiting for a deal, the radar stood still and no deal could appear.)
@@ -1801,7 +1867,7 @@ end
 --   Bags:   the NEXT line, what to do, the list
 --   Setup:  one status line under the heading, then the settings
 local LAYOUT = {
-    BUY = { next = -182, status = -244, statusH = 38, top = 288 },
+    BUY = { next = -182, status = -260, statusH = 38, top = 304 }, -- (the pace gauge sits between the snipe box's lines and the status)
     SELL = { next = -40, status = -58, statusH = 38, top = 104 },
     HISTORY = { status = -55, statusH = 14, top = 480 },
     PICKS = { status = -55, statusH = 14, top = 480 },

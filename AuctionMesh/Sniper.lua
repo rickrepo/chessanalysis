@@ -1512,7 +1512,14 @@ function Sniper:Result(kind, key, text)
     do  -- how this try went, in time (shown on the Trades tab)
         local ti = self.tryInfo
         if ti and ti.key == key and kind ~= "gone" then
-            self.lastTry = { key = key, kind = kind, input = ti.input, held = ti.held, quote = ti.quote, total = GetTime() - ti.t0, at = GetTime(), via = ti.via }
+            -- IN TIME: the game held the price request for its lock (it could not
+            -- have left sooner), or the input came inside the window anyway.
+            -- LATE: the lock was already open when the input came.
+            local window = (ns.UI and ns.UI.PaceWindow and ns.UI.PaceWindow()) or 0.49
+            local late = (not ti.held) and (ti.input or 0) > window
+            self.tally.inTime = (self.tally.inTime or 0) + (late and 0 or 1)
+            self.tally.late = (self.tally.late or 0) + (late and 1 or 0)
+            self.lastTry = { key = key, kind = kind, input = ti.input, held = ti.held, quote = ti.quote, total = GetTime() - ti.t0, at = GetTime(), via = ti.via, late = late }
             self.tryInfo = nil
             ns.Log("TRY %s %s: input %s after the deal, price request held %s for the lock, price back after %s, over after %.2fs", tostring(key), kind,
                 ti.input and ("%.2fs"):format(ti.input) or "?", ti.held and ("%.2fs"):format(ti.held) or "0s",
