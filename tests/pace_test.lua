@@ -137,7 +137,9 @@ end
 local locked, queue, log = false, {}, {}
 local dropNext                       -- name pattern of a request whose answer is lost once
 local curBrowse
+local skipNext                       -- name pattern of a request the game does not transmit at all, once
 local function send(name, onAnswer)
+    if skipNext and name:find(skipNext) then skipNext = nil; log[#log + 1] = { t = T, name = "(not transmitted) " .. name }; return end
     local function go()
         locked = true
         log[#log + 1] = { t = T, name = name }
@@ -437,10 +439,25 @@ elseif SCEN == "lost" then
     run(30)
     local w = window(a, a + 30)
     show("30s with one lost answer", w)
-    check(w.maxGap < 8, ("one radar answer is lost: the radar is back after %.1fs (it stood still for 60s)"):format(w.maxGap))
+    check(w.maxGap < 1.6, ("one radar answer is lost: the read is sent again the moment the auction house is free, %.1fs between two reads (it stood still for 60s, then 6s, then 3s)"):format(w.maxGap))
     check(w.radar >= 30, "and reads on back to back")
     local W = ns.Watch
     check((W.count["NO-ANSWER"] or 0) >= 1, "the throttle watch lists it as NO-ANSWER")
+    -- a read the game never transmits (no lock, no answer): sent again 0.4s later
+    run(5)
+    skipNext = "^BROWSE class 7"
+    local b = T - t0
+    run(10)
+    local lostAt, againAt
+    for _, e in ipairs(log) do
+        local t = e.t - t0
+        if t >= b and not lostAt and e.name:find("^%(not transmitted%)") then lostAt = t
+        elseif lostAt and not againAt and e.name == "BROWSE class 7" then againAt = t end
+    end
+    check(lostAt and againAt and againAt - lostAt < 0.7, ("a read the game never transmits is sent again %.2fs later (it waited 2.7 to 3 seconds)"):format((againAt or 0) - (lostAt or 0)))
+    local last = W.list[#W.list]
+    print("     " .. tostring(last and last.text))
+    check(last and last.kind == "NO-ANSWER" and tostring(last.text):find("the game never transmitted it", 1, true), "and the incident says the game never transmitted it")
 end
 
 trace()

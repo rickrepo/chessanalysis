@@ -6,6 +6,14 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.33.3 (2026-11-16)
+
+From a Snapshot of 3.33.2 (3 got, 15 missed in 4 minutes).
+
+- **A lost radar read is sent again at once.** Four radar reads in four minutes got no answer, each one right after a purchase the server refused, and each cost 2.7 to 3 seconds with no radar: the moments after a miss, when more cheap units often follow. While a request is really on its way the auction house is locked, and it opens only after the answer. So "free again, and nothing came" is now read as lost immediately: the read goes out again about half a second after it was lost.
+  - The `NO-ANSWER` line in the Snapshot now says whether the game transmitted the lost read or never did.
+- Seen in that Snapshot: Wool Cloth has a buying price again on the Picks tab, which an item on hold does not have, so the one-time repair of 3.33.1 appears to have run.
+
 ## 3.33.2 (2026-11-16)
 
 From a log and a Snapshot with 5 copper in hand ("not getting any bites").

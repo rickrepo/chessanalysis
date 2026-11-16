@@ -246,6 +246,7 @@ function Swarm:Step()
                 end
                 self.stats.queries = self.stats.queries + 1
                 cur.phase, cur.at = "query", clock
+                cur.sentCount = ns.Gate and ns.Gate.sentCount -- to tell later whether the game transmitted it
                 return
             end
         elseif cur.phase == "query" then
@@ -259,8 +260,25 @@ function Swarm:Step()
                 self.current = nil -- give up; it is read again at once
                 return
             end
-            if not ex.gotResults() then return end
-            if ex.full() then
+            if not ex.gotResults() then
+                -- THE AUCTION HOUSE IS FREE AGAIN AND THERE IS NO ANSWER: the read was
+                -- lost. While a request is really on its way the lock is shut, and
+                -- it only opens after the answer; so "open, and nothing came" needs
+                -- no waiting out. (A real Snapshot: four radar reads lost in four
+                -- minutes, each right after a purchase the server refused, each
+                -- costing 2.7 to 3 seconds with no radar.)
+                if clock - cur.at >= 0.4 and ex.ready() then
+                    local G = ns.Gate
+                    local sent = G and cur.sentCount and G.sentCount ~= cur.sentCount
+                    if ns.Watch then
+                        ns.Watch:Add("NO-ANSWER", clock - cur.at, ("a radar read got no answer and the auction house is free again after %.2fs (%s); sent again at once")
+                            :format(clock - cur.at, sent and "the game did transmit it" or "the game never transmitted it"))
+                    end
+                    self.current = nil
+                else
+                    return
+                end
+            elseif ex.full() then
                 self.doneAt[cur.unit] = self.serverTime()
                 self.myDone = self.myDone or {}
                 self.myDone[cur.unit] = self.serverTime()
