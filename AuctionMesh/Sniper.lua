@@ -892,6 +892,12 @@ function Sniper:InFocus(key)
     local set = self:FocusSet()
     return set == nil or set[key] == true
 end
+-- A fast seller outside the focus set (laser focus on "prime" only).
+function Sniper:InWide(key)
+    if not ns.Scout or not ns.Scout.d or not ns.Scout.Wide then return false end
+    local w = ns.Scout:Wide(self:Budget(), VENDOR_SOLD, classSub)
+    return w ~= nil and w[key] == true
+end
 
 function Sniper:OnSweep(key, price, qty)
     local shared = false
@@ -945,16 +951,26 @@ function Sniper:OnSweep(key, price, qty)
     -- cheap listing you cannot pay for is COUNTED (the panel says so) instead
     -- of silently passed over. (A real log: 5 copper in hand, 115 radar reads
     -- with not one alert, and nothing on the panel to say why.)
-    local why, flip
+    local why, flip, wide
     local v = self.vendorOf(key)
     if v and price <= floor(v / (1 + Deals.cfg.vendorMargin)) then
         why = "at or under vendor price"
     elseif VENDOR_SOLD[key] or not Deals.cfg.flips then return
-    elseif not self:InFocus(key) then return -- laser focus: flips only on the focus items
-    elseif market and price <= market * self.TriggerRatio() then
-        why, flip = "under market", true
-    elseif prev and price <= prev.p * 0.85 then
-        why, flip = "price just dropped", true
+    else
+        -- LASER FOCUS. The focus items get the radar's alerts at once and
+        -- flips straight from the radar. Every other item measured to sell
+        -- fast used to be passed over for flips altogether, however cheap it
+        -- was listed (15 items looked at, of some 50 fast sellers). Those
+        -- are now looked at too: see AddWide.
+        if not self:InFocus(key) then
+            if not self:InWide(key) then return end
+            wide = true
+        end
+        if market and price <= market * self.TriggerRatio() then
+            why, flip = "under market", true
+        elseif prev and price <= prev.p * 0.85 then
+            why, flip = "price just dropped", true
+        end
     end
     if not why then return end
     do  -- YOUR GOLD. One unit must be payable; for a flip, with its posting fee on top (the deal rules keep it back).
@@ -974,8 +990,36 @@ function Sniper:OnSweep(key, price, qty)
     end
     if why == "at or under vendor price" then
         if not shared and self:InstantVendor(key, price, qty, v, prevOwn) then return end
+    elseif wide then
+        return self:AddWide(key, why, price, market, qty)
     elseif not shared and self:InstantFlip(key, price, qty, prevOwn) then return end
     self:AddTrigger(key, why, price, market, nil, qty)
+end
+
+-- A FLIP ALERT ON A FAST SELLER OUTSIDE THE FOCUS SET. It must not cost the
+-- focus items anything, so it does not take a radar read's place:
+--   * listed at half the market price or less: an ordinary alert, checked at
+--     once (that is the big flip, and it will not last);
+--   * otherwise it waits for the upkeep turn (one request in nine), ahead of
+--     the routine listing re-reads that turn used to go to (under 1% of
+--     those ever found a deal), best first, and only if the radar's latest
+--     read still shows the price.
+Sniper.WIDE_NOW = 0.5
+function Sniper:AddWide(key, why, price, market, qty)
+    if market and market > 0 and price <= market * Sniper.WIDE_NOW then
+        return self:AddTrigger(key, why, price, market, nil, qty)
+    end
+    if not self.active or key <= 0 or self.isItem[key] or self.verified[key] then return end
+    if not self:AlertDue(key, price, qty, market) then return end
+    self.wide = self.wide or {}
+    local w = self.wide[key]
+    if not w then
+        ns.Log("WIDE ALERT %s: %s (lowest %s, market %s): outside the focus set, checked in the upkeep turn", tostring(key), tostring(why), tostring(price), tostring(market))
+    end
+    self.wide[key] = { price = price, market = market, at = w and w.at or GetTime(),
+                       src = (why and why:find("market", 1, true)) and "market" or "drop",
+                       -- what one unit could bring: the copper between this price and the market
+                       score = (market or 0) - price }
 end
 
 -- How many cheap listings the radar passed over in the last minute because
@@ -1254,6 +1298,26 @@ function Sniper:NextCheck(upkeep)
         end
     end
     if not upkeep then return nil end
+    do  -- flip alerts on fast sellers outside the focus set: the upkeep turn goes to the best of them first
+        local wide, now = self.wide, GetTime()
+        if wide then
+            local bk, bs
+            for k, w in pairs(wide) do
+                local sw = self.sweep and self.sweep[k]
+                -- gone from the radar's latest read, too old, or already a deal: dropped without a request
+                if now - w.at > 30 or not sw or sw.p > w.price or self.verified[k] then
+                    wide[k] = nil
+                elseif self:Since(k) >= TRIGGER_MIN and (not bs or w.score > bs) then
+                    bk, bs = k, w.score
+                end
+            end
+            if bk then
+                local w = wide[bk]
+                wide[bk] = nil
+                return bk, w.src, now - w.at, "me", true
+            end
+        end
+    end
     local snipe = self:SnipeMode()
     if not snipe then
         -- what you hold, priced for posting (every 45s on the Bags tab, every 10 minutes elsewhere)
@@ -2139,6 +2203,7 @@ function Sniper:Start()
     self.checkedAt = {} -- new AH visit: everything may have changed
     self.ownRead = false
     self.sweep, self.triggers = {}, {}
+    self.wide = {}
     self.ownSweep, self.judged = {}, {}
     -- listings remembered from the last visit: the radar has not been watching them since
     for _, lr in pairs(self.lastRows or {}) do lr.broken = true end

@@ -6,6 +6,21 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.44.0 (2026-11-17)
+
+"Why don't I see the big flips more?" From the report of 21:11 and the code.
+
+- **Fast sellers outside the focus set are checked for flips too.** With laser focus on "prime", flips were only looked for on the 12 best items plus your own list (15 in your report). Every other item measured to sell fast (about 35 more in that report: Copper Ore, Tin Bar, Medium Leather, Kingsblood, Stranglekelp, Iron Ore and so on) was passed over for flips altogether, however cheap it was listed. They are now looked at, without costing the focus items anything:
+  - listed at half its market price or less: an ordinary alert, checked at once;
+  - otherwise it waits for the upkeep turn (one request in nine), ahead of the routine listing re-reads that turn used to go to (`watch list: 23 real deals of 2617 checks` in your report), best first, and only if the radar's latest read still shows the price. A cheap price that is gone before its turn costs no request.
+  - Flips straight from the radar (no item check) stay with the focus items: only their listings are kept current.
+  - The panel's focus sentence says how many other fast sellers are covered this way.
+- What limits the SIZE of a flip is your capital, and that is not changed here (your settings, shown on the Setup tab):
+  - *Unsold auctions may hold 70%.* At 21:10 you held 1g17s with 10g48s in auctions that had not sold yet: 89% of everything you own. Over the limit, only small flips are offered: up to 15% of the gold in hand, which was 17s55c.
+  - *One flip takes at most 35% of the gold in hand.* 41s at that moment. The 51 Thick Leather (1g42s for +1g34s) needed 4g05s in hand to be offered whole.
+  - Both limits protect against gold stuck in auctions that do not sell. Your record so far: `100% of the last 20 sold, at 142% of the planned price`.
+- Not yet tried in the real game.
+
 ## 3.43.0 (2026-11-17)
 
 "Does something happen after the first 10 to 20 minutes?" Two things, both in the real log and Snapshot of 21:10 to 21:33. One is the addon's and is fixed here.

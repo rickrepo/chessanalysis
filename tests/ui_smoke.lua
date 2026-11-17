@@ -1784,6 +1784,58 @@ do
         reset()
     end
 
+    -- FAST SELLERS OUTSIDE THE FOCUS SET are checked for flips too (they were passed over), without taking the radar's turns
+    do
+        reset(); gold = 90000; S.cool, S.streak, S.muted = {}, {}, {}
+        local leather = LIST[2319]; LIST[2319] = nil
+        local realFocus, realWide = S.InFocus, S.InWide
+        S.InFocus = function(_, k) return k == 2770 end            -- laser focus: Copper Ore only
+        S.InWide = function(_, k) return k == 3356 or k == 3820 end -- Kingsblood and Stranglekelp: fast sellers outside it
+        ITEMS[3356], ITEMS[3820], ITEMS[785] = { "Kingsblood", 30 }, { "Stranglekelp", 100 }, { "Mageroyal", 20 }
+        local now = GetServerTime()
+        for _, k in ipairs({ 3356, 3820, 785 }) do ns.Store.fp[k], ns.Store.ft[k] = 300, now end
+        local everyWas, bagsWas = S.upkeep.every, S.upkeep.bags
+        S.upkeep.every, S.upkeep.bags = 8, 8
+        S.wide, S.triggers, S.judged, S.checkedAt, S.ownSweep, S.sweep = {}, {}, {}, {}, {}, {}
+        local n0 = #sent
+        local function searched(k) for i = n0 + 1, #sent do if sent[i] == "search" .. k then return true end end return false end
+        -- not a fast seller and not in focus: passed over, as before
+        S:OnSweep(785, 200, 500)
+        check(S.wide[785] == nil and S.triggers[785] == nil, "an item that is neither in focus nor measured to sell fast: no flip alert, as before")
+        -- a fast seller outside the focus, 30% under its market
+        S:OnSweep(3356, 210, 800)
+        check(S.wide[3356] ~= nil and S.triggers[3356] == nil and #S.triggers == 0, "Kingsblood (a fast seller outside the focus) at 2s10c under a 3s market: noted, but NOT as an alert that holds the radar")
+        ns.radarSince = 0
+        check(S:YieldTo() == true and not searched(3356), "the radar's next read goes out: the check waits for the upkeep turn")
+        ns.radarSince = 8
+        LIST[3356] = { { 210, 40 }, { 300, 500 }, { 301, 400 }, { 305, 300 } }
+        check(S:YieldTo() == false and searched(3356) and S.wide[3356] == nil, "in the upkeep turn (one request in nine) it is checked")
+        advance(1)
+        check(S.verified[3356] and S.verified[3356].kind == "FLIP" and S.verified[3356].units == 40, "and the flip is offered: 40 Kingsblood at 2s10c")
+        S.verified[3356] = nil; S.dealSeen[3356] = nil
+        -- gone from the radar before its turn came: no request is spent on it
+        S.checkedAt, S.judged = {}, {}
+        S:OnSweep(3356, 210, 800)
+        S:OnSweep(3356, 300, 760) -- the next read: back at the market price
+        n0 = #sent
+        ns.radarSince = 8
+        local nextKey = S:NextCheck(true) -- the upkeep turn's pick
+        check(nextKey ~= 3356 and not searched(3356) and S.wide[3356] == nil, "the cheap price is gone from the radar's next read before its turn: dropped, no request spent")
+        -- at half the market price or less: an ordinary alert, at once
+        S.checkedAt, S.judged = {}, {}
+        ns.radarSince = 0
+        S:OnSweep(3820, 140, 300)
+        check(S.triggers[3820] ~= nil and S.wide[3820] == nil, "Stranglekelp at 1s40c under a 3s market (less than half): an ordinary alert, checked at once")
+        S.triggers, S.trigInfo, S.wide = {}, {}, {}
+        S.InFocus, S.InWide = realFocus, realWide
+        S.upkeep.every, S.upkeep.bags = everyWas, bagsWas
+        for _, k in ipairs({ 3356, 3820, 785 }) do ns.Store.fp[k], ns.Store.ft[k] = nil, nil; ITEMS[k] = nil; LIST[k] = nil; S.ownSweep[k] = nil; S.sweep[k] = nil end
+        LIST[2319] = leather
+        ns.radarSince = 0
+        S.result, S.lastTry, UI.flashUntil = nil, nil, nil
+        advance(1); reset(); UI:Render()
+    end
+
     -- AN ALERT IS NOT CHECKED AGAIN while the last check's own answer still stands ("needs 41c or less")
     do
         reset(); gold = 900; S.cool, S.streak, S.muted = {}, {}, {}

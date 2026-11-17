@@ -89,6 +89,21 @@ check(Scout:SetMode() == "prime", "one click: prime items")
 set, list, text = Scout:Focus(1000, vendorSold, classOf)
 print("     " .. text)
 check(set and set[1] and set[2] and set[3] and not set[4] and #list == 3, "focus is exactly the 3 prime items")
+do  -- with more fast sellers than the focus takes, the others are still checked for flips
+    local topWas = Scout.cfg.primeTop
+    Scout.cfg.primeTop = 2; Scout:Changed()
+    local set2, list2, text2 = Scout:Focus(1000, vendorSold, classOf)
+    local wide = Scout:Wide(1000, vendorSold, classOf)
+    print("     " .. text2)
+    local n = 0
+    for _ in pairs(wide or {}) do n = n + 1 end
+    check(#list2 == 2 and n == 1 and wide[list[3]] and not wide[list2[1]] and not wide[list2[2]],
+        "focus on the best 2 of 3 fast sellers: the third is in the wider set, the focus items are not")
+    check(text2:find("The 1 other fast seller is still checked for flips, after the radar's own turn.", 1, true), "and the panel's sentence says so")
+    Scout.cfg.primeTop = topWas; Scout:Changed()
+    Scout:Focus(1000, vendorSold, classOf)
+    check(next(Scout:Wide(1000, vendorSold, classOf)) == nil, "with every fast seller in the focus there is no wider set")
+end
 Scout.cfg.primeMin = 5; Scout:Changed()
 set, list, text = Scout:Focus(1000, vendorSold, classOf)
 print("     " .. text)

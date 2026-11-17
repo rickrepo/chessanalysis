@@ -279,6 +279,7 @@ function Scout:Focus(budget, vendorSold, classOf)
     local cfg = cfgOf()
     local mode = cfg.focusMode or "off"
     local set, list, text = nil, {}, "Focus is off: every material is watched."
+    local wide -- fast sellers outside the focus set: still checked for flips, after the radar's own turn
     if mode == "prime" then
         local prime = self:Prime(budget, vendorSold)
         local own = cfg.focusItems or {}
@@ -287,6 +288,8 @@ function Scout:Focus(budget, vendorSold, classOf)
             if #prime >= self.cfg.primeMin then
                 for i = 1, min(#prime, self.cfg.primeTop) do set[prime[i].key] = true; list[#list + 1] = prime[i].key end
             end
+            wide = {}
+            for i = 1, #prime do wide[prime[i].key] = true end
             local picked, extra = #list, 0
             -- your own watch list is always included, on top of what the addon picked
             for _, key in ipairs(own) do
@@ -297,6 +300,12 @@ function Scout:Focus(budget, vendorSold, classOf)
             else
                 text = ("Focused on the %d items with the best measured activity%s."):format(picked,
                     extra > 0 and (", plus %d from your own watch list"):format(extra) or "")
+            end
+            local others = 0
+            for key in pairs(wide) do if set[key] then wide[key] = nil else others = others + 1 end end
+            if others > 0 then
+                text = text .. (others == 1 and " The 1 other fast seller is still checked for flips, after the radar's own turn."
+                    or (" The %d other fast sellers are still checked for flips, after the radar's own turn."):format(others))
             end
         else
             text = ("Focus is waiting: %d prime item%s so far, %d needed. Selling speed takes about %d minutes of watching to measure."):format(
@@ -325,8 +334,14 @@ function Scout:Focus(budget, vendorSold, classOf)
             text = ("Focused on your list: %d item%s."):format(#list, #list == 1 and "" or "s")
         end
     end
-    self.focusCache = { at = now, budget = budget, set = set, list = list, text = text }
+    self.focusCache = { at = now, budget = budget, set = set, list = list, text = text, wide = wide }
     return set, list, text
+end
+
+-- Fast sellers outside the focus set (nil: no focus, or a list of your own).
+function Scout:Wide(budget, vendorSold, classOf)
+    self:Focus(budget, vendorSold, classOf)
+    return self.focusCache and self.focusCache.wide or nil
 end
 
 function Scout:Changed()
