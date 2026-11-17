@@ -207,6 +207,43 @@ local function fillSell(r, e, short)
         if profit then profitText = ("  >  %s%s%s|r each"):format(profit >= 0 and GREEN or RED, profit >= 0 and "+" or "", short(profit)) end
         local est = (e.f.kind == "FLIP" and not live and e.action ~= "LISTED") and (GREY .. " (planned)|r") or ""
         r.detail:SetText(("Paid %s  >  Sell %s%s%s"):format(paidText, short(sell), est, profitText))
+        -- A VENDOR WOULD PAY MORE THAN IT COST: both ways out on the row, with
+        -- the difference. Vendor now, or wait (for the fee, for the sale) and list it.
+        local c = Se:Choice(e)
+        if c and e.action == "VENDOR" then
+            -- IF LISTED: what waiting and listing brings on top of the vendor (or loses)
+            r.c[4]:SetText(c.ah and (c.diff > 0 and ((c.short and ORANGE or GREEN) .. "+" .. short(c.diff) .. " more|r") or (GREY .. short(-c.diff) .. " less|r"))
+                or c.held and (GREY .. "less|r") or (GREY .. "?|r"))
+        elseif c and e.vendorAlt and c.ah then
+            -- VENDOR NOW: what the vendor brings against listing it (orange: you do not have the posting fee now)
+            r.c[4]:SetText((c.short and ORANGE or GREY) .. (c.diff >= 0 and (short(c.diff) .. " less") or ("+" .. short(-c.diff) .. " more")) .. "|r")
+        end
+        if c then
+            local function sg(x) return (x >= 0 and "+ " or "- ") .. short(math.abs(x)) end
+            local about = c.live and "" or "about "
+            local fee = ""
+            if c.fee then
+                fee = c.short and (" %s(fee %s first: you have %s%s)|r"):format(ORANGE, short(c.fee), short(GetMoney()),
+                        c.nextIn and (", sale gold in %d min"):format(math.max(1, floor(c.nextIn / 60 + 0.5))) or "")
+                    or (" %s(fee %s first)|r"):format(GREY, short(c.fee))
+            end
+            if e.action == "VENDOR" then
+                local other
+                if c.ah and c.diff > 0 then
+                    other = ("or wait and list: %s%s%s|r, %s more%s"):format(about, GREEN, sg(c.ah), short(c.diff), fee)
+                elseif c.ah then
+                    other = ("%slisting instead: %s%s, %s less|r"):format(GREY, about, sg(c.ah), short(-c.diff))
+                elseif c.held then
+                    other = GREY .. "the auction house pays less right now|r"
+                else
+                    other = GREY .. "no auction house price known yet|r"
+                end
+                r.detail:SetText(("Vendor now %s%s|r   %s"):format(GREEN, sg(c.vendor), other))
+            elseif c.ah then
+                r.detail:SetText(("List: %s%s%s|r%s   or vendor now: %s, %s%s, no wait|r"):format(about, GREEN, sg(c.ah), fee, sg(c.vendor),
+                    GREY, c.diff >= 0 and (short(c.diff) .. " less") or (short(-c.diff) .. " more")))
+            end
+        end
     end
     if button then r.btn:SetText(button); r.btn:Enable(); r.btn:Show() else r.btn:Hide() end
 end
@@ -327,6 +364,9 @@ end
 local CAPS = {
     deal = { "BUY", "MARKET", "SPREAD", "VOLUME", "PROFIT" },
     entry = { "QTY", "COST", "MARKET", "STATUS", "P / L" },
+    -- what a vendor pays more for than it cost: the other way out has its own column
+    vendor = { "QTY", "COST", "VENDOR", "IF LISTED", "P / L" },
+    either = { "QTY", "COST", "MARKET", "VENDOR NOW", "P / L" },
 }
 
 local function section(list, text, caps, items)
@@ -354,13 +394,15 @@ local function buildList(tab, deals, entries)
             list[#list + 1] = { note = ahOpen() and "None right now. A sound plays when one appears." or "Open the auction house to look for deals." }
         end
     elseif tab == "SELL" then
-        local by = { AH = {}, VENDOR = {}, MAIL = {}, HOLD = {} }
+        local by = { AH = {}, EITHER = {}, VENDOR = {}, MAIL = {}, HOLD = {} }
         for _, e in ipairs(entries) do
-            local t = by[e.action]
+            -- to post, with a vendor as the quicker way out: its own section, so both figures are on the row
+            local t = by[(e.action == "AH" and e.vendorAlt) and "EITHER" or e.action]
             if t then t[#t + 1] = e end
         end
         if #by.AH > 0 then section(list, "TO POST AT THE AUCTION HOUSE", CAPS.entry, by.AH) end
-        if #by.VENDOR > 0 then section(list, "TO SELL TO A VENDOR", CAPS.entry, by.VENDOR) end
+        if #by.EITHER > 0 then section(list, "TO POST, OR SELL TO A VENDOR NOW", CAPS.either, by.EITHER) end
+        if #by.VENDOR > 0 then section(list, "TO SELL TO A VENDOR", CAPS.vendor, by.VENDOR) end
         if #by.MAIL > 0 then section(list, "IN THE MAILBOX", CAPS.entry, by.MAIL) end
         if #by.HOLD > 0 then section(list, "HELD, PRICE TOO LOW", CAPS.entry, by.HOLD) end
         local stuck, ended, ok, sold = {}, {}, {}, {}

@@ -182,6 +182,17 @@ ns.Auto.cfg.tooMany = 1e9 -- the walkthrough shows far more deals than a real se
 ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1 -- the capital limits have their own section at the end
 AuctionMeshDB.cfg.autoConfirm = false -- the walkthrough drives the two-input path; one-input buying has its own section
 ns.Deals.cfg.requireTurnover = false -- the fake auction house has no other buyers until the "volume" section
+-- the section headings on the panel, each with its column captions
+local function headsText()
+    local out = {}
+    for i = 1, #frames do
+        local f = frames[i]
+        if rawget(f, "detail") and f._shown and rawget(f, "sect") and f.sect.head then
+            out[#out + 1] = strip(f.head._text) .. " | " .. strip(f.c[1]._text) .. " / " .. strip(f.c[2]._text) .. " / " .. strip(f.c[3]._text) .. " / " .. strip(f.c[4]._text) .. " / " .. strip(f.profit._text)
+        end
+    end
+    return out
+end
 local function rowsText()
     local out = {}
     for i = 1, #frames do
@@ -258,6 +269,25 @@ MailFrame:Show(); fire("MAIL_SHOW"); advance(2)
 r = rowsText(); print("     " .. r[1])
 check(bags[1] and bags[1].itemID == 2770 and r[1]:find("Post it: worth more than at a vendor", 1, true),
     "mailbox collected automatically; bought under vendor price but worth more on the auction house: the row says Post it, not Sell to a vendor")
+-- BOTH WAYS OUT ON THE ROW, with the difference: list it, or a vendor now
+check(r[1]:find("List: + 48c (fee 12c first)   or vendor now: + 24c, 24c less, no wait", 1, true),
+    "the row's hover text gives both: listed it brings +48c (the 12c fee goes first), a vendor now +24c, 24c less, with no wait")
+do
+    local h = headsText(); print("     " .. tostring(h[1]))
+    check(h[1] == "TO POST, OR SELL TO A VENDOR NOW (1) | QTY / COST / MARKET / VENDOR NOW / P / L" and r[1]:find("| 12 / 3c / 8c / 24c less |", 1, true) and r[1]:find("| +48c |", 1, true),
+        "ON THE ROW: it sits under 'To post, or sell to a vendor now', with the listing profit (+48c) and a VENDOR NOW column (24c less)")
+end
+do  -- not enough gold for the posting fee: the row says so, and when sale gold arrives
+    local goldWas, payWas = gold, S.ownSoldPay
+    gold = 5
+    UI:Render(); r = rowsText(); print("     " .. r[1])
+    check(r[1]:find("List: + 48c (fee 12c first: you have 5c)   or vendor now: + 24c", 1, true), "with 5c in hand: the 12c fee is flagged, with what you have")
+    S.ownSoldPay = { { amount = 300, due = GetTime() + 720, key = 2589 } }
+    UI:Render(); r = rowsText(); print("     " .. r[1])
+    check(r[1]:find("(fee 12c first: you have 5c, sale gold in 12 min)", 1, true), "and when sale gold is on its way, in how many minutes it arrives: wait and list, or vendor now")
+    gold, S.ownSoldPay = goldWas, payWas
+    UI:Render()
+end
 do
     local e = ns.Seller:Entries()[1]
     local adv = strip((ns.Seller:Advice(e)))
@@ -286,8 +316,53 @@ do
     local fp, ft = ns.Store.fp[2770], ns.Store.ft[2770]
     local live = ns.Seller.prices[2770]
     ns.Store.fp[2770], ns.Store.ft[2770], ns.Seller.prices[2770] = 6, GetServerTime(), nil; UI:Render()
-    r = rowsText()
+    r = rowsText(); print("     " .. r[1])
     check(r[1]:find("Sell to any vendor", 1, true) or r[1]:find("%[Sell%]"), "market at 6c (5c after the cut and undercut): the vendor's 5c is as good, so the row says sell to a vendor")
+    check(r[1]:find("Vendor now + 24c   listing instead: about + 12c, 12c less", 1, true), "and it shows what listing would bring instead: about +12c, 12c less than the vendor")
+    do
+        local h = headsText()
+        check(h[1] == "TO SELL TO A VENDOR (1) | QTY / COST / VENDOR / IF LISTED / P / L" and r[1]:find("| 12 / 3c / 5c / 12c less |", 1, true),
+            "ON THE ROW: under 'To sell to a vendor' the IF LISTED column says 12c less")
+    end
+    do  -- the auction house pays a little more, not enough to be the recommendation: the row still shows what waiting would add
+        ITEMS[4306] = { "Silk Cloth", 150 }
+        AuctionMeshDB.flips[4306] = { kind = "VENDOR", sell = 150, units = 10, cost = 100, at = GetServerTime() }
+        bags[5] = { itemID = 4306, stackCount = 10 }; fire("BAG_UPDATE_DELAYED")
+        ns.Store.fp[4306], ns.Store.ft[4306] = 170, GetServerTime()
+        UI:Render()
+        local row
+        for _, l in ipairs(rowsText()) do if l:find("Silk Cloth", 1, true) then row = l end end
+        print("     " .. tostring(row))
+        check(row and row:find("| 10 / 1s00c / 1s50c / +1s00c more |", 1, true) and row:find("| +5s00c |", 1, true),
+            "ON THE ROW: the vendor's +5s as the profit, and IF LISTED: +1s00c more")
+        check(row and row:find("Sell to any vendor", 1, true) and row:find("Vendor now + 5s00c   or wait and list: about + 6s00c, 1s00c more (fee 10c first)", 1, true),
+            "Silk Cloth, vendor 1s50c, market 1s70c: the vendor is recommended (+5s now), and the row shows waiting and listing would bring about +6s, 1s more, after a 10c fee")
+        local e
+        for _, x in ipairs(ns.Seller:Entries()) do if x.key == 4306 then e = x end end
+        local adv = strip((ns.Seller:Advice(e)))
+        print("     " .. adv)
+        check(adv:find("^Sell it to any vendor: %+ 5s00c, guaranteed%. Or wait and list it: about %+ 6s00c after the cut, 1s00c more%. That takes a posting fee of 10c first%. The gold comes about an hour after it sells%."),
+            "the item's advice says the same in words")
+        -- HELD AS A FLIP, some of it bought under vendor price (one record per item): a vendor is still a way out, from its own row
+        AuctionMeshDB.flips[4306] = { kind = "FLIP", sell = 190, units = 10, cost = 120, at = GetServerTime() }
+        local goldWas, realizedWas = gold, AuctionMeshDB.realized or 0
+        UI:Render()
+        for _, x in ipairs(ns.Seller:Entries()) do if x.key == 4306 then e = x end end
+        for _, l in ipairs(rowsText()) do if l:find("Silk Cloth", 1, true) then row = l end end
+        print("     " .. tostring(row))
+        check(e.action == "AH" and e.vendorAlt == 150 and row:find("%[Sell%]") and row:find("| 10 / 1s20c / 1s90c* / 3s00c less |", 1, true) and row:find("| +6s00c |", 1, true)
+            and row:find("or vendor now: + 3s00c, 3s00c less", 1, true),
+            "a flip that cost 1s20c with a vendor paying 1s50c: listing brings +6s, VENDOR NOW 3s00c less, and there is a Sell button at the vendor")
+        ns.Seller:SellVendor(4306); advance(3)
+        check(AuctionMeshDB.flips[4306] == nil and gold == goldWas + 1500 and (AuctionMeshDB.realized or 0) == realizedWas + 300,
+            "its own Sell button does: 10 sold at the vendor's 1s50c, +3s00c banked (the vendor's price, not the planned resale price)")
+        gold = goldWas
+        AuctionMeshDB.realized = realizedWas
+        AuctionMeshDB.flips[4306] = nil; bags[5] = nil; fire("BAG_UPDATE_DELAYED")
+        ns.Store.fp[4306], ns.Store.ft[4306] = nil, nil
+        ITEMS[4306] = nil
+        UI:Render()
+    end
     check(AuctionMeshFrame.vend._shown and strip(AuctionMeshFrame.vend._text) == "Sell all to vendor  +60c", "and the panel offers one button: Sell all to vendor +60c")
     AuctionMeshFrame.vend._scripts.OnClick(AuctionMeshFrame.vend); advance(3)
     check(gold == 3200 - 36 + 60 and AuctionMeshDB.flips[2770] == nil, "after your click: sold, +24c real profit, list cleared")

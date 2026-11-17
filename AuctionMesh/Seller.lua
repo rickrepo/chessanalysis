@@ -91,6 +91,14 @@ function Seller.FindInBags(key)
     end
 end
 
+-- What a vendor pays for one unit of a holding. A vendor deal's record carries
+-- it; a flip's record carries the planned resale price, so the game is asked.
+function Seller.VendorOf(key, f)
+    if f and f.kind == "VENDOR" then return f.sell or 0 end
+    local S = ns.Sniper
+    return (S and S.vendorOf and S.vendorOf(key)) or 0
+end
+
 function Seller.ForgetUnits(key, n)
     local f = flips()[key]
     if not f then return end
@@ -155,6 +163,11 @@ function Seller:Entries()
                 if self:BestExit(key, f) == "AH" then action, vendorAlt = "AH", f.sell end
             elseif p and p.hold and now - p.at < HOLD_TTL then
                 action = "HOLD"
+            elseif not f.unknownCost then
+                -- held as a flip, but a vendor pays more than it cost (some of it was
+                -- bought under vendor price): the vendor is a second way out here too
+                local v = Seller.VendorOf(key, f)
+                if v > (f.cost or 0) then vendorAlt = v end
             end
             out[#out + 1] = { key = key, action = action, count = inBags, f = f, vendorAlt = vendorAlt }
         end
@@ -232,8 +245,11 @@ function Seller:SellVendor(onlyKey)
             local info = C_Container.GetContainerItemInfo(bag, slot)
             local f = info and flips()[info.itemID]
             -- "Sell all" leaves what is worth more on the auction house; the row's own Sell button still sells it
-            local keep = f and not onlyKey and self:BestExit(info.itemID, f) == "AH"
-            if f and f.kind == "VENDOR" and not keep and (not onlyKey or onlyKey == info.itemID)
+            local keep = f and f.kind == "VENDOR" and not onlyKey and self:BestExit(info.itemID, f) == "AH"
+            -- a vendor deal; or, with the row's own Sell button only, a flip that a vendor pays more for than it cost
+            local can = f and (f.kind == "VENDOR"
+                or (onlyKey == info.itemID and not f.unknownCost and Seller.VendorOf(info.itemID, f) > (f.cost or 0)))
+            if can and not keep and (not onlyKey or onlyKey == info.itemID)
                 and not info.isLocked and not info.hasNoValue then
                 local key, n = info.itemID, info.stackCount or 1
                 remaining[key] = remaining[key] or (f.units or 0)
@@ -260,9 +276,10 @@ function Seller:SellVendor(onlyKey)
             local gone = was - (bagCount[key] or 0)
             if gone > 0 then
                 local f = flips()[key]
-                earned = earned + ((f and f.sell) or 0) * gone
-                if f and not f.unknownCost then Seller.Realize(((f.sell or 0) - (f.cost or 0)) * gone) end
-                if ns.Journal then ns.Journal:Vendored(key, gone, (f and f.sell) or 0) end
+                local unit = f and Seller.VendorOf(key, f) or 0
+                earned = earned + unit * gone
+                if f and not f.unknownCost then Seller.Realize((unit - (f.cost or 0)) * gone) end
+                if ns.Journal then ns.Journal:Vendored(key, gone, unit) end
                 Seller.ForgetUnits(key, gone)
             end
         end
@@ -1423,6 +1440,54 @@ function Seller:Tied()
     return listed + onway + waiting, nextIn, listed, onway, waiting
 end
 
+-- VENDOR NOW, OR WAIT AND LIST IT? For a holding that a vendor pays more for
+-- than it cost you, both ways out as numbers, so the choice is yours:
+--   vendor = profit on all of it at a vendor, now (no cut, no fee, no wait)
+--   ah     = profit on all of it on the auction house after the cut: from the
+--            live price when it has been checked (live = true), else from the
+--            item's last full listing or the radar's last read. nil = no
+--            price is known; held = the live check found the auction house
+--            does not beat the vendor.
+--   diff   = ah - vendor: what waiting and listing brings on top (or loses)
+--   fee    = the posting fee it takes first; short = you do not have it now;
+--            nextIn = seconds to your next sale gold, if any is on its way
+--   rate   = measured sales an hour
+function Seller:Choice(e)
+    if e.action ~= "VENDOR" and e.action ~= "AH" then return nil end
+    local f, key, S = e.f, e.key, ns.Sniper
+    local paid = (not f.unknownCost) and f.cost or nil
+    local v = Seller.VendorOf(key, f)
+    if not paid or v <= paid then return nil end -- a vendor is no way out for this one
+    local n = e.count
+    local c = { count = n, vendor = (v - paid) * n }
+    local p = self.prices[key]
+    local fresh = p and p.at and GetTime() - p.at < HOLD_TTL
+    c.live = (fresh and p.price) and true or false
+    c.held = (fresh and p.hold) and true or false
+    local net
+    if f.kind == "VENDOR" or c.live or c.held then
+        local _, est = self:BestExit(key, { sell = v, units = f.units })
+        net = est
+    else
+        -- held as a flip, live price not checked yet: the price planned when it was bought (the row's own figure)
+        net = floor((f.sell or 0) * (1 - Deals.cfg.cut))
+    end
+    if net then c.ah = (net - paid) * n; c.diff = c.ah - c.vendor end
+    if S and S.depositInfo then
+        local per, dmin = S.depositInfo(key, not (S.isItem and S.isItem[key]))
+        if per and per ~= math.huge then c.fee = max(dmin or 0, math.ceil(per * n)) end
+    end
+    if c.fee and c.fee > GetMoney() then
+        c.short = true
+        local _, nextIn = self:Tied()
+        c.nextIn = nextIn
+    end
+    local St = ns.Store
+    local rate = St and St.Rate and St:Rate(key, 100) or nil
+    c.rate = (rate and rate >= 1) and rate or nil
+    return c
+end
+
 -- ONE RECOMMENDATION for a holding: what to do with it now, and why. Built
 -- only from what is known for certain (live price, your cost, the cheapest
 -- listing from the last radar read, measured sales per hour, mailbox invoices).
@@ -1437,7 +1502,23 @@ function Seller:Advice(e)
     if e.action == "MAIL" then
         return "Visit a mailbox to collect it.", "do"
     elseif e.action == "VENDOR" then
-        return profit and ("Sell it to any vendor: %s, guaranteed."):format(signed(profit * e.count)) or "Sell it to any vendor.", "do"
+        local text = profit and ("Sell it to any vendor: %s, guaranteed."):format(signed(profit * e.count)) or "Sell it to any vendor."
+        -- and what waiting and listing it would bring instead
+        local c = self:Choice(e)
+        if c and c.ah then
+            if c.diff > 0 then
+                text = text .. (" Or wait and list it: %s%s after the cut, %s more.%s The gold comes about an hour after it sells.%s"):format(
+                    c.live and "" or "about ", signed(c.ah), short(c.diff),
+                    c.fee and (" That takes a posting fee of %s first%s."):format(short(c.fee),
+                        c.short and ((": you have %s%s"):format(short(GetMoney()), c.nextIn and (", sale gold arrives in about %d min"):format(max(1, floor(c.nextIn / 60 + 0.5))) or "")) or "") or "",
+                    sells)
+            else
+                text = text .. (" Listing it instead would bring %s%s after the cut: %s less."):format(c.live and "" or "about ", signed(c.ah), short(-c.diff))
+            end
+        elseif c and c.held then
+            text = text .. " The auction house pays less than the vendor right now."
+        end
+        return text, "do"
     elseif e.action == "AH" then
         local p = self.prices[key]
         if p and p.price then

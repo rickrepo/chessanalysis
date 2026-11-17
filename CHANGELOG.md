@@ -6,6 +6,17 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.42.0 (2026-11-17)
+
+- **Vendor now, or wait and list it: both on the row.** For anything a vendor pays more for than it cost you, the Bags tab now shows the other way out and the difference.
+  - Under **To sell to a vendor**: the profit is the vendor's, and a new **IF LISTED** column says what waiting and listing would add or lose (`+1s00c more`, `12c less`, `?` when no auction house price is known). Orange means you do not have the posting fee right now.
+  - Under **To post, or sell to a vendor now** (a new section: items to post that a vendor would also take at a profit): the profit is the listing's, and a **VENDOR NOW** column says how much less the vendor pays (`24c less`).
+  - Hover the row for the full sentence: `Vendor now + 5s00c   or wait and list: about + 6s00c, 1s00c more (fee 10c first: you have 5c, sale gold in 12 min)`. The fee is the posting fee it takes first; when you do not have it, the row says what you hold and in how many minutes your next sale gold arrives.
+  - The item's advice in Details says the same in words, with how many sell an hour.
+  - The auction house figure is from the live price once it has been checked; before that from the item's last full listing or the radar's last read (marked "about").
+- **A holding kept as a flip can still go to a vendor.** Since 3.41.0 one item is one record, so units bought under vendor price can be held as a flip. If a vendor pays more than the holding cost, the row has a Sell button at a vendor (its own button only; "Sell all to vendor" never touches it), and the sale is booked at the vendor's price.
+- Not yet tried in the real game.
+
 ## 3.41.0 (2026-11-17)
 
 From a real Snapshot, report and log of 3.39.1 (21:10).
