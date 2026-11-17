@@ -6,6 +6,19 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.40.0 (2026-11-17)
+
+- **A deal that is gone leaves the panel as soon as the radar shows it.** In the real log of 3.39.0 each deal nobody bought stayed on the panel for 10 to 21 seconds, until its own re-check, and that re-check then cost one request (0.75s with no radar read) to learn what the radar had been showing since its next read. While it sat there it was the target of your inputs: a press on it costs a price request and a miss, with any live deal waiting behind it. Now a radar read that was sent after the deal was read, and shows the item's lowest price too high for the deal's units to cost what the deal says, takes it off at once and counts it as gone. No request is spent on it.
+  - Only the price going up counts (a listing can lag behind sales and still show units that are gone, never the other way round), and a read that was already on its way when the deal was read says nothing about it.
+  - A deal you are in the middle of buying is left to the purchase: the server's answer decides.
+  - If another deal is still up, the radar's pause for it stands.
+- **Churn in the daily report** (units leaving a listing per hour) only counted two radar reads a second or more apart. Since the radar reads every 0.73s that dropped eight intervals in nine. The minimum is now 0.3s. The figure is in the report only; no deal rule uses it.
+- Checked against the real logs and NOT changed (from a modified copy of 3.33.0 that was sent in):
+  - *Reserving the auction house for a purchase cancel.* In 17 cancels in the logs the cancel never took a request slot, and in every one since 3.x the next request left 0.01 to 0.2s later and was answered normally. The two errors after a cancel are from 2.6.0 and were fixed then (the cancel is sent 0.4s after the price answer). Waiting for the cancel to "settle" would delay the radar by about 0.3s after every miss.
+  - *The game's own search on opening pausing the addon for 8 seconds.* Not in the logs: on opening the game asks for your auctions or bids (a 1 second pause). The three 8-second pauses after a search were clicks in the game's own screens.
+  - *A radar read lost after an error.* Real, and fixed in 3.33.3.
+- Not yet tried in the real game: the first point. Offline it passes its tests; the next log will show `GONE <item> by the radar`.
+
 ## 3.39.1 (2026-11-16)
 
 From a real log of 3.39.0 (00:47 to 00:48): the radar read every 0.72 to 0.76s as before and found five vendor deals in 90 seconds (Silk Cloth three times, worth up to 19s38c). Not one input reached the addon while they were up: the box was not armed, no purchase was started, and each deal left after 10 to 21 seconds. The log could not say why, so this version makes the log say it.

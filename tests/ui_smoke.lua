@@ -1868,6 +1868,70 @@ do
         "radar said 21 but only 5 were left: the quote says so, nothing is bought yet, and the deal becomes those 5")
     S.verified[5555] = nil
     S.verified[5555] = nil; S.dealSeen = {}; G.holdUntil = nil
+
+    -- THE RADAR ITSELF SHOWS A DEAL IS GONE: off the panel at once, no re-check (it stayed 10 to 21 seconds in a real log, then cost a request)
+    do
+        reset(); gold = 900; S.cool = {}
+        local SwR = ns.Swarm
+        local curWas = SwR.current
+        LIST[5555] = { { 2, 21 }, { 22, 138 }, { 23, 1095 } }
+        S.ownSweep = { [5555] = { q = 1233, p = 22, at = GetTime() - 0.7 } }
+        SwR.current = { phase = "query", at = GetTime() - 0.25, unit = SwR.units[1] }
+        S:OnSweep(5555, 2, 1254)
+        local d5 = S.verified[5555]
+        check(d5 and d5.instant and d5.units == 21 and d5.born == GetTime(), "a deal straight from the radar is on the panel")
+        -- the read that showed it (sent before the deal existed) does not take it off, whatever it says
+        S:OnSweep(5555, 22, 1233)
+        check(S.verified[5555] == d5, "a radar read sent BEFORE the deal was read says nothing about it: the deal stays")
+        -- a later read with the cheap units still there: it stays
+        advance(0.7)
+        local n7, gone0 = #sent, S.tally.gone
+        SwR.current = { phase = "query", at = GetTime() - 0.25, unit = SwR.units[1] }
+        S:OnSweep(5555, 2, 1250)
+        check(S.verified[5555] == d5, "a later read that still shows the cheap price: the deal stays")
+        -- a later read: the cheapest is back at 22c. Someone bought them.
+        G.holdUntil = GetTime() + 5
+        advance(0.7)
+        SwR.current = { phase = "query", at = GetTime() - 0.25, unit = SwR.units[1] }
+        S:OnSweep(5555, 22, 1233)
+        local searched = false
+        for i = n7 + 1, #sent do if sent[i] == "search5555" then searched = true end end
+        check(S.verified[5555] == nil and S.tally.gone == gone0 + 1 and S.result and S.result.kind == "gone" and S.result.key == 5555,
+            "a later read shows the cheapest back at 22c: the deal is off the panel at once and counted as gone")
+        check(not searched and S.priority ~= 5555, "no re-check is asked for: the radar has already said it (a request, 0.75s without the radar, saved)")
+        check(G.holdUntil == nil, "with no other deal up the radar's hold ends")
+        local o = AuctionMeshDB.outcomes[#AuctionMeshDB.outcomes]
+        check(o.k == "gone" and o.key == 5555 and o.g and o.g > 1.3 and o.g < 1.5, "it is kept with how long it was up (1.4s), for Details, Session")
+        -- two deals up, one goes: the hold for the other stands
+        S.result = nil
+        S.ownSweep = { [5555] = { q = 1233, p = 22, at = GetTime() - 0.7 } }
+        SwR.current = { phase = "query", at = GetTime() - 0.25, unit = SwR.units[1] }
+        S:OnSweep(5555, 2, 1254)
+        S.verified[7777] = { key = 7777, kind = "VENDOR", units = 1, cost = 3, sell = 5, profit = 20, deposit = 0, buys = {}, counts = {}, commodity = true, at = GetTime(), born = GetTime(), from = "me" }
+        ITEMS[7777] = { "Test Ore", 5 }
+        advance(0.7)
+        G.holdUntil = GetTime() + 5
+        local holdWas = G.holdUntil
+        SwR.current = { phase = "query", at = GetTime() - 0.25, unit = SwR.units[1] }
+        S:OnSweep(5555, 22, 1233)
+        check(S.verified[5555] == nil and S.verified[7777] ~= nil and G.holdUntil == holdWas, "with another deal still up, its hold stands when the first one goes")
+        -- your own purchase in progress is never taken off by the radar
+        S.verified[7777] = nil
+        S.ownSweep = { [5555] = { q = 1233, p = 22, at = GetTime() - 0.7 } }
+        SwR.current = { phase = "query", at = GetTime() - 0.25, unit = SwR.units[1] }
+        S:OnSweep(5555, 2, 1254)
+        S.buying = { key = 5555, units = 21, max = 42, phase = "quote", deal = S.verified[5555], at = GetTime() }
+        advance(0.1)
+        SwR.current = { phase = "query", at = GetTime() - 0.05, unit = SwR.units[1] }
+        S:OnSweep(5555, 22, 1233)
+        check(S.verified[5555] ~= nil, "a deal you are buying is left to the purchase: the server's answer decides")
+        S.buying = nil
+        SwR.current = curWas
+        ITEMS[7777] = nil
+        S.verified, S.dealSeen, S.result, G.holdUntil = {}, {}, nil, nil
+        S.tally.won, S.tally.lost, S.tally.gone = 0, 0, 0
+        UI.flashUntil = nil
+    end
     LIST[5555] = nil
 
     -- it disappears before you click at all

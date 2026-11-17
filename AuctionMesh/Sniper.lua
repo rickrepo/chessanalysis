@@ -214,6 +214,40 @@ function Sniper:TraceInputs(key)
     ns.Log("INPUTS as the deal appeared (%s): %s", tostring(key), U.InputTrace())
 end
 
+function Sniper:TraceGone(key)
+    if not (ns.UI and ns.UI.InputTrace) then return end
+    local at = self.inputsAt and self.inputsAt[key]
+    ns.Log("INPUTS for the deal that went (%s): %s", tostring(key), ns.UI.InputTrace(at or 0))
+    if self.inputsAt then self.inputsAt[key] = nil end
+end
+
+-- THE RADAR ITSELF SHOWS THAT A DEAL IS GONE. A deal used to stay on the panel
+-- until its own re-check: 8 seconds at the earliest, 10 to 21 in a real log,
+-- and then one request (0.75s with no radar read) to learn what the radar had
+-- been showing all along. Meanwhile it was the target of your inputs: a press
+-- on it cost a price request and a miss, with a live deal waiting behind it.
+-- Now: a radar read that was SENT after the deal was read, and shows the
+-- item's lowest price too high for the deal's units to cost what the deal
+-- says, takes it off at once. No request is spent. (Only the price going up
+-- counts: the listing can lag behind sales and show units that are gone, never
+-- the other way round.)
+function Sniper:RadarGone(key, d, price)
+    local now = GetTime()
+    self.verified[key] = nil
+    if self.react and self.react.key == key then self.react = nil end
+    if self.priority == key then self.priority = nil end -- nothing left to re-check
+    ns.Log("GONE %s by the radar: the cheapest is now %d each; the deal was %d for %d. Off the panel, no re-check.", tostring(key), price, d.cost, d.units)
+    local seen = self.dealSeen and self.dealSeen[key]
+    if not seen then dirty(); return end
+    self.dealSeen[key] = nil
+    if ns.Scout then ns.Scout:Gone(key, now - seen) end
+    local hold = ns.Gate.holdUntil
+    self:Result("gone", key, ("GONE  %s: someone else bought it, %d seconds after it appeared."):format(nameOf(key), floor(now - seen + 0.5)), now - seen)
+    -- another deal is still up (it may have appeared in this same read): the radar's hold for it stands
+    if hold and next(self.verified) then ns.Gate.holdUntil = hold end
+    self:TraceGone(key)
+end
+
 -- PER-ITEM SETTINGS (from an imported settings code). An item can have its own
 -- smallest profit, and an item can be ignored altogether.
 local itemCfg = {}
@@ -327,6 +361,7 @@ function Sniper:Evaluate(key, rows, commodity)
             if ns.Scout then ns.Scout:Deal(key, deal) end
             if ns.Auto then ns.Auto:Shown() end
         end
+        deal.born = GetTime() -- when the listing it rests on was read
         self.verified[key] = deal
         if fresh then
             -- SPEED. Deals last seconds. The radar goes silent so the auction
@@ -353,11 +388,7 @@ function Sniper:Evaluate(key, rows, commodity)
             if seen then
                 self.dealSeen[key] = nil
                 self:Result("gone", key, ("GONE  %s: someone else bought it, %d seconds after it appeared."):format(nameOf(key), floor(GetTime() - seen + 0.5)), GetTime() - seen)
-                if ns.UI and ns.UI.InputTrace then
-                    local at = self.inputsAt and self.inputsAt[key]
-                    ns.Log("INPUTS for the deal that went (%s): %s", tostring(key), ns.UI.InputTrace(at or 0))
-                    if self.inputsAt then self.inputsAt[key] = nil end
-                end
+                self:TraceGone(key)
             end
         end
         ns.Log("NO DEAL %s: %s (rows: %s)", tostring(key), tostring(reason), self.RowsText(rows))
@@ -438,7 +469,7 @@ function Sniper:InstantVendor(key, price, qty, v, prev)
                    more = (unsure or n < qty - prev.q) and true or nil,
                    commodity = true, key = key, instant = true, from = "me", next = prev.p, rowsText = unsure and ("radar: price fell to %d, count not known, asking for %d"):format(price, n) or ("radar: %d new at %d"):format(n, price),
                    -- trusted for 8 seconds only; then the item gets its full look like any other
-                   at = now - VERIFIED_TTL + 8 }
+                   at = now - VERIFIED_TTL + 8, born = now }
     self.verified[key] = deal
     self.dealSeen = self.dealSeen or {}
     self.dealSeen[key] = now
@@ -522,6 +553,7 @@ function Sniper:InstantFlip(key, price, qty, prev)
     deal.rowsText = ("radar: %d new at %d"):format(n, price)
     deal.rows = nil
     deal.at = now - VERIFIED_TTL + 8 -- trusted for 8 seconds only; then the item gets its full look
+    deal.born = now
     self.verified[key] = deal
     self.dealSeen = self.dealSeen or {}
     self.dealSeen[key] = now
@@ -862,6 +894,14 @@ function Sniper:OnSweep(key, price, qty)
     local shared = false
     if not self.active or key <= 0 or self.isItem[key] then return end
     local now = GetTime()
+    do  -- a deal on the panel whose cheap units this read shows to be gone (see RadarGone)
+        local d = self.verified[key]
+        if d and d.commodity and d.born and d.units and d.cost and price * d.units > d.cost
+            and not (self.buying and self.buying.key == key) then
+            local cur = ns.Swarm and ns.Swarm.current
+            if cur and cur.phase == "query" and cur.at and cur.at > d.born then self:RadarGone(key, d, price) end
+        end
+    end
     self.sweep = self.sweep or {}
     local prev = self.sweep[key]
     self.sweep[key] = { p = price, q = qty, at = now }
@@ -875,7 +915,8 @@ function Sniper:OnSweep(key, price, qty)
         prevOwn = own
         self.ownSweep = self.ownSweep or {}
         self.ownSweep[key] = { q = qty, p = price, at = now }
-        if own and now - own.at >= 1 and now - own.at <= 900 then
+        -- (the minimum was 1 second: with radar reads 0.73s apart that dropped eight intervals in nine)
+        if own and now - own.at >= 0.3 and now - own.at <= 900 then
             local gone = own.q - qty
             Store:AddChurn(key, gone > 0 and gone or 0, now - own.at)
         end
@@ -1895,6 +1936,7 @@ function Sniper:OnPriceQuote(unitPrice, total)
                     guess and "about " or "", left, b.units, guess and "at most " or "", leftCost, d.profit)
                 ns.Gate.ignoreErrorUntil = GetTime() + 2
                 C_Timer.After(0.4, function() if not Sniper.buying then pcall(C_AuctionHouse.CancelCommoditiesPurchase) end end)
+                d.born = GetTime()
                 self.verified[b.key] = d
                 self.buying = nil
                 if Sniper.hold > 0 then ns.Gate.holdUntil = GetTime() + Sniper:HoldFor() end
