@@ -343,11 +343,27 @@ function Seller:MailGold(delta)
 end
 
 function Seller:CollectMail()
-    if self.mailBusy then return end
+    if self.mailBusy or self.mailFull then return end
     self.mailBusy = true
     -- read what is there BEFORE anything is taken, so the figures are current
     -- even if the mailbox is closed before collecting has finished
     if (GetInboxNumItems() or 0) > 0 then self:ScanMail() end
+    -- BAGS FULL. A mail that does not come out is tried again, and again: the
+    -- same mail, unchanged, four times in a row means it cannot be taken. Then
+    -- it stops (it used to go on for as long as the mailbox was open, saying
+    -- "is now in your bags" each time, and what the mailbox and bags really
+    -- held was never looked at afterwards).
+    local function stuck(i, id, cnt, hasItem)
+        local sig = table.concat({ i, tostring(id), tostring(cnt), tostring(hasItem), GetInboxNumItems() or 0 }, ":")
+        local m = Seller.mailTry
+        if m and m.sig == sig then
+            m.n = m.n + 1
+        else
+            m = { sig = sig, n = 1 }
+            Seller.mailTry = m
+        end
+        return m.n > 4, m.n == 1
+    end
     local function step()
         if not mailOpen() then Seller.mailBusy = false; return end
         for i = GetInboxNumItems(), 1, -1 do
@@ -356,9 +372,15 @@ function Seller:CollectMail()
             if (cod or 0) == 0 then
                 if invoice == "buyer" and hasItem then
                     -- Say what is being taken, so an empty-looking mailbox is never a mystery.
-                    local nm, _, _, cnt = GetInboxItem(i, 1)
+                    local nm, id, _, cnt = GetInboxItem(i, 1)
+                    local full, first = stuck(i, id, cnt, hasItem)
+                    if full then
+                        Seller.mailFull = true
+                        say(("|cffff8040Your bags are full:|r %s and anything after it stay in the mailbox. Make room (post or sell something), then open the mailbox again."):format(tostring(nm or "an item")))
+                        break
+                    end
                     AutoLootMailItem(i)
-                    say(("|cff4d99ffCollected from mailbox:|r %s x %s is now in your bags."):format(tostring(cnt or 1), tostring(nm or "item")))
+                    if first then say(("|cff4d99ffCollecting from mailbox:|r %s x %s."):format(tostring(cnt or 1), tostring(nm or "item"))) end
                     C_Timer.After(0.4, step); return
                 elseif invoice == "seller" and (moneyAmt or 0) > 0 then
                     TakeInboxMoney(i); C_Timer.After(0.4, step); return
@@ -380,6 +402,7 @@ function Seller:CollectMail()
         Seller:ScanBags()
         Seller:ScanMail()
         Seller:Reconcile()
+        Seller:Recover()
         Seller:Refresh()
     end
     step()
@@ -1216,6 +1239,70 @@ function Seller.LogBuy(key, kind, units, cost, sell)
     if ns.Journal then ns.Journal:Bought(key, nameOf(key), kind, units, cost, sell) end
 end
 
+-- UNITS AN OLDER VERSION LOST TRACK OF, PICKED UP AGAIN. Before 3.41 a
+-- purchase of another kind (a flip, when the item was held from a vendor
+-- deal) replaced the record of what you held; the journal then marked the
+-- dropped units "lost". Once, at the update, those units are noted (trades of
+-- the last 48 hours only). When your bags hold more of such an item than the
+-- record says, that many go back on the Bags tab with what they cost. Never
+-- more than was marked lost, and nothing that is lost after the update:
+-- what you own apart from the addon's purchases is not taken for its own.
+local LOST_WHY = { ["no longer in your bags, mailbox or auctions"] = true, ["not found in bags or mailbox"] = true }
+function Seller:Recover()
+    local rec = AuctionMeshDB.recover
+    local J = ns.Journal
+    if not rec or not (J and J.list) then return 0 end
+    local now = GetServerTime()
+    if now - (rec.at or 0) > 48 * 3600 then AuctionMeshDB.recover = nil; return 0 end
+    if not rec.items then
+        -- the first look after the update: what is marked lost, per item
+        rec.items = {}
+        for _, t in ipairs(J.list) do
+            if (t.lost or 0) > 0 and LOST_WHY[t.lostWhy or ""] and rec.at - (t.at or 0) < 48 * 3600 then
+                rec.items[t.key] = (rec.items[t.key] or 0) + t.lost
+            end
+        end
+    end
+    local total = 0
+    for key, owed in pairs(rec.items) do
+        local f = flips()[key]
+        local n = min(owed, (bagCount[key] or 0) - (f and f.units or 0))
+        if n > 0 then
+            -- the trades they belong to are open again, oldest first
+            local left, spent, kind, plan, known = n, 0, nil, nil, true
+            for _, t in ipairs(J.list) do
+                if left <= 0 then break end
+                if t.key == key and (t.lost or 0) > 0 and LOST_WHY[t.lostWhy or ""] then
+                    local m = min(left, t.lost)
+                    t.lost = t.lost - m
+                    if t.lost <= 0 then t.lost, t.lostWhy = 0, nil end
+                    t.doneAt = nil
+                    left = left - m
+                    if t.cost then spent = spent + t.cost * m else known = false end
+                    kind, plan = kind or t.kind, plan or t.plan
+                end
+            end
+            local each = known and floor(spent / n + 0.5) or nil
+            if f then
+                if each and not f.unknownCost then f.cost = floor(((f.cost or 0) * (f.units or 0) + each * n) / ((f.units or 0) + n) + 0.5) end
+                f.units = (f.units or 0) + n
+            else
+                flips()[key] = { kind = kind or "FLIP", sell = plan or 0, units = n, cost = each or 0, unknownCost = (each == nil),
+                                 at = now, proof = "found in your bags again" }
+            end
+            rec.items[key] = owed - n
+            if rec.items[key] <= 0 then rec.items[key] = nil end
+            total = total + n
+            self.prices[key] = nil
+            ns.Log("RECOVER %s: %d unit(s) an older version dropped are in the bags: tracked again", tostring(key), n)
+            say(("|cff33ff66%s: %d that the addon had lost track of are in your bags. They are back on the Bags tab.|r"):format(nameOf(key), n))
+        end
+    end
+    if not next(rec.items) then AuctionMeshDB.recover = nil end
+    if total > 0 then self:Refresh() end
+    return total
+end
+
 -- Rebuilds missing Flip Bag entries from the last 3 days of purchases still in your bags.
 function Seller:Restore()
     self:ScanBags()
@@ -1485,11 +1572,16 @@ function Seller:Init()
             -- Nothing is sold by itself: the panel opens and waits for your click.
             Seller:Refresh("open")
         elseif event == "MAIL_SHOW" then
+            Seller.mailFull, Seller.mailTry = nil, nil
             Seller:Refresh("open"); Seller:CollectMail()
+        elseif event == "MAIL_CLOSED" then
+            Seller.mailFull, Seller.mailTry = nil, nil
+            Seller:Refresh()
         elseif event == "MAIL_INBOX_UPDATE" then
             Seller:CollectMail()
         elseif event == "AUCTION_HOUSE_SHOW" then
             for k, p in pairs(Seller.prices) do if p.price then Seller.prices[k] = nil end end
+            Seller:Recover()
             Seller:Refresh()
             if not Seller.ticker then Seller.ticker = C_Timer.NewTicker(0.3, function() Seller:Tick() end) end
         elseif event == "AUCTION_HOUSE_CLOSED" then
@@ -1509,6 +1601,8 @@ function Seller:Init()
     end)
     -- Remind on login if there is unfinished business.
     C_Timer.After(8, function()
+        Seller:ScanBags()
+        Seller:Recover()
         local n = #Seller:Entries()
         if n > 0 then say(n .. " item(s) to sell. Open the AuctionMesh panel (auction house tab, or the addon list by the minimap) to see what to do.") end
     end)

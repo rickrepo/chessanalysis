@@ -192,7 +192,9 @@ ev:SetScript("OnEvent", function(_, event, arg1)
                 say("Buying by holding a key down has been removed: the game refuses a held key as an input, and each refusal froze the deal for four seconds. Buy with: the mouse wheel (Setup tab to change).")
             end)
         end
-        db.cfg.v = 12
+        -- 13: units an older version dropped from the record are looked for in your bags (see Seller:Recover)
+        if (db.cfg.v or 0) < 13 then db.recover = { at = GetServerTime() } end
+        db.cfg.v = 13
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)

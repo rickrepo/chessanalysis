@@ -202,7 +202,7 @@ check(W == nil, "no window until it is needed")
 do
     local c = AuctionMeshDB.cfg
     advance(11)
-    check(leftChannel == "GoldCrew7" and c.channel == nil and c.password == nil and c.route == nil and c.share == nil and c.v == 12,
+    check(leftChannel == "GoldCrew7" and c.channel == nil and c.password == nil and c.route == nil and c.share == nil and c.v == 13,
         "an install that had joined a sharing channel leaves it once, and the channel settings are forgotten")
     check(#sentAddon == 0, "and nothing was sent while doing so")
 end
@@ -1707,6 +1707,150 @@ do
         cfg0.focusItems, cfg0.ignore, cfg0.focusMode = itemsWas, ignoreWas, modeWas; ns.Scout:Changed()
         UI.itemsCache = nil
         reset()
+    end
+
+    -- AN ALERT IS NOT CHECKED AGAIN while the last check's own answer still stands ("needs 41c or less")
+    do
+        reset(); gold = 900; S.cool, S.streak, S.muted = {}, {}, {}
+        local leather = LIST[2319]; LIST[2319] = nil
+        ITEMS[2318] = { "Light Leather", 15 }
+        LIST[2318] = { { 62, 19 }, { 68, 805 }, { 69, 220 }, { 70, 171 } }
+        ns.Store.fp[2318], ns.Store.ft[2318] = 68, GetServerTime()
+        S.ownSweep = S.ownSweep or {}
+        S.ownSweep[2318] = { p = 62, q = 1215, at = GetTime() }
+        S.checkedAt = {}; S.judged = {}; S.priority = 2318; advance(1)
+        local j = S.judged[2318]
+        print("     " .. tostring(S.last and S.last.reason))
+        check(S.verified[2318] == nil and j and j.need and j.mkt == 68 and j.need < 60, "a check says: cheapest 62c, market 68c, needs so much or less. The price it needs is remembered")
+        local need = j and j.need or 0
+        local mid = need + 2 -- a price under 62c that is still above what it needs
+        advance(2)
+        local function alert(price, market, qty)
+            S.triggers = {}
+            S:AddTrigger(2318, "under market", price, market, "me", qty)
+            return S.triggers[2318] ~= nil
+        end
+        check(not alert(62, 68, 1300), "the same price with MORE units listed: not checked again (it used to be)")
+        check(not alert(mid, 68, 1215), "a LOWER price that is still above what it needs: not checked again (it used to be, at once)")
+        check(not alert(mid, 60, 1215), "the same with the market down: not checked again")
+        check(alert(need, 68, 1215), "the price it needs: checked at once")
+        check(alert(mid, 90, 1215), "the market it was judged against has risen: checked again")
+        ns.Deals.cfg.margin = ns.Deals.cfg.margin + 0.01
+        check(alert(mid, 68, 1215), "your settings have changed since: checked again")
+        ns.Deals.cfg.margin = ns.Deals.cfg.margin - 0.01
+        S.judged[2318].at = GetTime() - 301
+        check(alert(mid, 68, 1300), "after 5 minutes: checked again")
+        S.triggers, S.judged = {}, {}
+        LIST[2318] = nil; LIST[2319] = leather; ITEMS[2318] = nil
+        ns.Store.fp[2318], ns.Store.ft[2318] = nil, nil
+        S.ownSweep[2318] = nil
+        advance(1); reset(); UI:Render()
+    end
+
+    -- ONE ITEM, ONE RECORD: a flip bought of an item you hold from a vendor deal ADDS to it (it replaced the record: the units were gone from the Bags tab)
+    do
+        reset(); gold = 90000; S.cool, S.streak, S.muted = {}, {}, {}
+        local leather = LIST[2319]; LIST[2319] = nil
+        local flipsWas, listedWas, bagsWas, inboxWas = AuctionMeshDB.flips, AuctionMeshDB.listed, {}, inbox
+        for i2 = 1, 16 do bagsWas[i2] = bags[i2]; bags[i2] = nil end
+        inbox = {}; fire("BAG_UPDATE_DELAYED")
+        AuctionMeshDB.flips, AuctionMeshDB.listed = {}, {}
+        ITEMS[4304] = { "Thick Leather", 300 }
+        local J = ns.Journal
+        local n0 = #J.list
+        local realInvoice = GetInboxInvoiceInfo
+        GetInboxInvoiceInfo = function(i) return inbox[i] and "buyer" or nil end
+        cfg.autoConfirm = nil
+        -- 5 bought under vendor price (a vendor deal), then 51 as a flip
+        LIST[4304] = { { 257, 5 }, { 520, 400 }, { 521, 300 } }
+        S.checkedAt = {}; S.priority = 4304; advance(1)
+        check(S.verified[4304] and S.verified[4304].kind == "VENDOR" and S.verified[4304].units == 5, "5 Thick Leather under vendor price: a vendor deal")
+        S:Press(4304); advance(1.5)
+        local f = AuctionMeshDB.flips[4304]
+        check(f and f.kind == "VENDOR" and f.units == 5, "bought: 5 held, as a vendor deal")
+        LIST[4304] = { { 330, 51 }, { 560, 400 }, { 561, 300 } }
+        ns.Store.fp[4304], ns.Store.ft[4304] = 560, GetServerTime()
+        S.checkedAt = {}; S.judged = {}; S.priority = 4304; advance(1)
+        check(S.verified[4304] and S.verified[4304].kind == "FLIP" and S.verified[4304].units == 51, "then 51 at 3s30c with the market at 5s60c: a flip")
+        S:Press(4304); advance(1.5)
+        f = AuctionMeshDB.flips[4304]
+        check(f and f.units == 56 and f.kind == "FLIP", "bought: 56 are held, all for the auction house (the 5 used to be dropped from the record)")
+        check(f and f.cost == math.floor((257 * 5 + 330 * 51) / 56 + 0.5), "at the average of what they cost")
+        local lost = 0
+        for i2 = n0 + 1, #J.list do if J.list[i2].key == 4304 then lost = lost + (J.list[i2].lost or 0) end end
+        check(lost == 0, "nothing is marked lost in the journal")
+
+        -- THE MAILBOX WITH FULL BAGS: it stops instead of trying for ever, and says what stays
+        for i2 = 1, 16 do bags[i2] = { itemID = 2770, stackCount = 1 } end
+        bags[16] = nil -- one free slot, two mails to take
+        fire("BAG_UPDATE_DELAYED")
+        local realLoot = AutoLootMailItem
+        local tries = 0
+        AutoLootMailItem = function(i)
+            tries = tries + 1
+            for s2 = 1, 16 do if not bags[s2] then return realLoot(i) end end -- room: it comes out
+            -- no room: the mail stays where it is
+        end
+        local c0 = #chat
+        check(#inbox == 2, "(two purchases wait in the mailbox)")
+        MailFrame:Show(); fire("MAIL_SHOW"); advance(10)
+        local said, collecting = false, 0
+        for i2 = c0 + 1, #chat do
+            if chat[i2]:find("Your bags are full:", 1, true) then said = true end
+            if chat[i2]:find("Collecting from mailbox", 1, true) then collecting = collecting + 1 end
+        end
+        check(#inbox == 1 and tries <= 7, ("one mail fitted; the other was tried a few times and then left (%d tries in 10 seconds, not 25)"):format(tries))
+        check(said and collecting == 2, "it says the bags are full, and each mail is announced once, not on every try")
+        local e
+        for _, x in ipairs(Se:Entries()) do if x.key == 4304 and x.action == "MAIL" then e = x end end
+        check(e ~= nil and AuctionMeshDB.flips[4304].units == 56, "what stayed is still shown as waiting in the mailbox; nothing was dropped")
+        MailFrame:Hide(); fire("MAIL_CLOSED")
+        -- room is made; the mailbox is opened again
+        for i2 = 1, 15 do if bags[i2] and bags[i2].itemID == 2770 then bags[i2] = nil end end
+        fire("BAG_UPDATE_DELAYED")
+        MailFrame:Show(); fire("MAIL_SHOW"); advance(4)
+        check(#inbox == 0, "after room is made the rest comes out at the next visit")
+        MailFrame:Hide(); fire("MAIL_CLOSED")
+        AutoLootMailItem = realLoot
+
+        -- UNITS THE ADDON HAD LOST TRACK OF (what 3.39 and before did to those 5): found in the bags, they come back
+        AuctionMeshDB.flips[4304].units = 51            -- the record as the old version left it
+        J:Sync(AuctionMeshDB.flips, AuctionMeshDB.listed, S.nameOf)
+        lost = 0
+        for i2 = n0 + 1, #J.list do if J.list[i2].key == 4304 then lost = lost + (J.list[i2].lost or 0) end end
+        check(lost == 5, "(as before the fix: the record is 5 short and the journal marks 5 lost)")
+        c0 = #chat
+        check(Se:Recover() == 0 and AuctionMeshDB.flips[4304].units == 51, "units lost in ordinary use are NOT picked up by themselves (they could be your own stock)")
+        AuctionMeshDB.recover = { at = GetServerTime() } -- what the update to this version sets, once
+        fire("AUCTION_HOUSE_CLOSED"); AuctionHouseFrame:Hide(); AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(0.5)
+        f = AuctionMeshDB.flips[4304]
+        lost = 0
+        for i2 = n0 + 1, #J.list do if J.list[i2].key == 4304 then lost = lost + (J.list[i2].lost or 0) end end
+        said = false
+        for i2 = c0 + 1, #chat do if chat[i2]:find("Thick Leather: 5 that the addon had lost track of are in your bags", 1, true) then said = true end end
+        check(f and f.units == 56 and lost == 0 and said, "at the update: the 5 are in your bags, so they are tracked again, the journal no longer calls them lost, and chat says so")
+        check(AuctionMeshDB.recover == nil or AuctionMeshDB.recover.items[4304] == nil, "with all of them found, the one-time repair is over for this item")
+        local sellable = 0
+        for _, x in ipairs(Se:Entries()) do if x.key == 4304 and (x.action == "AH" or x.action == "VENDOR" or x.action == "HOLD") then sellable = sellable + x.count end end
+        check(sellable == 56, "all 56 are on the Bags tab to be sold")
+        -- only what is really spare in the bags, and only up to what was marked lost
+        AuctionMeshDB.recover = { at = GetServerTime(), items = { [4304] = 9 } }
+        check(Se:Recover() == 0 and AuctionMeshDB.flips[4304].units == 56, "never more than your bags hold beyond the record")
+        -- tidy up
+        GetInboxInvoiceInfo = realInvoice
+        for i2 = n0 + 1, #J.list do if J.list[i2].key == 4304 then J.list[i2].lost, J.list[i2].qty, J.list[i2].sold = 0, 0, 0 end end
+        for i2 = 1, 16 do bags[i2] = bagsWas[i2] end
+        inbox = inboxWas
+        AuctionMeshDB.flips, AuctionMeshDB.listed = flipsWas, listedWas
+        fire("BAG_UPDATE_DELAYED")
+        LIST[4304] = nil; LIST[2319] = leather; ITEMS[4304] = nil
+        ns.Store.fp[4304], ns.Store.ft[4304] = nil, nil
+        cfg.autoConfirm = false
+        S.result, S.lastTry, UI.flashUntil = nil, nil, nil
+        S.tally.won, S.tally.lost, S.tally.gone = 0, 0, 0
+        AuctionMeshDB.recover = nil
+        UI.tab = "BUY"; UI.notice = nil
+        advance(1); reset(); UI:Render()
     end
 
     -- THE LOG SAYS WHAT THE INPUTS WERE DOING when a deal appeared and when it left unbought

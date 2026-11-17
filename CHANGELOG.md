@@ -6,6 +6,17 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.41.0 (2026-11-17)
+
+From a real Snapshot, report and log of 3.39.1 (21:10).
+
+- **Fixed: items you hold dropped from the Bags tab.** The addon keeps one record per item of what you hold. A purchase of another kind replaced that record instead of adding to it: you held 7 Thick Leather bought under vendor price (5+1+1), bought 1 more as a flip, and the record became "1". The 7 were never offered for sale again, wherever they were, and the journal marked them `lost: no longer in your bags, mailbox or auctions`. Now every purchase of an item adds to its record, whatever kind of deal it was; if any of it was bought as a flip, all of it goes to the auction house.
+- **The units that were dropped come back.** Once, at this update, units the journal marked lost in the last 48 hours are noted. When your bags hold more of such an item than the record says, that many go back on the Bags tab with what they cost (chat says so: `Thick Leather: 7 that the addon had lost track of are in your bags`). Never more than was marked lost, and only losses from before the update, so nothing you own apart from the addon's purchases is taken for its own. Looked for at login, when the auction house opens, and after a mailbox visit.
+- **The mailbox with full bags.** A purchase that did not fit was tried again every 0.4 seconds for as long as the mailbox stayed open, with `Collected from mailbox: ... is now in your bags` in chat each time, and what the mailbox and bags really held was never looked at afterwards. Now the same mail failing four times in a row stops it: `Your bags are full: Thick Leather and anything after it stay in the mailbox. Make room, then open the mailbox again.` Each mail is announced once. (Read from the code, not seen in a log.)
+- **Fewer alert checks that can only repeat the last answer.** A check that ends `cheapest is 50c, market 68c: needs 41c or less` says what price the item needs. Until the radar shows that price, another check can only say the same, but one was sent whenever more units were listed, and at once whenever the price fell, however far above 41c it still was. In the log 3 of 14 alert checks were such repeats, each a request (0.64s) the radar did not get. Now the item is not checked again for 5 minutes unless the radar's price is at or under what it needs, the market it was judged against has risen, or your settings have changed.
+- Confirmed in game (this log): the input tracing of 3.39.1 works (`INPUTS as the deal appeared ...`); the radar reads every 0.62 to 0.66s on a lock of 0.64s; no addon error was caught.
+- Not yet tried in the real game: the four points above.
+
 ## 3.40.0 (2026-11-17)
 
 - **A deal that is gone leaves the panel as soon as the radar shows it.** In the real log of 3.39.0 each deal nobody bought stayed on the panel for 10 to 21 seconds, until its own re-check, and that re-check then cost one request (0.75s with no radar read) to learn what the radar had been showing since its next read. While it sat there it was the target of your inputs: a press on it costs a price request and a miss, with any live deal waiting behind it. Now a radar read that was sent after the deal was read, and shows the item's lowest price too high for the deal's units to cost what the deal says, takes it off at once and counts it as gone. No request is spent on it.

@@ -408,6 +408,9 @@ function Sniper:Evaluate(key, rows, commodity)
             local r = tostring(reason or "")
             self.judged[key] = { p = (own and own.p) or (rows[1] and rows[1].price) or 0, q = (own and own.q) or math.huge, at = GetTime(), gold = GetMoney(),
                                  sig = self:RuleSig(key),
+                                 -- "cheapest is $50, market $68: needs $41 or less": the price it needs, and the market that was judged against
+                                 need = tonumber(r:match("^cheapest is %$%d+, market %$%d+: needs %$(%d+) or less")),
+                                 mkt = tonumber(r:match("^cheapest is %$%d+, market %$(%d+): needs")),
                                  pile = (r:find("too many to clear", 1, true) or r:find("more than you can spend", 1, true)) and true or nil }
         end
     end
@@ -996,9 +999,19 @@ end
 --     for each of those checks.)
 --   * Exceptions: you have more gold than when it was judged, or it was
 --     refused for being too big a pile and the pile has shrunk.
-function Sniper:AlertDue(key, price, qty)
+function Sniper:AlertDue(key, price, qty, market)
     local since = self:Since(key)
     local j = self.judged and self.judged[key]
+    -- THE LAST CHECK SAID WHAT PRICE IT NEEDS. Until the radar shows that
+    -- price (or the market it was judged against has risen, or your settings
+    -- have changed), another check can only say the same again: a lower
+    -- price that is still too high, or more units at it, change nothing. In
+    -- the real logs about one alert check in five was such a repeat, each
+    -- one a request the radar did not get.
+    if j and j.need and j.mkt and price and price > j.need and GetTime() - j.at < JUDGED_TTL
+        and (market or 0) <= j.mkt and j.sig == self:RuleSig(key) then
+        return false
+    end
     if j and price and price < j.p then return since >= 1.5, true end
     if since < TRIGGER_MIN then return false end
     if j and GetTime() - j.at < JUDGED_TTL and qty and qty <= j.q then
@@ -1021,7 +1034,7 @@ end
 -- Queues one full look at an item that the radar saw something in.
 function Sniper:AddTrigger(key, why, price, market, from, qty)
     if not self.active or key <= 0 or self.isItem[key] or self.verified[key] then return end
-    local due, fast = self:AlertDue(key, price, qty)
+    local due, fast = self:AlertDue(key, price, qty, market)
     if not due then return end
     self.triggers = self.triggers or {}
     if not self.triggers[key] then
@@ -1503,10 +1516,20 @@ local function recordFlip(deal, units, spent, proof)
     db.flips = db.flips or {}
     local f = db.flips[deal.key]
     local unitCost = units > 0 and spent / units or 0
-    if f and f.kind == deal.kind then
+    if f then
+        -- ONE ITEM, ONE RECORD, whatever kind of deal each purchase was. (A
+        -- purchase of another kind used to REPLACE the record: you hold 7 Thick
+        -- Leather bought under vendor price, buy 1 as a flip, and the 7 were
+        -- gone from the Bags tab: in your bags, with nothing offering to sell them.)
         local total = (f.units or 0) + units
         f.cost = floor(((f.cost or unitCost) * (f.units or 0) + spent) / total + 0.5)
-        f.units, f.sell, f.at = total, deal.sell, GetServerTime()
+        if f.kind == deal.kind then
+            f.sell = deal.sell
+        elseif deal.kind == "FLIP" then
+            -- some of it was bought above vendor price: all of it goes to the auction house
+            f.kind, f.sell = "FLIP", deal.sell
+        end -- (a vendor deal added to a flip: it stays a flip, with the flip's planned price)
+        f.units, f.at = total, GetServerTime()
         f.proof, f.mailVerified = proof, nil
     else
         db.flips[deal.key] = { kind = deal.kind, sell = deal.sell, units = units,
