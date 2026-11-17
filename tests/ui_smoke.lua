@@ -178,7 +178,7 @@ AuctionMeshDB.cfg.minProfit, ns.Deals.cfg.minProfit = 20, 20 -- the walkthrough 
 -- One-click buying and holding fire have their own section at the end.
 S.hold = 0
 S.upkeep.every, S.upkeep.bags = 0, 0 -- the walkthrough is about what is shown, not about request turns (those have their own section and tests/pace_test.lua)
-ns.Auto.cfg.tooMany = 1e9 -- the walkthrough shows far more deals than a real session: auto-adjust must not raise the smallest profit under it (it has its own section)
+ns.Auto.cfg.manyHidden, ns.Auto.cfg.crowded = 1e9, 1e9 -- the walkthrough is not a real session: auto-adjust must not move the smallest profit under it (it has its own section)
 ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1 -- the capital limits have their own section at the end
 AuctionMeshDB.cfg.autoConfirm = false -- the walkthrough drives the two-input path; one-input buying has its own section
 ns.Deals.cfg.requireTurnover = false -- the fake auction house has no other buyers until the "volume" section
@@ -213,7 +213,7 @@ check(W == nil, "no window until it is needed")
 do
     local c = AuctionMeshDB.cfg
     advance(11)
-    check(leftChannel == "GoldCrew7" and c.channel == nil and c.password == nil and c.route == nil and c.share == nil and c.v == 13,
+    check(leftChannel == "GoldCrew7" and c.channel == nil and c.password == nil and c.route == nil and c.share == nil and c.v == 14,
         "an install that had joined a sharing channel leaves it once, and the channel settings are forgotten")
     check(#sentAddon == 0, "and nothing was sent while doing so")
 end
@@ -2963,21 +2963,52 @@ do
         reset()
         local A, D = ns.Auto, ns.Deals.cfg
         local keepMin, keepTune = cfg.minProfit, cfg.tune
-        local function review(shown) A.win = { at = GetTime(), shown = shown, worked = 0 }; A:Worked(601) end
-        A.cfg.tooMany = 15
+        local function review(shown, crowd) A.win = { at = GetTime(), shown = shown, crowd = crowd, worked = 0 }; A:Worked(601) end
+        A.cfg.manyHidden, A.cfg.crowded = 3, 3
         cfg.tune = true; A.d.log, A.d.manual = {}, {}
         -- nothing shown, deals hidden by the minimum: it comes down, in steps, never under 20c
         UI:SetMinProfit(200); A.d.manual = {}
         S.underMin = { n = 6, best = 150, at = GetTime() }
         review(0)
         print("     " .. tostring(A.d.log[#A.d.log] and A.d.log[#A.d.log].m))
-        check(cfg.minProfit == 150 and D.minProfit == 150 and A.d.log[#A.d.log].m == "smallest profit 2s 0c > 1s 50c: 0 deals shown and 6 hidden by it in the last 10 minutes (best hidden: 1s 50c)",
-            "no deal shown and 6 hidden by a 2s minimum: it is lowered to 1s 50c, and the reason is written down")
+        check(cfg.minProfit == 150 and D.minProfit == 150 and A.d.log[#A.d.log].m == "smallest profit 2s 0c > 1s 50c: 6 deals hidden by it in the last 10 minutes (best hidden: 1s 50c), and no bigger deal had to wait behind a purchase",
+            "6 deals hidden by a 2s minimum and nothing had to wait: it is lowered to 1s 50c, and the reason is written down")
         S.underMin = nil; review(0)
         check(cfg.minProfit == 150, "nothing hidden: nothing changes")
-        -- far more deals than can be acted on: it goes up, never over 2% of what you own
-        gold = 20000; review(20)
-        check(cfg.minProfit == 188, ("20 deals in 10 minutes: raised by a quarter (%d)"):format(cfg.minProfit))
+        -- A BUSY MARKET DOES NOT RAISE IT ANY MORE (it went up a quarter every 10 minutes that 15 deals were shown, and a session offered less and less)
+        gold = 20000; review(69)
+        check(cfg.minProfit == 150, "69 deals shown in 10 minutes, none of them kept waiting: the minimum stays where it is")
+        S.underMin = { n = 5, best = 120, at = GetTime() }; review(69)
+        check(cfg.minProfit == 112, ("and with deals hidden by it, it comes DOWN in a busy market too (%d)"):format(cfg.minProfit))
+        -- what does raise it: bigger deals that had to wait behind a smaller purchase
+        S.underMin = { n = 5, best = 100, at = GetTime() }; review(40, 2)
+        check(cfg.minProfit == 112, "two bigger deals had to wait: not enough to move it either way")
+        review(40, 4)
+        print("     " .. tostring(A.d.log[#A.d.log] and A.d.log[#A.d.log].m))
+        check(cfg.minProfit == 140 and A.d.log[#A.d.log].m == "smallest profit 1s 12c > 1s 40c: 4 bigger deals had to wait behind a smaller purchase in the last 10 minutes",
+            "four did: raised by a quarter, never over 2% of what you own, with the reason written down")
+        -- the count itself: a deal that appears while a smaller one is being bought
+        A.win = { at = GetTime(), shown = 0, worked = 0 }
+        S.buying = { key = 111, phase = "quote", deal = { profit = 100 } }
+        A:Shown(222, { profit = 500 }); A:Shown(333, { profit = 50 }); A:Shown(111, { profit = 900 })
+        S.buying = nil
+        A:Shown(444, { profit = 900 })
+        check(A.win.shown == 4 and A.win.crowd == 1, "counted: a deal that appears while a purchase of a SMALLER one is in progress (not a smaller one, not the same item, not with nothing being bought)")
+        A.win = { at = GetTime(), shown = 0, worked = 0 }
+        -- at the update, the old rule's raises are taken back (they are in the log, with their reason)
+        do
+            local logWas = A.d.log
+            A.d.log = { { t = 1, m = "smallest profit 80c > 1s 1c: 3 deals shown and 4 hidden by it in the last 10 minutes (best hidden: 60c)" },
+                        { t = 2, m = "smallest profit 81c > 1s 1c: 69 deals shown in the last 10 minutes, more than can be acted on" },
+                        { t = 3, m = "smallest profit 1s 1c > 1s 26c: 70 deals shown in the last 10 minutes, more than can be acted on" } }
+            check(A:OldRaises(200) == nil, "the minimum is not where the last raise left it (you changed it since): left alone")
+            check(A:OldRaises(126) == 81, "two raises by the old rule, 81c > 1s01c > 1s26c: the minimum goes back to 81c")
+            check(A.d.log[#A.d.log].m == "smallest profit 1s 26c > 81c: raised by the old rule (many deals shown), taken back", "and that is written down too")
+            A.d.log = { { t = 1, m = "smallest profit 2s 0c > 1s 50c: 6 deals hidden by it in the last 10 minutes (best hidden: 1s 50c), and no bigger deal had to wait behind a purchase" } }
+            check(A:OldRaises(150) == nil, "a change by the new rule is not touched")
+            A.d.log = logWas
+        end
+        UI:SetMinProfit(150); A.d.manual = {}
         gold = 900
         -- a setting you change yourself is left alone for 30 minutes
         UI:SetMinProfit(300)
@@ -3006,7 +3037,7 @@ do
         A.d.log, A.d.manual = {}, {}
         AuctionMeshDB.outcomes = {}
         UI:SetMinProfit(keepMin); A.d.manual = {}; cfg.tune = keepTune
-        A.cfg.tooMany = 1e9
+        A.cfg.manyHidden, A.cfg.crowded = 1e9, 1e9
         UI.tab = "BUY"; UI.notice = nil; UI:Render()
     end
 

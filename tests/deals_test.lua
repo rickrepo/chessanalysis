@@ -64,6 +64,18 @@ check(d and d.profit == d0.profit - 400, "pessimistic setting: fee counted as lo
 D.cfg.depositIsCost = false
 d = ev({ { price = 115, qty = 5 }, { price = 184, qty = 26 }, { price = 185, qty = 9 }, { price = 187, qty = 16 }, { price = 188, qty = 86 } }, { budget = 200, deposit = 0.05, depositMin = 100 })
 check(d == nil, "2s purse with a 1s minimum fee: 1s15c + 1s fee is more than you have -> no deal")
+do  -- real log (21:33): 2s31c in hand, 11g of sold auctions on their way, "spend" at 35%: one Wool Cloth at 34c with a 1s fee is refused. The reason names the limit.
+    local spendWas = D.cfg.maxSpend
+    D.cfg.maxSpend = 0.35
+    local rowsW = { { price = 34, qty = 1 }, { price = 178, qty = 70 }, { price = 179, qty = 63 }, { price = 180, qty = 32 }, { price = 192, qty = 20 }, { price = 193, qty = 410 } }
+    local dW, _, whyW = ev(rowsW, { budget = 231, gold = 231, coming = 110000, deposit = 0.0165, depositMin = 100 })
+    print("     " .. tostring(whyW))
+    check(dW == nil and whyW == "good deal but one costs $34 plus $100 posting fee, more than one flip may take of your gold in hand (35%)",
+        "34c + 1s fee with 2s31c in hand and spend at 35% (80c): refused, and the reason says it is the spend limit, not 'more than you have'")
+    dW, _, whyW = ev(rowsW, { budget = 100, gold = 100, coming = 0, tied = 0, deposit = 0.0165, depositMin = 100 })
+    check(dW == nil and tostring(whyW):find("more than you have", 1, true), "with 1s in all, it really is more than you have")
+    D.cfg.maxSpend = spendWas
+end
 d = ev({ { price = 34, qty = 8 }, { price = 134, qty = 11 }, { price = 158, qty = 237 }, { price = 159, qty = 150 } }, { budget = 189, deposit = 0.02, depositMin = 100 })
 check(d and d.units == 2 and d.cost == 68 and d.deposit == 100, "real log: Wool 8@34c, 1s89c purse, 1s minimum fee -> buy 2, keep 1s for the fee")
 d = ev(with({ { price = 20, qty = 40 } }), { deposit = 10, budget = 1100 })

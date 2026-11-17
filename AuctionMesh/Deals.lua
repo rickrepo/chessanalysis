@@ -254,7 +254,10 @@ local function flipDeal(rows, o, cfg)
             if n < rows[i].qty then break end
         end
         if u == 0 then
-            return nil, wall, ("good deal but one costs $%d plus $%d posting fee, more than you have"):format(rows[1].price, depFor(1))
+            -- (it said "more than you have" when the limit was your "spend" setting: 2s31c in hand, 35% of it is 80c)
+            return nil, wall, (limit < o.budget
+                and "good deal but one costs $%d plus $%d posting fee, more than one flip may take of your gold in hand (" .. floor(cfg.maxSpend * 100 + 0.5) .. "%%)"
+                or "good deal but one costs $%d plus $%d posting fee, more than you have"):format(rows[1].price, depFor(1))
         end
         partial, units, cost = units - u, u, c
     end

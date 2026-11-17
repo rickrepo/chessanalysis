@@ -194,7 +194,12 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         end
         -- 13: units an older version dropped from the record are looked for in your bags (see Seller:Recover)
         if (db.cfg.v or 0) < 13 then db.recover = { at = GetServerTime() } end
-        db.cfg.v = 13
+        -- 14: the smallest profit as it was before the old "many deals shown" rule raised it (see Auto:OldRaises)
+        if (db.cfg.v or 0) < 14 and ns.Auto and ns.Auto.OldRaises then
+            local back = ns.Auto:OldRaises(db.cfg.minProfit)
+            if back then db.cfg.minProfit = back end
+        end
+        db.cfg.v = 14
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)

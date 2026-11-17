@@ -359,7 +359,7 @@ function Sniper:Evaluate(key, rows, commodity)
         if fresh then
             self.dealSeen[key] = GetTime()
             if ns.Scout then ns.Scout:Deal(key, deal) end
-            if ns.Auto then ns.Auto:Shown() end
+            if ns.Auto then ns.Auto:Shown(key, deal) end
         end
         deal.born = GetTime() -- when the listing it rests on was read
         self.verified[key] = deal
@@ -478,7 +478,7 @@ function Sniper:InstantVendor(key, price, qty, v, prev)
     self.dealSeen[key] = now
     self.stats.deals = self.stats.deals + 1
     if ns.Scout then ns.Scout:Deal(key, deal) end
-    if ns.Auto then ns.Auto:Shown() end
+    if ns.Auto then ns.Auto:Shown(key, deal) end
     if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
     ns.Log("DEAL VENDOR %s straight from the radar: %d new units at %d, vendor pays %d, profit %d (no item check; the quote decides)",
         tostring(key), n, price, v, profit)
@@ -564,7 +564,7 @@ function Sniper:InstantFlip(key, price, qty, prev)
     self.stats.instantFlips = (self.stats.instantFlips or 0) + 1
     if old then self.stats.instantOld = (self.stats.instantOld or 0) + 1 end
     if ns.Scout then ns.Scout:Deal(key, deal) end
-    if ns.Auto then ns.Auto:Shown() end
+    if ns.Auto then ns.Auto:Shown(key, deal) end
     if PlaySound and SOUNDKIT then PlaySound(SOUNDKIT.AUCTION_WINDOW_OPEN) end
     ns.Log("DEAL FLIP %s straight from the radar: %d new units at %d, bottom was %d, market %s, sell %d each, profit %d (listing read %.0fs ago, %d units left the item since; the quote decides)",
         tostring(key), deal.units, price, prev.p, tostring(wall), deal.sell, deal.profit, age, last.gone or 0)

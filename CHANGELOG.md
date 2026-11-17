@@ -6,6 +6,18 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.43.0 (2026-11-17)
+
+"Does something happen after the first 10 to 20 minutes?" Two things, both in the real log and Snapshot of 21:10 to 21:33. One is the addon's and is fixed here.
+
+- **Auto-adjust raised the smallest profit a quarter every 10 minutes of a busy market, and nothing brought it back.** The rule was "15 or more deals shown in 10 minutes is more than can be acted on": true when you bought with clicks, not with the wheel or a key. At 20:58 it went from 1s01c to 1s26c (`69 deals shown in the last 10 minutes`), and that day 32 checks ended `profit is under your minimum` (a 1s05c Wool Cloth flip among them). It could only come down when at most one deal was shown in 10 minutes, which a busy market never has, so a session offered less and less.
+  - **New rule, from what is measured.** A small deal has one cost: while it is being bought (about two seconds of auction house lock) a bigger one that appears has to wait. That is now counted: a deal that appears while a purchase of a smaller one is in progress. Three or more in 10 minutes raise the smallest profit by a quarter. None, with three or more deals hidden by the minimum, lower it by a quarter, in a busy market too. Limits as before (20c to 2% of what you own); a value you set yourself is left alone for 30 minutes.
+  - **The old rule's raises are taken back**, once, at this update: they are in the auto-adjust log with their reason, and the smallest profit returns to what it was before the first of them, unless you have changed it since. The Setup tab and chat say so.
+- **The other thing is your gold, and it is not the addon's to fix.** At 21:10 you held 1g17s with 10g48s in auctions; at 21:33 you held 2s31c, then 33c after two Silk Cloth, with 34 auctions sold and waiting to be paid (the auction house pays an hour after a sale). A Wool Cloth at 34c under a 1s78c market and eleven Silk Cloth at 99c under the vendor's 1s50c were on the list and could not be paid for. The first minutes of a session spend what you hold; after that only what comes back can be spent.
+  - The reason for the Wool Cloth said `more than you have` with 2s31c in hand. It was your "spend" setting (one flip may take 35% of the gold in hand: 80c). The reason now says so.
+- Confirmed in game (this log): radar reads 0.64 to 0.66s apart; 60 inputs in 5 seconds while rolling; the stale-deal and gold messages as designed.
+- Not yet tried in the real game: the new auto-adjust rule.
+
 ## 3.42.0 (2026-11-17)
 
 - **Vendor now, or wait and list it: both on the row.** For anything a vendor pays more for than it cost you, the Bags tab now shows the other way out and the difference.
