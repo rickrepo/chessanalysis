@@ -6,6 +6,13 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.62.0 (2026-11-23)
+
+- **A relist is never advised when it throws the profit away.** Two of the rules could say RELIST for any relist that left anything at all: "it will not sell before it runs out", and the end of a timed hold. An auction that makes 1g51s where it is could be sent down to a price that left a few silver. Now, whatever rule says "relist", it is only said if the relist keeps at least half of what the auction makes where it is (or gives up no more than the smallest profit you bother with). Otherwise the advice is HOLD: `the price has dropped: a relist at 59c would give up 12s of the 16s50c it makes where it is. It may come back unsold: post it again then`.
+- **Every piece of advice is in the log** when it changes for an item, with the figures it came from: `ADVICE 6522: HOLD (...) | yours 59 at 838, cost 540 | 120 cheaper ahead, cheapest 600, others' mean 790 | sells 40 an hour | 9 hours left | hold makes 15104, relist at 599 makes 1711`. A question like "why did this figure change" can then be answered from the log.
+- About the Deviate Fish question that prompted this: the log that was sent has no line about that item, so whether a bug lowered its figure is not known. This version closes the one way the advice itself could have led to a low relist price; it is not confirmed as the cause.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.61.0 (2026-11-23)
 
 - **Requests follow the tab.**

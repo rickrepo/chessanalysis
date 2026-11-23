@@ -3914,11 +3914,32 @@ do
     print("     " .. a.word .. ": " .. a.why)
     check(a.rec == "hold" and a.repost == 59 and a.why:find("waiting about 3 hours is worth", 1, true),
         "cheaper units at 60c: relisting under them gives up most of the profit. HOLD, the wait is worth it")
-    -- 5. it will not sell before it runs out: RELIST even so
+    -- 5. it will not sell before it runs out. A relist that keeps most of the profit: RELIST.
     rate = 5 -- 12 hours to reach yours, 10 left
+    S.lastRows[9801] = { rows = { { price = 90, qty = 20 }, { price = 95, qty = 40 }, { price = 110, qty = 200 } }, at = GetTime() }
     a = advice()
     print("     " .. a.word .. ": " .. a.why)
-    check(a.rec == "relist" and a.why:find("it will not sell before it runs out", 1, true), "5 sell an hour: 12 hours to reach yours and 10 left. RELIST: it will not sell before it runs out")
+    check(a.rec == "relist" and a.keeps == true and a.why:find("it will not sell before it runs out", 1, true),
+        "5 sell an hour: 12 hours to reach yours and 10 left. A relist at 89c keeps 12s90c of 16s50c: RELIST, it will not sell before it runs out")
+    -- ...but a relist is never advised when it throws the profit away: cheaper units at 60c would send it down to 59c
+    S.lastRows[9801] = { rows = { { price = 60, qty = 60 }, { price = 110, qty = 200 } }, at = GetTime() }
+    local logLines, realLog = {}, ns.Log
+    ns.Log = function(fmt, ...) local ok, l = pcall(string.format, fmt, ...); logLines[#logLines + 1] = ok and l or tostring(fmt); return realLog(fmt, ...) end
+    Se.ucLogged = nil
+    a = advice()
+    ns.Log = realLog
+    print("     " .. a.word .. ": " .. a.why)
+    check(a.rec == "hold" and a.keeps == false and a.repost == 59 and a.why:find("the price has dropped: a relist at 59c would give up", 1, true)
+        and a.why:find("post it again then", 1, true) and a.brief:find("^price dropped: a relist gives up"),
+        "the same wait with cheaper units at 60c: a relist would give up most of the 16s50c. HOLD: the price has dropped; post it again if it comes back")
+    do  -- the advice is in the log, with the figures it came from, whenever it changes
+        local found
+        for _, l in ipairs(logLines) do
+            if l:find("^ADVICE 9801: HOLD %(the price has dropped") and l:find("60 cheaper ahead, cheapest 60", 1, true) and l:find("hold makes 1650, relist at 59 makes", 1, true) then found = l end
+        end
+        print("     " .. tostring(found))
+        check(found ~= nil, "the log has the advice with the figures it came from")
+    end
     -- 3. relisting would leave nothing
     S.lastRows[9801] = { rows = { { price = 42, qty = 60 }, { price = 110, qty = 200 } }, at = GetTime() }
     a = advice()

@@ -1882,6 +1882,14 @@ end
 -- any more: it is simply listed. Still undercut: the wait did not work, and
 -- the advice becomes RELIST (if a relist still pays and you have the fee).
 --
+-- A RELIST NEVER THROWS THE PROFIT AWAY. Whatever rule says "relist", it is
+-- only said if the relist keeps at least half of what the auction makes where
+-- it is (or what it gives up is no more than the smallest profit you bother
+-- with). Otherwise: HOLD, the price has dropped; if the auction comes back
+-- unsold it can be posted again then. (Rule 5 and the end of a timed hold
+-- used to say RELIST for any relist that left anything at all: an auction
+-- making 1g51s could be sent down to a price that left a few silver.)
+--
 -- THE ADVICE IS ADVICE. The Cancel button is on the row whatever it says:
 -- press it to relist an auction the addon would hold; leave it to keep one
 -- the addon would relist.
@@ -1962,6 +1970,10 @@ function Seller:Undercut(e)
     local rec, why, brief
     local n2 = (ahead == 1) and "1 cheaper unit" or (("%s%d cheaper units"):format(r.more and "at least " or "", ahead))
     local small = max(cfg.minProfit or 0, 1) -- an amount you would not buy a deal for
+    -- does a relist keep enough of the profit to be worth saying at all?
+    local givesUp = (r.holdProfit and r.relistProfit) and (r.holdProfit - r.relistProfit) or nil
+    local keeps = givesUp ~= nil and (r.relistProfit >= 0.5 * r.holdProfit or givesUp <= small)
+    r.keeps = keeps
     if ahead == 0 then
         rec, why, brief = "hold", "nobody was cheaper when its listing was last read in full", "nobody cheaper at the last full read"
     elseif not r.eta then
@@ -1977,6 +1989,10 @@ function Seller:Undercut(e)
     elseif GetMoney() < newFee then
         rec, why = "hold", ("a relist needs a posting fee of %s first and you have %s"):format(short(newFee), short(GetMoney()))
         brief = ("no gold for the fee (%s)"):format(short(newFee))
+    elseif r.eta > r.left and not keeps then
+        rec, why = "hold", ("the price has dropped: a relist at %s would give up %s of the %s it makes where it is. It may come back unsold (%s left, %s%s to reach it): post it again then"):format(
+            short(repost), short(givesUp), short(r.holdProfit), hours(r.left), r.more and "at least " or "about ", hours(r.eta))
+        brief = ("price dropped: a relist gives up %s"):format(short(givesUp))
     elseif r.eta > r.left then
         rec, why = "relist", ("at this rate it will not sell before it runs out (%s left, %s%s to reach it)"):format(hours(r.left), r.more and "at least " or "about ", hours(r.eta))
         brief = ("will not sell in the %s it has left"):format(hours(r.left))
@@ -2009,10 +2025,14 @@ function Seller:Undercut(e)
                 why = why .. " (that time is up: its listing is being read again)"
             else
                 r.untilT = nil
-                if r.relistProfit and r.relistProfit > 0 and GetMoney() >= newFee then
+                if keeps and r.relistProfit > 0 and GetMoney() >= newFee then
                     rec = "relist"
                     why = ("it was given %s to sell and is still undercut"):format(hours(h.secs / 3600))
                     brief = ("still undercut after %s: relist"):format(hours(h.secs / 3600))
+                elseif givesUp and r.relistProfit and r.relistProfit > 0 then
+                    why = ("it is still undercut after %s, but a relist at %s would give up %s of the %s it makes where it is"):format(
+                        hours(h.secs / 3600), short(repost), short(givesUp), short(r.holdProfit))
+                    brief = ("still undercut; a relist gives up %s"):format(short(givesUp))
                 else
                     brief = "still undercut, but a relist would not pay"
                 end
@@ -2023,6 +2043,16 @@ function Seller:Undercut(e)
     end
     r.rec, r.why, r.brief = rec, why, brief
     r.word = rec == "relist" and "RELIST" or r.checking and "CHECKING" or "HOLD"
+    do  -- in the log whenever the advice for an item changes, with the figures it came from
+        self.ucLogged = self.ucLogged or {}
+        local sig = rec .. ":" .. tostring(repost) .. ":" .. tostring(ahead)
+        if self.ucLogged[key] ~= sig then
+            self.ucLogged[key] = sig
+            ns.Log("ADVICE %s: %s (%s) | yours %d at %s, cost %s | %d cheaper ahead, cheapest %s, others' mean %s | sells %s an hour | %s left | hold makes %s, relist at %s makes %s",
+                tostring(key), rec:upper(), (tostring(why):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")), qty, tostring(price), tostring(cost), ahead, tostring(r.low), tostring(r.mean),
+                r.rate and ("%.0f"):format(r.rate) or "?", hours(r.left), tostring(r.holdProfit), tostring(repost), tostring(r.relistProfit))
+        end
+    end
     r.text = (rec == "relist" and ("RELIST at %s: %s. Press Cancel on this row (twice), collect it at a mailbox, and post it again. "):format(short(repost), why)
         or ("HOLD: %s. Your call: Cancel on this row relists it anyway. "):format(why)) .. "The figures: " .. table.concat(facts, "; ") .. "."
     return r
