@@ -276,6 +276,9 @@ local function buyStatus(n)
         mode = mode .. (set and (GREY .. ("Focus on %d item%s.|r "):format(#flist, #flist == 1 and "" or "s")) or (GREY .. "Focus: still measuring.|r "))
     end
 
+    -- A STAKE-OUT IS A MODE OF ITS OWN: one item, bought by asking its price; nothing else while you press.
+    local sk = S:StakeKey()
+    if sk then mode = GOLD .. ("MODE: STAKE-OUT on %s.|r "):format(name(sk)) end
     local poor = S.PoorCount and S:PoorCount() or 0
     local low = S.lowGold
     if low then
@@ -300,6 +303,11 @@ local function buyStatus(n)
     -- went, the last alert and the radar's figures are in Details, Session.)
     if G:UserBusy() then
         lines[#lines + 1] = mode .. ORANGE .. "Paused for a moment (a click is in progress).|r"
+    elseif sk then
+        local max, why = S:StakeTerms()
+        lines[#lines + 1] = mode .. (not max and (ORANGE .. "Waiting: " .. tostring(why or "reading its market first") .. ".|r")
+            or S:Staking() and (GREEN .. "Running: every input asks its price. Nothing else is bought and the radar is off.|r")
+            or (GREY .. "Not running: press in the snipe box to start it. Until then the radar reads as usual.|r"))
     else
         local sr = S.searching
         local alert = S:PeekNext()
@@ -934,7 +942,7 @@ function UI:RenderSnipe(short)
             local st = S.stake
             if max then
                 local seen = (st.lastPrice and st.lastAt and GetTime() - st.lastAt < 30) and ("    last price " .. short(st.lastPrice)) or ""
-                text = (S:SnipeMode() and (GREEN .. "STAKE-OUT|r") or (TEAL .. "STAKE-OUT READY|r")) .. "    " .. S.nameOf(sk) .. ": buys at " .. short(max) .. " or less"
+                text = (S:SnipeMode() and (GOLD .. "STAKE-OUT RUNNING|r") or (GOLD .. "STAKE-OUT SET, NOT RUNNING|r")) .. "    " .. S.nameOf(sk) .. ": buys at " .. short(max) .. " or less"
                     .. seen .. GREY .. ("    asked %d, bought %d|r"):format(st.asked or 0, st.bought or 0)
             else
                 text = ORANGE .. "STAKE-OUT WAITING|r    " .. S.nameOf(sk) .. ": " .. tostring(why or "reading its market first")
@@ -959,6 +967,10 @@ function UI:RenderSnipe(short)
                 .. (missing > 0 and ("radar first; %d listing%s still being read for instant flips|r"):format(missing, missing == 1 and "" or "s")
                     or "every request goes to the radar and its alerts|r")
         end
+    end
+    if S:StakeKey() and not d and not res then
+        -- gold, whether it is running or not: this box is not doing what it usually does
+        colour, fill = { 1, 0.82, 0 }, S:Staking() and { 0.20, 0.15, 0.02 } or { 0.11, 0.09, 0.03 }
     end
     do  -- POSTING, step by step, while no deal is up: what is being posted and what it is waiting for
         local act = ns.Seller.activity
@@ -987,7 +999,7 @@ function UI:RenderSnipe(short)
         if armed and S:StakeKey() then
             hint = GREEN .. "Stake-out running: every input asks the server this item's price and buys if it is low. The radar is off meanwhile.|r"
         elseif S:StakeKey() and not d then
-            hint = GREY .. "Stake-out: " .. how .. ". Stop it in the drawer (click the item).|r"
+            hint = GREY .. "Stake-out: " .. how .. ". End it with the Stop stake-out button below.|r"
         elseif armed then
             -- your inputs against the game's lock, measured
             hint = GREEN .. "Armed: keep the inputs coming.|r"
@@ -1121,7 +1133,7 @@ function UI:RenderPicks(short)
             row.btn.key = it.key
             row.btn:SetText(on and "Stop" or "Stake out")
             row.btn.tipText = (on and "Ends the stake-out; the radar gets every request back."
-                or ("Sets the stake-out on this item and takes you to the snipe box. While you roll, tap or hold there, every input asks the server this item's price and buys at "
+                or ("Sets the stake-out on this item and takes you to the snipe box. While you roll or tap there, every input asks the server this item's price and buys at "
                     .. (it.max and (short(it.max) .. " or less") or "a price worked out once its listing has been read") .. ". The radar is off meanwhile."))
                 .. ((it.record and it.record.asked > 0) and ("\nStake-outs on it so far: asked %d times, %d bought."):format(it.record.asked, it.record.bought) or "")
                 .. ((not it.max and it.why) and ("\nNo buying price yet: " .. tostring(it.why) .. ".") or "")
@@ -1152,7 +1164,8 @@ function UI:RenderSetup()
     -- your own setting (while gold is low the addon runs on vendor deals only without changing it)
     sp.flips:SetText(AuctionMeshDB.cfg.flips ~= false and (ns.Sniper.lowGold and "Vendor deals + flips (off: low gold)" or "Vendor deals + flips") or "Vendor deals only")
     sp.scope:SetText(ns.Do.SCOPE_NAMES[cfg.scope] or ns.Do.SCOPE_NAMES.mats)
-    sp.tied:SetText(("%d%% of what you own"):format(floor(ns.Deals.cfg.maxTied * 100 + 0.5)))
+    sp.tied:SetText(("%d%% unsold"):format(floor(ns.Deals.cfg.maxTied * 100 + 0.5)))
+    sp.spend:SetText(("%d%% a flip"):format(floor(ns.Deals.cfg.maxSpend * 100 + 0.5)))
     sp.dock:SetText(cfg.dock ~= false and "Inside the auction house" or "A window of its own")
     sp.auto:SetText(cfg.autoOpen and "Opens by itself: on" or "Opens by itself: off")
     sp.tune:SetText(ns.Tuner.cfg.enabled and "Auto-adjust: on" or "Auto-adjust: off")
@@ -1226,6 +1239,7 @@ function UI:Render()
 
     if tab == "SELL" then frame.next:SetText(TEAL .. "NEXT|r  " .. nextStep(deals, entries, short)) end -- (hidden on the other tabs)
     self:RenderSnipe(short)
+    if frame.stakeStop then frame.stakeStop:SetShown(tab == "BUY" and ns.Sniper:StakeKey() ~= nil) end
     local status = tab == "BUY" and buyStatus(#deals) or tab == "SELL" and Se:Instructions(entries) or ""
 
     local n = self.notice
@@ -1689,6 +1703,16 @@ function UI:Create()
     frame.snipe = sn
     frame.status = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
+    -- shown on the Trades tab only while a stake-out is set: one click ends it
+    frame.stakeStop = button(frame, 120, "Stop stake-out", function()
+        ns.Sniper:SetStake(nil)
+        UI:Notice("Stake-out ended. The radar has every request again.", true)
+        UI:Render()
+    end)
+    frame.stakeStop:SetHeight(18)
+    frame.stakeStop:SetPoint("TOPRIGHT", frame.status, "TOPRIGHT", 0, 3)
+    outline(frame.stakeStop, { 1, 0.82, 0 })
+    frame.stakeStop:Hide()
 
     -- MONEY (Trades tab): the answer to "how much do I really have?"
     local lg = CreateFrame("Frame", nil, frame)
@@ -1789,10 +1813,13 @@ function UI:Create()
     sp.flips:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.flips)
 
-    L, at = row("Money in unsold auctions, at most")
-    sp.tied = tip(button(sp, 190, "", function() ns.Do.MaxTied() end),
-        "The most of your money that may sit in auctions that have NOT SOLD yet. Gold from auctions that have sold is on its way and does not count. One flip never takes more than 35% of the gold in hand, and a small flip (15% of it) is always allowed. Click to change: 30%, 50%, 70%, 100%.")
-    sp.tied:SetPoint("TOPRIGHT", 0, at + 5)
+    L, at = row("Most of your money in unsold auctions, and in one flip")
+    sp.spend = tip(button(sp, 92, "", function() ns.Do.MaxSpend() end),
+        "The most of the gold you hold that ONE flip may take. Click to change: 35%, 50%, 75%, 100%. At 100% the first big pile can take everything you hold; nothing more can be bought until it sells and pays out.")
+    sp.spend:SetPoint("TOPRIGHT", 0, at + 5)
+    sp.tied = tip(button(sp, 92, "", function() ns.Do.MaxTied() end),
+        "The most of your money that may sit in auctions that have NOT SOLD yet. Gold from auctions that have sold is on its way and does not count. A small flip (15% of the gold in hand) is always allowed. Click to change: 30%, 50%, 70%, 100%.")
+    sp.tied:SetPoint("RIGHT", sp.spend, "LEFT", -6, 0)
     upTo(L, sp.tied)
 
     group("BUYING")
@@ -1859,6 +1886,23 @@ function UI:Create()
     sp.code = box(196, false, 4000)
     sp.code:SetPoint("RIGHT", sp.apply, "LEFT", -8, 0)
     upTo(L, sp.code)
+    -- A key-press tool goes on pressing your buy key on this tab, where the key
+    -- is not bound: with the box in focus it types into it (ten "9" a second,
+    -- until the box is full: then nothing can be pasted and Backspace cannot
+    -- keep up). One character repeated is never a settings code: the box is
+    -- emptied and the panel says what is happening.
+    sp.code:SetScript("OnTextChanged", function(self)
+        local t = self:GetText() or ""
+        if #t >= 4 and t == string.rep(t:sub(1, 1), #t) then
+            self:SetText("")
+            UI:Notice(("|cffff8040Something keeps typing '%s' into the import box|r (a key-press tool still running?). Pause it, then paste."):format(t:sub(1, 1)), true)
+        end
+    end)
+    sp.code:SetScript("OnEditFocusGained", function(self) self:HighlightText() end) -- a paste replaces what is there
+    sp.code:SetScript("OnEnterPressed", function(self)
+        if ns.Do.Import(self:GetText()) then self:SetText("") end
+        self:ClearFocus()
+    end)
 
     L, at = row("Send to Claude")
     local log = tip(button(sp, 60, "Log", function() ns.Diag:Show() end), "Everything the addon did this session, step by step. Send it when something looks wrong.")
@@ -1952,7 +1996,7 @@ function UI:Create()
                 -- one click: the stake-out is set and you are at the snipe box
                 S:SetStake(key)
                 UI.tab = "BUY"
-                UI:Notice(("Stake-out set on %s. Roll, tap or hold in the snipe box to run it; the radar is off while you do. Stop it on the Picks tab.")
+                UI:Notice(("Stake-out set on %s. Roll or tap in the snipe box to run it; the radar is off while you do. Stop it with the button under the snipe box.")
                     :format(S.nameOf(key)), true)
             end
             UI:Render()

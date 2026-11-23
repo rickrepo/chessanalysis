@@ -6,6 +6,18 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.45.0 (2026-11-23)
+
+- **Confirmed in game: the stake-out works.** Real log, 20:28: Runecloth's price was asked every 0.72 to 0.75s (the game's limit for price requests); at 20:28:25 the answer was 1s58c against a limit of 4s38c, the purchase was sent half a second later and one Runecloth was bought. The next request asked for two: none were left at that price.
+- **A stake-out is unmistakable on the Trades tab.**
+  - The status line starts `MODE: STAKE-OUT on Runecloth.` in gold, followed by `Running: every input asks its price. Nothing else is bought and the radar is off.` or `Not running: press in the snipe box to start it. Until then the radar reads as usual.`
+  - The snipe box is gold while a stake-out is set (brighter while it runs) and says `STAKE-OUT RUNNING` or `STAKE-OUT SET, NOT RUNNING`.
+  - A **Stop stake-out** button sits on the status line while one is set (it could only be ended on the Picks tab or in Details).
+- **"One flip may take" has its own button** on the Setup tab, next to the one for unsold auctions: 35%, 50%, 75%, 100% of the gold you hold. No code to paste.
+- **The import box and a key-press tool.** On the Setup tab your buy key is not bound, so a tool that keeps pressing it types into whatever has the keyboard: with the import box in focus it fills with that character until it is full, and then nothing can be pasted and Backspace cannot keep up. The box now empties itself when it holds nothing but one repeated character and the panel says `Something keeps typing '9' into the import box`. Clicking the box selects what is in it (a paste replaces it), and Enter applies the code. (That this is why your paste failed is the likely explanation, not a confirmed one: nothing in the addon blocks pasting.)
+- Fixed: two texts still said "roll, tap or hold" (holding a key was removed in 3.33.4).
+- Not yet tried in the real game: the new display, the button and the import box change.
+
 ## 3.44.0 (2026-11-17)
 
 "Why don't I see the big flips more?" From the report of 21:11 and the code.

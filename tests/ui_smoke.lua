@@ -2322,11 +2322,35 @@ do
         "the Trades tab says so")
     UI.tab = "HISTORY"; UI:Render()
     local sp = AuctionMeshFrame.setup
-    check(sp.tied._text == "50% of what you own", "Setup shows the limit")
+    check(sp.tied._text == "50% unsold", "Setup shows the limit")
     sp.tied._scripts.OnClick(sp.tied); UI:Render()
-    check(cfg.maxTied == 70 and math.abs(ns.Deals.cfg.maxTied - 0.70) < 1e-9 and sp.tied._text == "70% of what you own" and S:Capital().paused == false,
+    check(cfg.maxTied == 70 and math.abs(ns.Deals.cfg.maxTied - 0.70) < 1e-9 and sp.tied._text == "70% unsold" and S:Capital().paused == false,
         "one click raises it to 70%: flips are allowed again")
     ns.Do.MaxTied(50)
+    do  -- ONE FLIP MAY TAKE: its own button (no code to paste), 35 > 50 > 75 > 100 > 35
+        local spendWas = cfg.maxSpend
+        ns.Do.MaxSpend(35); UI:Render()
+        check(sp.spend._text == "35% a flip", "Setup shows how much of the gold in hand one flip may take")
+        sp.spend._scripts.OnClick(sp.spend); UI:Render()
+        check(cfg.maxSpend == 50 and math.abs(ns.Deals.cfg.maxSpend - 0.50) < 1e-9 and sp.spend._text == "50% a flip", "one click: 50%")
+        sp.spend._scripts.OnClick(sp.spend); sp.spend._scripts.OnClick(sp.spend); UI:Render()
+        check(cfg.maxSpend == 100 and sp.spend._text == "100% a flip" and strip(UI.notice.text):find("The first big pile can take all of it", 1, true), "two more: 100%, with what that means")
+        sp.spend._scripts.OnClick(sp.spend)
+        check(cfg.maxSpend == 35, "and round to 35% again")
+        cfg.maxSpend = spendWas; ns.Deals.cfg.maxSpend = (spendWas or 100) / 100
+        -- THE IMPORT BOX with a key-press tool still running: it is not allowed to fill up with one character
+        local code = sp.code
+        UI.notice = nil
+        code:SetText("9999"); code._scripts.OnTextChanged(code)
+        check((code._text or "") == "" and UI.notice and strip(UI.notice.text):find("Something keeps typing '9' into the import box", 1, true),
+            "a box filling with one repeated character is emptied, and the panel says a key-press tool is typing into it")
+        code:SetText("AMS1:spend=50"); code._scripts.OnTextChanged(code)
+        check(code._text == "AMS1:spend=50", "a pasted code is left alone")
+        code._scripts.OnEnterPressed(code)
+        check(cfg.maxSpend == 50 and (code._text or "") == "", "Enter in the box applies it")
+        cfg.maxSpend = spendWas; ns.Deals.cfg.maxSpend = (spendWas or 100) / 100
+        UI.notice = nil
+    end
     AuctionMeshDB.listed = {}
     S.ownSoldQty = { [2449] = 16 }
     S.ownSoldPay = { { amount = 3654, due = GetTime() + 29 * 60 } }
@@ -3158,7 +3182,18 @@ do
         print(("     Heavy Stone, market 3s00c: the stake-out buys at %s or less, up to %s at a time"):format(tostring(max), tostring(S.stake.cap)))
         check(max and max >= 150 and max < 260 and S.stake.kind == "FLIP", "the buying price comes from the normal deal rules and the item's own listing")
         UI:Render()
-        check(label():find("^STAKE%-OUT READY    Heavy Stone: buys at ") and strip(btn.hint._text):find("^Stake%-out: put the mouse here and keep rolling the wheel"), "the snipe box shows the stake-out and what it waits for")
+        check(label():find("^STAKE%-OUT SET, NOT RUNNING    Heavy Stone: buys at ") and strip(btn.hint._text):find("^Stake%-out: put the mouse here and keep rolling the wheel"), "the snipe box shows the stake-out and what it waits for")
+        do  -- IT IS UNMISTAKABLE THAT A STAKE-OUT IS SET: the mode line, a gold snipe box, and a button to end it
+            UI.notice = nil; UI:Render()
+            local stt = strip(AuctionMeshFrame.status._text)
+            print("     " .. stt)
+            check(stt:find("^MODE: STAKE%-OUT on Heavy Stone%. Not running: press in the snipe box to start it%. Until then the radar reads as usual%.$"),
+                "the status line: MODE: STAKE-OUT on the item, and that it is not running yet")
+            check(AuctionMeshFrame.stakeStop._shown and AuctionMeshFrame.stakeStop._text == "Stop stake-out", "a Stop stake-out button is on the Trades tab while one is set")
+            UI.tab = "SELL"; UI:Render()
+            check(not AuctionMeshFrame.stakeStop._shown, "(on the Trades tab only)")
+            UI.tab = "BUY"; UI:Render()
+        end
         -- rolling with nothing cheap: every notch that the auction house allows asks the price; nothing is bought
         local wheel = btn._scripts.OnMouseWheel
         local radar0, starts0 = ns.Swarm.stats.queries, 0
@@ -3170,7 +3205,13 @@ do
         print("     " .. label())
         check(S.stake.asked >= 3 and gold == 5000 and S.stake.lastPrice == 300, ("3 seconds of rolling: the price was asked %d times (3s00c each time), nothing bought"):format(S.stake.asked))
         check(ns.Swarm.stats.queries == radar0, "the radar sends nothing while the stake-out runs")
-        check(label():find("^STAKE%-OUT    Heavy Stone: buys at ") and label():find("last price 3s00c", 1, true), "the box shows the last price the server gave")
+        check(label():find("^STAKE%-OUT RUNNING    Heavy Stone: buys at ") and label():find("last price 3s00c", 1, true), "the box shows the last price the server gave")
+        do
+            UI.notice = nil; UI:Render()
+            local stt = strip(AuctionMeshFrame.status._text)
+            check(stt:find("^MODE: STAKE%-OUT on Heavy Stone%. Running: every input asks its price%. Nothing else is bought and the radar is off%.$"),
+                "while it runs the status line says so: only this item, radar off")
+        end
         -- three cheap units are listed
         LIST[2838] = { { 203, 3 }, { 300, 75 }, { 320, 44 }, { 325, 149 }, { 327, 44 }, { 329, 25 } }
         local t0, first = GetTime(), nil
@@ -3362,7 +3403,7 @@ do
     check(#sent == nSent, "showing the tab sent nothing either")
     -- one click
     pk.rows[1].btn._scripts.OnClick(pk.rows[1].btn)
-    check(S:StakeKey() == 4306 and UI.tab == "BUY" and strip(UI.notice.text):find("^Stake%-out set on Silk Cloth. Roll, tap or hold in the snipe box"), "one click sets the stake-out and takes you to the snipe box")
+    check(S:StakeKey() == 4306 and UI.tab == "BUY" and strip(UI.notice.text):find("^Stake%-out set on Silk Cloth. Roll or tap in the snipe box"), "one click sets the stake-out and takes you to the snipe box")
     check(AuctionMeshFrame.tabPick._text == "Picks", "with the stake-out set the label is plain again")
     S:StakeRecord(4306, 10, 2)
     UI.tab = "PICKS"; UI.notice = nil; UI:Render()

@@ -319,6 +319,22 @@ end
 
 -- How much of your money flips may tie up at once (the rest stays free for vendor deals).
 local TIED = { 30, 50, 70, 100 }
+-- The most of the gold in hand that ONE flip may take. Click to change.
+local SPEND = { 35, 50, 75, 100 }
+function Do.MaxSpend(pct)
+    local cfg = AuctionMeshDB.cfg
+    if not pct then
+        local cur = cfg.maxSpend or floor(Deals.cfg.maxSpend * 100 + 0.5)
+        local at = 0
+        for i, v in ipairs(SPEND) do if v == cur then at = i end end
+        pct = SPEND[at % #SPEND + 1]
+    end
+    cfg.maxSpend, Deals.cfg.maxSpend = pct, pct / 100
+    Sniper.checkedAt = {}
+    UI:Notice(("One flip may take at most %d%% of the gold you hold.%s"):format(pct,
+        pct >= 100 and " The first big pile can take all of it; nothing more can be bought until it sells and pays out." or ""), true)
+end
+
 function Do.MaxTied(pct)
     local cfg = AuctionMeshDB.cfg
     if not pct then
