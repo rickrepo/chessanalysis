@@ -12,9 +12,9 @@
 --   DEALS TO BUY NOW (2)    BUY  MARKET  SPREAD  VOLUME  PROFIT
 --   [icon] Copper Ore       ...                              [ Buy ]
 --
--- Trades tab: SNIPING ONLY. MONEY (what you hold and what it becomes once
+-- Buy tab: SNIPING ONLY. MONEY (what you hold and what it becomes once
 -- everything has sold), then deals verified against live listings with the
--- exact quantity and total you will pay. Bags tab: everything you bought and
+-- exact quantity and total you will pay. Sell tab: everything you bought and
 -- the one thing to do with it, then your own auctions (sold, undercut with a
 -- Cancel button, ended, listed). More tab: settings, what the request engine
 -- has learned, recent activity. A bar at the top shows what the engine is doing.
@@ -78,7 +78,7 @@ function UI:Refresh()
     self.scroll, self.fast = {}, nil
     local n = 0
     for _, e in ipairs(Se:Entries()) do if e.action ~= "LISTED" then n = n + 1 end end
-    self:Notice(("Refreshed: %s. %d item%s to deal with (tab Bags).%s"):format(Se:BagsSeenText(), n, n == 1 and "" or "s",
+    self:Notice(("Refreshed: %s. %d item%s to deal with (tab Sell).%s"):format(Se:BagsSeenText(), n, n == 1 and "" or "s",
         back > 0 and (" %d unit%s the addon had lost track of %s back."):format(back, back == 1 and "" or "s", back == 1 and "is" or "are") or ""), true)
     self:Render()
 end
@@ -341,7 +341,7 @@ local function buyStatus(n)
         lines[#lines + 1] = ("%sGold is low: vendor deals only.|r You hold %s; posting the %d item%s you bought takes %s. Flips come back by themselves.%s"):format(
             ORANGE, ns.Seller.short(GetMoney()), low.items or 0, (low.items or 0) == 1 and "" or "s", ns.Seller.short(low.fees or 0),
             cap.nextIn and (" Next sale gold in %s."):format(cap.nextIn >= 90 and (floor(cap.nextIn / 60 + 0.5) .. " min") or (floor(cap.nextIn) .. "s"))
-                or ((cap.onway or 0) + (cap.waiting or 0) > 0 and " Sale gold is waiting at the mailbox." or " Sell to a vendor (Bags tab) to get there."))
+                or ((cap.onway or 0) + (cap.waiting or 0) > 0 and " Sale gold is waiting at the mailbox." or " Sell to a vendor (Sell tab) to get there."))
     elseif poor > 0 then
         -- cheap listings are there, your gold is not: say so, and when some arrives
         lines[#lines + 1] = ("%sNot enough gold in hand:|r you hold %s. %d cheap listing%s in the last minute cost%s more than that (a flip needs its posting fee too) and %s skipped.%s"):format(
@@ -448,6 +448,113 @@ local function undercut(e)
     return (t and GetServerTime() - t < 600 and St.p[e.key] < (e.listed.price or 0)) or false
 end
 
+-- SORTING BY A COLUMN. A click on a column's caption in a heading row sorts
+-- that tab's rows by it (largest first; a second click turns it round; a
+-- click on the heading's name puts the usual order back). Kept per tab.
+-- Sorting changes what is shown and nothing else: which deal a press buys
+-- is decided by the sniper, not by this order.
+UI.sortBy = {}
+local function sortVal(item, col)
+    if item.sortv then return item.sortv[col] or 0 end
+    if item.loose then return ({ item.count, 0, item.market or 0, 0, (item.market or 0) * item.count })[col] or 0 end
+    if item.action then
+        local paid, sell, _, profit = ns.Seller:Numbers(item)
+        local adv = item.adv
+        return ({ item.count, paid or 0, sell or 0, (adv and adv.rec == "relist") and 2 or adv and 1 or 0, (profit or 0) * item.count })[col] or 0
+    end
+    if item.key and item.profit and not item.ghost then -- a deal
+        local units, total = ns.Sniper.NextBuy(item)
+        local unit = units > 0 and total / units or 0
+        return ({ total, item.wall or item.sell or 0, unit > 0 and ((item.sell or 0) - unit) / unit or 0, item.rate or 0, item.profit })[col] or 0
+    end
+    return 0
+end
+local function sorted(tab, items)
+    local sb = UI.sortBy[tab]
+    if not sb or #items < 2 then return items end
+    local out, vals = {}, {}
+    for i, it in ipairs(items) do out[i] = it; vals[it] = sortVal(it, sb.col) end
+    table.sort(out, function(a, b)
+        if vals[a] ~= vals[b] then
+            if sb.desc then return vals[a] > vals[b] end
+            return vals[a] < vals[b]
+        end
+        return (a.key or 0) < (b.key or 0)
+    end)
+    return out
+end
+-- the captions, with a mark on the column the tab is sorted by
+local function capsFor(tab, caps)
+    local sb = UI.sortBy[tab]
+    if not sb or not caps then return caps end
+    local c = {}
+    for i = 1, 5 do c[i] = caps[i] end
+    if c[sb.col] and c[sb.col] ~= "" then c[sb.col] = c[sb.col] .. (sb.desc and " v" or " ^") end
+    return c
+end
+-- A click on a caption: col 1 to 5; 0 = the heading's name (the usual order again).
+function UI:SortBy(tab, col)
+    if not col or col <= 0 then
+        self.sortBy[tab] = nil
+    else
+        local sb = self.sortBy[tab]
+        if sb and sb.col == col then sb.desc = not sb.desc else self.sortBy[tab] = { col = col, desc = true } end
+    end
+    self.scroll = self.scroll or {}
+    self.scroll[tab] = 0
+    self:Render()
+end
+
+-- THE SOLD TAB: what has sold. Two lists:
+--   SOLD, GOLD ON ITS WAY   auctions the auction house lists as sold and not
+--                           paid out yet (they were a section of the Sell tab)
+--   PAID, LAST 24 HOURS     sales whose gold you have collected, from the
+--                           record of your trades
+-- Rows are plain cells: nothing to press here.
+function UI.SoldData(entries)
+    local Se, S, J = ns.Seller, ns.Sniper, ns.Journal
+    local short = Se.short
+    local d = { pending = {}, paid = {}, coming = 0, nextIn = nil, paidSum = 0 }
+    local _, _, _, soldKeys = Se:SalesMoney()
+    for _, e in ipairs(entries) do
+        if e.action == "LISTED" and soldKeys[e.key] == true then
+            local soldIn
+            for _, r in ipairs(S.ownSoldPay or {}) do
+                local left = r.due - GetTime()
+                if r.key == e.key and left > 0 and (not soldIn or left < soldIn) then soldIn = left end
+            end
+            local paid, sell, net, profit = Se:Numbers(e)
+            local p = (profit or 0) * e.count
+            d.coming = d.coming + (net or 0) * e.count
+            if soldIn and (not d.nextIn or soldIn < d.nextIn) then d.nextIn = soldIn end
+            d.pending[#d.pending + 1] = {
+                key = e.key, plainRow = true, name = S.nameOf(e.key) .. (e.count > 1 and (" x" .. e.count) or ""),
+                cells = { tostring(e.count), e.farm and (GREEN .. "farmed|r") or paid and short(paid) or (ORANGE .. "?|r"), short(sell or 0),
+                          GREEN .. (soldIn and ("in %d min"):format(math.max(1, floor(soldIn / 60 + 0.5))) or "on its way") .. "|r" },
+                profit = (p >= 0 and (GREEN .. "+") or RED) .. short(p) .. "|r",
+                sortv = { e.count, paid or 0, sell or 0, soldIn or 0, p },
+            }
+        end
+    end
+    local now = GetServerTime()
+    for _, t in ipairs(J.list or {}) do
+        if (t.sold or 0) > 0 and t.soldAt and now - t.soldAt <= 24 * 3600 then
+            local p = J.realized(t) or 0
+            local age = now - t.soldAt
+            d.paidSum = d.paidSum + p
+            d.paid[#d.paid + 1] = {
+                key = t.key, plainRow = true, name = tostring(t.name) .. (t.sold > 1 and (" x" .. t.sold) or ""),
+                cells = { tostring(t.sold), t.kind == "FARM" and (GREEN .. "farmed|r") or t.cost and short(t.cost) or (ORANGE .. "?|r"), short(t.soldPrice or 0),
+                          GREY .. (age < 5400 and (math.max(1, floor(age / 60)) .. " min ago") or (floor(age / 3600) .. " h ago")) .. "|r" },
+                profit = (p >= 0 and (GREEN .. "+") or RED) .. short(math.abs(p)) .. "|r",
+                sortv = { t.sold, t.cost or 0, t.soldPrice or 0, -age, p },
+            }
+        end
+    end
+    table.sort(d.paid, function(a, b) return a.sortv[4] > b.sortv[4] end) -- newest first
+    return d
+end
+
 -- What a tab lists, as one sequence of heading rows and item rows.
 --   Trades: deals to buy, and nothing else
 --   Bags:   what you hold, grouped by what to do with it, then your auctions
@@ -456,8 +563,8 @@ end
 local function buildList(tab, deals, entries)
     local list = {}
     if tab == "BUY" then
-        local shown = UI.dealRows(deals)
-        list[#list + 1] = { head = ("DEALS TO BUY NOW (%d)"):format(#deals), caps = CAPS.deal }
+        local shown = sorted("BUY", UI.dealRows(deals))
+        list[#list + 1] = { head = ("DEALS TO BUY NOW (%d)"):format(#deals), caps = capsFor("BUY", CAPS.deal), sortTab = "BUY" }
         for _, it in ipairs(shown) do list[#list + 1] = it end
         if #shown == 0 then
             list[#list + 1] = { note = ahOpen() and "None right now. A sound plays when one appears." or "Open the auction house to look for deals." }
@@ -482,9 +589,9 @@ local function buildList(tab, deals, entries)
             if #items == 0 then return end
             local folded = cfg.fold[id]
             if folded == nil then folded = FOLD_DEFAULT[id] or false end
-            list[#list + 1] = { head = ("%s %s (%d)"):format(folded and "[+]" or "[-]", text, #items), caps = (not folded) and caps or nil,
-                                fold = id, folded = folded, sum = folded and sum or nil }
-            if not folded then for _, it in ipairs(items) do list[#list + 1] = it end end
+            list[#list + 1] = { head = ("%s %s (%d)"):format(folded and "[+]" or "[-]", text, #items), caps = (not folded) and capsFor("SELL", caps) or nil,
+                                fold = id, folded = folded, sum = folded and sum or nil, sortTab = "SELL" }
+            if not folded then for _, it in ipairs(sorted("SELL", items)) do list[#list + 1] = it end end
         end
         sect("AH", "TO POST", CAPS.entry, by.AH)
         sect("FARM", "FARMED, TO POST", CAPS.farm, by.FARM)
@@ -534,24 +641,26 @@ local function buildList(tab, deals, entries)
             sect("STUCK", "UNDERCUT", { "QTY", "WHY", "", "ADVICE", "P / L" }, stuck, table.concat(parts, GREY .. ", |r"))
         end
         sect("ENDED", "ENDED, CHECK A MAILBOX", CAPS.entry, ended, "sold or expired: the mailbox shows which")
-        do  -- sold: one line with the gold that is coming and when the next of it arrives
-            local sum, nextIn = 0, nil
+        do  -- listed and not undercut: one line (what has SOLD is on its own tab)
+            local sum = 0
             local Se, short = ns.Seller, ns.Seller.short
-            for _, e in ipairs(sold) do
-                local _, _, net = Se:Numbers(e)
-                sum = sum + (net or 0) * e.count
-                if e.soldIn and (not nextIn or e.soldIn < nextIn) then nextIn = e.soldIn end
-            end
-            sect("SOLD", "SOLD, GOLD ON ITS WAY", CAPS.entry, sold, GREEN .. "+ " .. short(sum) .. "|r" .. GREY
-                .. (nextIn and (" coming, the next in %d min"):format(math.max(1, floor(nextIn / 60 + 0.5))) or " coming") .. "|r")
-            sum = 0
             for _, e in ipairs(ok) do
                 local _, _, net = Se:Numbers(e)
                 sum = sum + (net or 0) * e.count
             end
             sect("LISTED", "LISTED", CAPS.entry, ok, GREY .. "nobody is cheaper: " .. "|r" .. ORANGE .. "+ " .. short(sum) .. "|r" .. GREY .. " if they sell|r")
         end
-        if #list == 0 then list[1] = { note = "Nothing to sell. Items you buy on the Trades tab appear here." } end
+        if #list == 0 then list[1] = { note = "Nothing to sell. Items you buy on the Buy tab appear here." } end
+    elseif tab == "SOLD" then
+        local d = UI.SoldData(entries)
+        UI.soldNow = d
+        local caps = { "QTY", "COST", "SOLD AT", "GOLD ARRIVES", "PROFIT" }
+        list[#list + 1] = { head = ("SOLD, GOLD ON ITS WAY (%d)"):format(#d.pending), caps = capsFor("SOLD", caps), sortTab = "SOLD" }
+        for _, it in ipairs(sorted("SOLD", d.pending)) do list[#list + 1] = it end
+        if #d.pending == 0 then list[#list + 1] = { note = "Nothing sold and waiting to be paid. (The auction house pays out an hour after a sale.)" } end
+        list[#list + 1] = { head = ("PAID, LAST 24 HOURS (%d)"):format(#d.paid), caps = capsFor("SOLD", { "QTY", "COST", "SOLD AT", "WHEN", "PROFIT" }), sortTab = "SOLD" }
+        for _, it in ipairs(sorted("SOLD", d.paid)) do list[#list + 1] = it end
+        if #d.paid == 0 then list[#list + 1] = { note = "No sale collected in the last 24 hours." } end
     end
     return list
 end
@@ -600,7 +709,7 @@ function UI:RenderMoney(entries, short)
     lg.total.value:SetText(short(gold + waiting + onway + listed + bought))
     self.moneyNow = { gold = gold, waiting = waiting, onway = onway, listed = listed, bought = bought, total = gold + waiting + onway + listed + bought }
     local parts = {}
-    if held > 0 then parts[#parts + 1] = ("%d held item%s that cost %s (tab Bags)"):format(held, held == 1 and "" or "s", short(heldCost)) end
+    if held > 0 then parts[#parts + 1] = ("%d held item%s that cost %s (tab Sell)"):format(held, held == 1 and "" or "s", short(heldCost)) end
     local endedNote = ended > 0 and (" %d of your auctions %s no longer seen on the auction house (sold, or returned): still counted above; the mailbox shows which."):format(
         ended, ended == 1 and "is" or "are") or ""
     -- the cut and the posting fees, stated every time
@@ -623,7 +732,7 @@ end
 -- HOW YOU BUY (More tab, "Buy with"). Buying needs real inputs, and any of
 -- these supplies them:
 --   wheel   roll the mouse wheel in the snipe box (and anywhere while a deal is up)
---   key     tap a key of your choice; it works anywhere while the Trades tab is open
+--   key     tap a key of your choice; it works anywhere while the Buy tab is open
 --   (Holding a key down was a fourth way. The game refuses it: a real log shows
 --   every purchase sent from a held key blocked, and each one froze the deal
 --   for four seconds. It has been removed.)
@@ -633,7 +742,7 @@ end
 --           Each press does the next useful thing: buy the deal that is up;
 --           with no deal, post the next item in your bags that is ready (at
 --           the addon's price, never under what it cost you). It works on the
---           Trades tab and on the Bags tab.
+--           Buy tab and on the Sell tab.
 UI.BUY_MODES = { "wheel", "key", "one", "click" }
 UI.BUY_NAMES = { wheel = "Mouse wheel", key = "A key: tap it", one = "One key: buys and posts", click = "Clicks only" }
 function UI.BuyMode()
@@ -654,8 +763,8 @@ function UI:SetBuyMode(mode)
     cfg.buyMode, cfg.wheel = mode, nil
     if cfg.buyBlocked then cfg.buyBlocked[mode] = nil end -- chosen again by hand: try it again
     self:Notice(mode == "wheel" and "Buy with the mouse wheel: put the mouse in the snipe box and roll."
-        or mode == "key" and (cfg.buyKey and ("Buy with a key: tap %s while the Trades tab is open."):format(cfg.buyKey) or "Buy with a key: now click 'Key' and press the key you want.")
-        or mode == "one" and (cfg.buyKey and ("One key: %s buys the deal that is up; with none it posts the next item in your bags. Trades and Bags tabs."):format(cfg.buyKey) or "One key for buying and posting: now click 'Key' and press the key you want.")
+        or mode == "key" and (cfg.buyKey and ("Buy with a key: tap %s while the Buy tab is open."):format(cfg.buyKey) or "Buy with a key: now click 'Key' and press the key you want.")
+        or mode == "one" and (cfg.buyKey and ("One key: %s buys the deal that is up; with none it posts the next item in your bags. Trades and Sell tabs."):format(cfg.buyKey) or "One key for buying and posting: now click 'Key' and press the key you want.")
         or "Buy with clicks on the snipe box only.", true)
     self:Dirty()
     return mode
@@ -725,7 +834,7 @@ function UI.InputPress(inBox, via)
         UI.inputCount = (UI.inputCount or 0) + 1
     end
     if ns.Sniper.SessionTouch then ns.Sniper:SessionTouch() end
-    if UI.tab == "SELL" and via == "key" and UI.BuyMode() == "one" then return UI.OnePost() end -- the one key, on the Bags tab: it posts
+    if UI.tab == "SELL" and via == "key" and UI.BuyMode() == "one" then return UI.OnePost() end -- the one key, on the Sell tab: it posts
     if UI.tab ~= "BUY" then return false end
     if via == "wheel" and UI.BuyMode() ~= "wheel" then return false end
     local S = ns.Sniper
@@ -773,14 +882,14 @@ end
 
 -- Key bindings that exist only while they are wanted:
 --   the wheel, anywhere, while a deal is up or a purchase is in progress (wheel mode);
---   your key, anywhere, while the Trades tab is open (key mode).
+--   your key, anywhere, while the Buy tab is open (key mode).
 function UI:BindInputs(dealUp, off)
     if not frame then return end
     local cfg = AuctionMeshDB.cfg
     local mode = UI.BuyMode()
     local live = not off and self.tab == "BUY" and frame:IsShown()
     local wantWheel = (live and mode == "wheel" and dealUp) and true or false
-    -- the one key is also live on the Bags tab (there it posts)
+    -- the one key is also live on the Sell tab (there it posts)
     local keyLive = live or (not off and mode == "one" and self.tab == "SELL" and frame:IsShown())
     local wantKey = (keyLive and (mode == "key" or mode == "one") and cfg.buyKey and cfg.buyKey ~= "" and not self.capturingKey) and cfg.buyKey or false
     if wantWheel == (self.wheelBound or false) and wantKey == (self.keyBound or false) then return end
@@ -801,7 +910,7 @@ function UI:BindInputs(dealUp, off)
     end
 end
 
--- THE BIG BUY BUTTON (Trades tab). It never moves and always acts on the best
+-- THE BIG BUY BUTTON (Buy tab). It never moves and always acts on the best
 -- deal, so it can be clicked without looking for a row, and clicked repeatedly.
 --   teal    a deal: the first click asks the server for the price
 --   green   BUY NOW: the price is in, this click buys (two clicks in all; the
@@ -820,7 +929,7 @@ function UI:RenderSnipe(short)
     -- the "Last: GOT IT ..." line belongs to the snipe box: it was left showing over the other tabs
     if sn.result then sn.result:SetShown(show) end
     if not show then
-        self:BindInputs(false, not (self.tab == "SELL" and UI.BuyMode() == "one")) -- the one key stays live on the Bags tab
+        self:BindInputs(false, not (self.tab == "SELL" and UI.BuyMode() == "one")) -- the one key stays live on the Sell tab
         return
     end
     local key = S:Target()
@@ -851,7 +960,7 @@ function UI:RenderSnipe(short)
         colour = res.kind == "won" and { 0.2, 1, 0.4 } or res.kind == "lost" and { 1, 0.25, 0.25 } or { 1, 0.5, 0.25 }
     else
         -- Nothing but sniping in this box. (Chores such as "visit a mailbox"
-        -- used to be shown here; they are on the Bags tab, whose label counts them.)
+        -- used to be shown here; they are on the Sell tab, whose label counts them.)
         local m = S.underMin
         local sk = S:StakeKey()
         if sk then
@@ -967,20 +1076,23 @@ end
 -- More tab: every control shows its current value; then what the engine has learned.
 -- THE PICKS TAB. One sentence that says what to do with your inputs right now,
 -- the figures behind it, and one button per item.
--- THE GOLD TAB, DRAWN (see where its widgets are made, and Gold.lua).
+-- THE CHART TAB, DRAWN (see where its widgets are made, and Gold.lua).
 -- x: where the plot begins (the amounts are to its left). cols x colW = w.
-UI.GOLD = { x = 64, w = 560, h = 190, cols = 140, colW = 4, grid = 6, days = 31, ticks = 9, hover = 35, marks = 6, lines = 5, markShare = 0.02 }
+UI.GOLD = { x = 64, top = 74, w = 560, h = 180, cols = 140, colW = 4, grid = 6, days = 31, ticks = 9, hover = 35, marks = 6, lines = 5, markShare = 0.02 }
 function UI:RenderGold(short)
     local gd, G, C = frame.gold, ns.Gold, UI.GOLD
-    local view = self.goldView or "d2"
-    for name, b in pairs(gd.views) do UI.outline(b, name == view and ACCENT or LINE) end
+    -- the range: the one you picked, or (Auto) the shortest that holds everything on record
+    local view = self.goldView or G:AutoView()
+    for name, b in pairs(gd.views) do
+        UI.outline(b, ((self.goldView == nil and name == "auto") or name == self.goldView) and ACCENT or LINE)
+    end
     local now, inHand, soldAmt = G:Cash() -- cash: gold in hand plus what has sold (see Gold.lua)
     local L = G:Line(view, C.cols)
     local first, last = L.first or now, L.last or now
     local chg = last - first
     -- less on record than the range asked for: the chart shows what there is, and says since when
     local rangeName = L.short and ("since " .. date((L.span > 20 * 3600) and "%a %H:%M" or "%H:%M", L.from))
-        or (G.LINES[view] or G.LINES.d2).name
+        or (G.LINES[view] or G.LINES.d1).name
     local up = chg >= 0
     local RGB = up and { 0.20, 0.90, 0.40 } or { 1.00, 0.25, 0.20 }
     local function signed(c) return ((c >= 0) and (GREEN .. "+ ") or (RED .. "- ")) .. short(math.abs(c)) .. "|r" end
@@ -1238,7 +1350,7 @@ function UI:RenderPicks(short)
         local rec = S:StakeRecord(stake)
         head = TEAL .. "Stake-out is on " .. name(stake) .. ".|r"
         why = (terms.max and ("It buys at %s or less. "):format(short(terms.max)) or ("Waiting: " .. tostring(terms.why or "reading its market first") .. ". "))
-            .. ("Run it from the snipe box on the Trades tab. So far on this item: price asked %d time%s, %d bought%s.")
+            .. ("Run it from the snipe box on the Buy tab. So far on this item: price asked %d time%s, %d bought%s.")
                 :format(rec.asked, rec.asked == 1 and "" or "s", rec.bought,
                     (st.lastPrice and st.lastAt and GetTime() - st.lastAt < 600) and (", last price the server gave " .. short(st.lastPrice)) or "")
         local it
@@ -1331,7 +1443,7 @@ function UI.TradesFooter(short)
     return parts
 end
 
--- WHAT IS BEING SNIPED, in one plain line at the top of the Trades tab: the
+-- WHAT IS BEING SNIPED, in one plain line at the top of the Buy tab: the
 -- profit a deal must make to be offered, and the kinds of deal. The figure
 -- is the addon's own (it raises and lowers it from how your tries go) unless
 -- auto-adjust is off; there is nothing here to set or to work out.
@@ -1467,8 +1579,8 @@ function UI:Render()
 
     local todo = 0
     for _, e in ipairs(entries) do if e.action ~= "LISTED" then todo = todo + 1 end end
-    frame.tabBuy:SetText(#deals > 0 and ("Trades (%d)"):format(#deals) or "Trades")
-    frame.tabSell:SetText(todo > 0 and ("Bags (%d)"):format(todo) or "Bags")
+    frame.tabBuy:SetText(#deals > 0 and ("Buy (%d)"):format(#deals) or "Buy")
+    frame.tabSell:SetText(todo > 0 and ("Sell (%d)"):format(todo) or "Sell")
     UI.selectTab(frame.tabBuy, tab == "BUY")
     UI.selectTab(frame.tabSell, tab == "SELL")
     UI.selectTab(frame.tabHist, tab == "HISTORY" or tab == "PICKS")
@@ -1476,6 +1588,13 @@ function UI:Render()
     UI.selectTab(frame.navBasic, tab == "HISTORY" and (self.morePage or "basic") == "basic")
     UI.selectTab(frame.navAdv, tab == "HISTORY" and self.morePage == "adv")
     UI.selectTab(frame.tabGold, tab == "GOLD")
+    UI.selectTab(frame.tabSold, tab == "SOLD")
+    do  -- "Sold (4)": auctions that have sold and are waiting to be paid
+        local n = 0
+        local _, _, _, soldKeys = Se:SalesMoney()
+        for _, e in ipairs(entries) do if e.action == "LISTED" and soldKeys[e.key] == true then n = n + 1 end end
+        frame.tabSold:SetText(n > 0 and ("Sold (%d)"):format(n) or "Sold")
+    end
     do  -- "Picks (1)" when a stake-out is worth a try and none is set
         local P = ns.Picks
         local r = P and P.result
@@ -1490,6 +1609,13 @@ function UI:Render()
     self:RenderSnipe(short)
     if frame.stakeStop then frame.stakeStop:SetShown(tab == "BUY" and ns.Sniper:StakeKey() ~= nil) end
     local status = tab == "BUY" and buyStatus(#deals) or tab == "SELL" and Se:Instructions(entries) or ""
+    if tab == "SOLD" then
+        local d = UI.SoldData(entries)
+        status = GREY .. "On its way: |r" .. GREEN .. "+ " .. short(d.coming) .. "|r"
+            .. (d.nextIn and (GREY .. (", the next in %d min"):format(math.max(1, floor(d.nextIn / 60 + 0.5))) .. "|r") or "")
+            .. GREY .. "      Profit on what was paid in the last 24 hours: |r" .. ((d.paidSum >= 0) and (GREEN .. "+ ") or (RED .. "- ")) .. short(math.abs(d.paidSum)) .. "|r"
+            .. GREY .. "      Click a column's name to sort by it.|r"
+    end
     if tab == "SELL" and ns.Dormant() then status = dormantLine() end
 
     local n = self.notice
@@ -1572,6 +1698,12 @@ function UI:Render()
                 r.state:SetText("")
                 r.profit:SetText(GREY .. (item.market and ("about " .. short(floor(item.market * (1 - ns.Deals.cfg.cut)) * item.count)) or "price read on Add") .. "|r")
                 r.btn:SetText("Add"); r.btn:Enable(); r.btn:Show()
+            elseif item.plainRow then
+                r.detail:Hide()
+                r.icon:SetTexture(C_Item.GetItemIconByID(item.key) or 134400)
+                r.name:SetText(item.name)
+                for c = 1, 4 do r.c[c]:SetText(item.cells[c] or "") end
+                r.state:SetText(""); r.profit:SetText(item.profit or ""); r.btn:Hide()
             elseif item.ghost then
                 -- a deal that is over: its row for the length of the flash, with what happened
                 r.icon:SetTexture(C_Item.GetItemIconByID(item.key) or 134400)
@@ -1609,13 +1741,13 @@ function UI:Render()
             parts[#parts + 1] = ("Bought, to sell: paid %s, %s%s%s|r"):format(short(invested),
                 profit >= 0 and GREEN or RED, profit >= 0 and "+ " or "- ", short(math.abs(profit)))
         end
-    elseif tab ~= "GOLD" then
+    elseif tab ~= "GOLD" and tab ~= "SOLD" then
         parts[#parts + 1] = GREY .. ns.Learn:Summary() .. "|r"
     end
     if #list > vis then
         parts[#parts + 1] = ("%srows %d-%d of %d (mouse wheel)|r"):format(GREY, off + 1, math.min(#list, off + vis), #list)
     end
-    -- (the Trades tab has no button at the bottom right: its footer may use the whole width)
+    -- (the Buy tab has no button at the bottom right: its footer may use the whole width)
     frame.footer:ClearAllPoints()
     frame.footer:SetPoint("BOTTOMLEFT", 14, 12)
     frame.footer:SetPoint("BOTTOMRIGHT", tab == "BUY" and -14 or -230, 12)
@@ -1736,19 +1868,42 @@ local function rowEnter(self)
     GameTooltip:Show()
 end
 
+-- Which column of a row the mouse is on: 1 to 4 for the four value columns,
+-- 5 for the profit column at the right, 0 for the name. nil if the game does
+-- not say where the mouse is.
+function UI.ColumnAt(row)
+    if not (GetCursorPosition and row.GetLeft and row.GetEffectiveScale) then return nil end
+    local cx = GetCursorPosition()
+    local left, scale = row:GetLeft(), row:GetEffectiveScale()
+    if type(cx) ~= "number" or type(left) ~= "number" or type(scale) ~= "number" or scale <= 0 then return nil end
+    local x = cx / scale - left
+    if x >= COLS[5][1] + COLS[5][2] then return 5 end -- right of the last value column: the profit column
+    for n = 5, 2, -1 do
+        if x >= COLS[n][1] then return n - 1 end
+    end
+    return 0
+end
+
 local function rowMouseUp(self, button)
     if GetCursorInfo() then return ns.Seller.AcceptDrop() end
-    -- Shift + right-click on a row of the Bags tab: stop tracking that item
+    -- Shift + right-click on a row of the Sell tab: stop tracking that item
     -- (something added by mistake, or that you want to keep). A plain click
     -- does nothing, so a stray one removes nothing. (This was a button in the
     -- Details sidebar, which is gone.)
-    do  -- a click on a section's heading opens or closes that section (Bags tab)
+    do  -- A CLICK ON A HEADING ROW. On a column's caption: sort by that column.
+        -- On the heading's name: open or close the section (Sell tab), or put
+        -- the usual order back (Buy, Sold).
         local sect = rawget(self, "sect")
-        if sect and sect.fold then
-            local cfg = AuctionMeshDB.cfg
-            cfg.fold = cfg.fold or {}
-            cfg.fold[sect.fold] = not sect.folded
-            return UI:Render()
+        if sect and (sect.fold or sect.sortTab) then
+            local col = UI.ColumnAt(self)
+            if col and col > 0 and sect.sortTab and sect.caps then return UI:SortBy(sect.sortTab, col) end
+            if sect.fold then
+                local cfg = AuctionMeshDB.cfg
+                cfg.fold = cfg.fold or {}
+                cfg.fold[sect.fold] = not sect.folded
+                return UI:Render()
+            end
+            if sect.sortTab then return UI:SortBy(sect.sortTab, 0) end
         end
     end
     local item = rawget(self, "item")
@@ -1867,8 +2022,9 @@ end
 -- (In 3.47 Refresh was added without this sum, and lay over the More tab.)
 -- (3.54: four tabs, Trades, Bags, Gold, More, and one button on the right,
 -- Refresh. Snapshot and Dock are on the More tab, where they also were; the
--- engine bar is gone: the Trades tab's status line says what the radar does.)
-local HDR = { tabX = 178, tabW = { 76, 64, 50, 62 }, tabGap = 4, close = 34, edge = 12, refresh = 56 }
+-- engine bar is gone: the Buy tab's status line says what the radar does.)
+-- (3.63: Buy, Sell, Sold, Chart, More)
+local HDR = { tabX = 178, tabW = { 56, 62, 62, 54, 62 }, tabGap = 4, close = 34, edge = 12, refresh = 56 }
 UI.HDR = HDR
 -- pixels between the last tab and the Refresh button
 function UI.HeaderRoom(width, floating)
@@ -1991,12 +2147,14 @@ function UI:Create()
     frame.mode:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- tabs (positioned in Place(): to the right of the mode badge)
-    frame.tabBuy = makeTab(frame, 1, "Trades", function() UI:StopKeyCapture(); UI.tab = "BUY"; UI:Render() end)
-    frame.tabSell = makeTab(frame, 2, "Bags", function() UI:StopKeyCapture(); UI.tab = "SELL"; UI:Render() end)
-    frame.tabGold = makeTab(frame, 3, "Gold", function() UI:StopKeyCapture(); UI.tab = "GOLD"; UI:Render() end)
-    frame.tabHist = makeTab(frame, 4, "More", function() UI:StopKeyCapture(); UI.tab = "HISTORY"; UI.morePage = "basic"; UI:Render() end)
+    frame.tabBuy = makeTab(frame, 1, "Buy", function() UI:StopKeyCapture(); UI.tab = "BUY"; UI:Render() end)
+    frame.tabSell = makeTab(frame, 2, "Sell", function() UI:StopKeyCapture(); UI.tab = "SELL"; UI:Render() end)
+    frame.tabSold = makeTab(frame, 3, "Sold", function() UI:StopKeyCapture(); UI.tab = "SOLD"; UI:Render() end)
+    frame.tabGold = makeTab(frame, 4, "Chart", function() UI:StopKeyCapture(); UI.tab = "GOLD"; UI:Render() end)
+    frame.tabHist = makeTab(frame, 5, "More", function() UI:StopKeyCapture(); UI.tab = "HISTORY"; UI.morePage = "basic"; UI:Render() end)
     frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", HDR.tabGap, 0)
-    frame.tabGold:SetPoint("LEFT", frame.tabSell, "RIGHT", HDR.tabGap, 0)
+    frame.tabSold:SetPoint("LEFT", frame.tabSell, "RIGHT", HDR.tabGap, 0)
+    frame.tabGold:SetPoint("LEFT", frame.tabSold, "RIGHT", HDR.tabGap, 0)
     frame.tabHist:SetPoint("LEFT", frame.tabGold, "RIGHT", HDR.tabGap, 0)
     -- MORE has three pages, picked on a row of its own under the tabs:
     -- Settings, Advanced, and the stake-out picks (which used to be a tab).
@@ -2088,7 +2246,7 @@ function UI:Create()
     frame.snipe = sn
     frame.status = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     frame.status:SetJustifyH("LEFT"); frame.status:SetJustifyV("TOP")
-    -- shown on the Trades tab only while a stake-out is set: one click ends it
+    -- shown on the Buy tab only while a stake-out is set: one click ends it
     frame.stakeStop = button(frame, 120, "Stop stake-out", function()
         ns.Sniper:SetStake(nil)
         UI:Notice("Stake-out ended. The radar has every request again.", true)
@@ -2238,7 +2396,7 @@ function UI:Create()
     group("BUYING")
     L, at = row("Buy with")
     sp.buy = tip(button(cur, 190, "", function() UI:SetBuyMode() end),
-        "Click to change.\nMouse wheel: put the mouse in the snipe box and roll.\nA key, tap it: pick a key below; tapping it buys, anywhere, while the Trades tab is open.\nOne key, buys and posts: the same key; with no deal up, each press posts the next item in your bags that is ready, at the addon's price. Trades and Bags tabs.\nClicks only: click the snipe box.\nClicking the box works in every mode.")
+        "Click to change.\nMouse wheel: put the mouse in the snipe box and roll.\nA key, tap it: pick a key below; tapping it buys, anywhere, while the Buy tab is open.\nOne key, buys and posts: the same key; with no deal up, each press posts the next item in your bags that is ready, at the addon's price. Trades and Sell tabs.\nClicks only: click the snipe box.\nClicking the box works in every mode.")
     sp.buy:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.buy)
 
@@ -2248,7 +2406,7 @@ function UI:Create()
         UI.capturingKey = not UI.capturingKey
         if self.EnableKeyboard then self:EnableKeyboard(UI.capturingKey and true or false) end
         UI:Dirty()
-    end), "Click, then press the key you want to buy with. A modifier can be held with it (Shift, Ctrl, Alt). Mouse side buttons work too. While the Trades tab is open that key buys instead of doing what it normally does; everywhere else it is untouched.")
+    end), "Click, then press the key you want to buy with. A modifier can be held with it (Shift, Ctrl, Alt). Mouse side buttons work too. While the Buy tab is open that key buys instead of doing what it normally does; everywhere else it is untouched.")
     sp.key:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.key)
     local function gotKey(name)
@@ -2258,7 +2416,7 @@ function UI:Create()
         if name then
             cfg.buyKey = name
             if cfg.buyBlocked then cfg.buyBlocked.key = nil end
-            UI:Notice(("Buy key set to %s. It buys while the Trades tab is open (Buy with: A key, tap it; or One key, which also posts)."):format(name), true)
+            UI:Notice(("Buy key set to %s. It buys while the Buy tab is open (Buy with: A key, tap it; or One key, which also posts)."):format(name), true)
         end
         UI:Dirty()
     end
@@ -2373,7 +2531,7 @@ function UI:Create()
     sp:Hide()
     frame.setup = sp
 
-    -- THE GOLD TAB: your gold as a line with the area under it filled, the way
+    -- THE CHART TAB: your gold as a line with the area under it filled, the way
     -- a market chart is drawn on television. The amount now in large figures
     -- with the change over the range next to it (green up, red down), the
     -- amounts down the left with a line across for each, a divider where each
@@ -2392,19 +2550,24 @@ function UI:Create()
         gd.sum = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         gd.sum:SetPoint("TOPLEFT", 0, -27); gd.sum:SetPoint("TOPRIGHT", 0, -27)
         gd.sum:SetJustifyH("LEFT"); gd.sum:SetWordWrap(false)
+        -- THE RANGE, on a row of its own under the two lines of figures: Auto
+        -- (the range grows with what is on record), hours (1, 3, 6, 12) and
+        -- days (1, 2, 7, 30).
         gd.views = {}
         local prev
-        for _, v in ipairs({ { "d30", "30 days" }, { "d7", "7 days" }, { "d2", "2 days" } }) do
-            local bt = button(gd, 62, v[2], function() UI.goldView = v[1]; UI:Render() end)
-            if prev then bt:SetPoint("RIGHT", prev, "LEFT", -4, 0) else bt:SetPoint("TOPRIGHT", 0, 0) end
-            gd.views[v[1]] = bt
+        local function rangeButton(id, label, w)
+            local bt = button(gd, w, label, function() UI.goldView = (id ~= "auto") and id or nil; UI:Render() end)
+            bt:SetHeight(20)
+            if prev then bt:SetPoint("LEFT", prev, "RIGHT", 3, 0) else bt:SetPoint("TOPLEFT", C.x, -47) end
+            gd.views[id] = bt
             prev = bt
         end
-        -- (the text at the top ends where the range buttons begin: a real screenshot had it running under them)
-        gd.chg:SetPoint("RIGHT", prev, "LEFT", -10, 0)
+        rangeButton("auto", "Auto", 46)
+        for _, id in ipairs(ns.Gold.ORDER) do rangeButton(id, ns.Gold.LINES[id].short, 38) end
+        gd.chg:SetPoint("RIGHT", gd, "RIGHT", 0, 0)
         -- the plot
         local plot = CreateFrame("Frame", nil, gd)
-        plot:SetPoint("TOPLEFT", C.x, -50); plot:SetSize(C.w, C.h)
+        plot:SetPoint("TOPLEFT", C.x, -C.top); plot:SetSize(C.w, C.h)
         local bg = plot:CreateTexture(nil, "BACKGROUND")
         bg:SetAllPoints(); bg:SetColorTexture(0.04, 0.09, 0.20, 0.85)
         gd.plot = plot
@@ -2512,10 +2675,10 @@ function UI:Create()
         end
         -- the same changes as a list, largest first
         gd.head = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        gd.head:SetPoint("TOPLEFT", 0, -50 - C.h - 40)
+        gd.head:SetPoint("TOPLEFT", 0, -C.top - C.h - 40)
         gd.lines = {}
         for i = 1, C.lines do
-            local y = -50 - C.h - 56 - (i - 1) * 15
+            local y = -C.top - C.h - 56 - (i - 1) * 15
             local l = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             l:SetPoint("TOPLEFT", 0, y)
             l:SetWidth(C.x + C.w - 100); l:SetJustifyH("LEFT"); l:SetWordWrap(false)
@@ -2718,7 +2881,7 @@ function UI:Create()
                 frame.footer:SetText(table.concat(UI.TradesFooter(ns.Seller.short), GREY .. "   |   |r"))
             end
         end
-        do  -- a hold counting down on the Bags tab: redrawn once a second while one is shown
+        do  -- a hold counting down on the Sell tab: redrawn once a second while one is shown
             local sec = floor(GetTime())
             if UI.tab == "SELL" and UI.holdTick and sec ~= UI.holdSec then UI.holdSec = sec; UI.dirty = true end
         end
@@ -2752,6 +2915,7 @@ local LAYOUT = {
     HISTORY = { status = -66, statusH = 14, top = 480 },
     PICKS = { status = -66, statusH = 14, top = 480 },
     GOLD = { status = -55, statusH = 14, top = 480 },
+    SOLD = { status = -44, statusH = 14, top = 64 },
 }
 function UI:Layout()
     local tab = self.tab

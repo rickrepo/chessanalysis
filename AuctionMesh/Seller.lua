@@ -247,7 +247,7 @@ function Seller:Entries()
     return out
 end
 
--- WHERE THE PRICES ARE (Bags tab). Posting needs a live price for each item,
+-- WHERE THE PRICES ARE (Sell tab). Posting needs a live price for each item,
 -- and each price is one request. Returns how many of what is to post have a
 -- price ready, how many there are, the item being read right now, and about
 -- how many seconds the rest will take at the current pace.
@@ -298,7 +298,7 @@ function Seller:Instructions(entries)
     if n.HOLD > 0 then add("HOLD", n.HOLD .. " item(s) waiting: the market is below what you paid. Re-checked every 10 min.") end
     -- (the auctions you have up are on the list itself, folded into a line each for sold and listed: not said twice here)
     if #lines == 0 then
-        lines[1] = "|cffaaaaaaNothing to sell. Items you buy on the Trades tab appear here.|r"
+        lines[1] = "|cffaaaaaaNothing to sell. Items you buy on the Buy tab appear here.|r"
     end
     if self.posting then table.insert(lines, 1, "|cffffffffPosting " .. nameOf(self.posting.key) .. "...|r") end
     return table.concat(lines, "\n")
@@ -338,7 +338,7 @@ function Seller:SellVendor(onlyKey)
     for key in pairs(flips()) do all[key] = bagCount[key] or 0 end
     local i = 0
     local function finish()
-        -- Count what actually left the bags; only that is removed from the Bags tab.
+        -- Count what actually left the bags; only that is removed from the Sell tab.
         Seller:ScanBags()
         local earned = 0
         for key, was in pairs(before) do
@@ -483,7 +483,7 @@ function Seller:CollectMail()
                     local f = id and flips()[id]
                     if f and (f.retPending or 0) > 0 and (bagCount[id] or 0) < (f.units or 0) then
                         AutoLootMailItem(i) -- (the hook on it takes the units off "still in the mailbox")
-                        say(("|cff4d99ffCollected from mailbox:|r %s x %s (your auction, returned) is back in your bags. Post it again on the Bags tab."):format(tostring(cnt or 1), tostring(nm or "item")))
+                        say(("|cff4d99ffCollected from mailbox:|r %s x %s (your auction, returned) is back in your bags. Post it again on the Sell tab."):format(tostring(cnt or 1), tostring(nm or "item")))
                         C_Timer.After(0.4, step); return
                     end
                 end
@@ -511,7 +511,7 @@ function Seller:RecordSale(i)
             tostring(itemName), tostring(bid), tostring(feeBack), tostring(cut), tostring(count))
     end
     if kind ~= "seller" or not itemName or not bid or bid <= 0 then return end
-    -- (the Gold tab counts a sale when it SELLS, not when its gold is collected: see Sniper:ReadOwned)
+    -- (the Chart tab counts a sale when it SELLS, not when its gold is collected: see Sniper:ReadOwned)
     local key = AuctionMeshDB.names and AuctionMeshDB.names[itemName]
     if not key then return end
     count = (count and count > 0) and count or 1
@@ -706,7 +706,7 @@ end
 
 -- AN AUCTION OF YOURS CAME BACK UNSOLD: it ran out ("expired") or you
 -- cancelled it ("cancelled"). The units go back among what you hold, with what
--- they cost you, so the Bags tab offers them for posting again. If you already
+-- they cost you, so the Sell tab offers them for posting again. If you already
 -- hold more of the item they are added to it. Returns the units moved.
 function Seller:Returned(key, n, why)
     local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
@@ -759,7 +759,7 @@ function Seller:Returned(key, n, why)
     if not cancelled and ns.Learn then ns.Learn:Outcome(key, false) end
     self.prices[key] = nil -- priced afresh before it is posted again
     ns.Log("RETURNED %s x%d (%s): back among your holdings at cost %s, posting fee lost %d", tostring(key), n, tostring(why), tostring(L.cost), fee)
-    say(("%s %d x %s. %sIt is on the Bags tab: collect it at a mailbox, then press Post.")
+    say(("%s %d x %s. %sIt is on the Sell tab: collect it at a mailbox, then press Post.")
         :format(cancelled and "|cffff8040Cancelled:|r" or "|cffff8040Expired unsold:|r", n, nameOf(key),
             fee > 0 and ("The posting fee of " .. money(fee) .. " is lost. ") or ""))
     self:Refresh()
@@ -768,7 +768,7 @@ end
 
 -- A mail's item is being taken (by this addon or by you). If it is one of
 -- your auctions coming back, it is matched here, so taking it by hand before
--- the addon got to it still puts it on the Bags tab.
+-- the addon got to it still puts it on the Sell tab.
 function Seller:OnTakeItem(i)
     if (GetInboxInvoiceInfo and GetInboxInvoiceInfo(i)) then return end
     local _, _, _, _, moneyAmt, cod, _, hasItem = GetInboxHeaderInfo(i)
@@ -833,7 +833,7 @@ function Seller:CancelClick(key)
         self.quietUntil = math.max(self.quietUntil or 0, GetTime() + 3)
         local L = AuctionMeshDB.listed and AuctionMeshDB.listed[key]
         local fee = (L and (L.fee or 0) > 0) and floor(L.fee * min(1, a.qty / max(1, L.qty)) + 0.5) or 0
-        self:Note(key, ("Click again to cancel %d at %s each.%s It comes back by mail; then post it again on the Bags tab.")
+        self:Note(key, ("Click again to cancel %d at %s each.%s It comes back by mail; then post it again on the Sell tab.")
             :format(a.qty, Seller.short(a.price), fee > 0 and (" The posting fee of " .. Seller.short(fee) .. " is not returned.") or " The posting fee is not returned."), "cancel")
         C_Timer.After(5.1, function() if ns.UI then ns.UI:Dirty() end end)
         return
@@ -975,7 +975,7 @@ function Seller:Reconcile()
             local missing = f.units - have
             ns.Log("RECONCILE %s: expected %d, bags %d, mail %d -> removing %d", tostring(key), f.units,
                 bagCount[key] or 0, inMail, missing)
-            say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from the Bags tab.|r")
+            say(("|cffff8040%s: %d expected but not in your bags or mailbox, removed from the Sell tab.|r")
                 :format(nameOf(key), missing))
             if ns.Journal then ns.Journal:Dropped(key, missing, "not found in bags or mailbox") end
             if have <= 0 then flips()[key] = nil; self.prices[key] = nil else f.units = have end
@@ -1002,11 +1002,11 @@ function Seller:NextToPrice(onlyPressed)
         self.priority = k -- too soon: keep it for the next turn instead of dropping it
     end
     if onlyPressed then return nil end
-    -- REQUESTS FOLLOW THE TAB. Selling is the Bags tab's work: prices for what
-    -- you hold are read there, and nowhere else. On the Trades tab every
+    -- REQUESTS FOLLOW THE TAB. Selling is the Sell tab's work: prices for what
+    -- you hold are read there, and nowhere else. On the Buy tab every
     -- request is for buying. (They used to be refreshed every ten minutes on
     -- every tab.) The one exception is the "one key" way of buying, which
-    -- also posts from the Trades tab and needs the prices for that.
+    -- also posts from the Buy tab and needs the prices for that.
     local posting = ns.UI and ns.UI.tab == "SELL"
     if not posting and not (ns.UI and ns.UI.BuyMode and ns.UI.BuyMode() == "one") then return nil end
     for key, f in pairs(flips()) do
@@ -1016,7 +1016,7 @@ function Seller:NextToPrice(onlyPressed)
         if (f.kind == "FLIP" or f.kind == "VENDOR") and (bagCount[key] or 0) > 0 then
             local p = self.prices[key]
             -- A fresh price is only needed for posting, and posting is done on
-            -- the Bags tab: there it is re-read every 45 seconds. On every
+            -- the Sell tab: there it is re-read every 45 seconds. On every
             -- other tab once in 10 minutes is enough, and the requests go to
             -- the radar. (It was every 45 seconds on every tab: with five
             -- items held, one request in six was a price check.) Pressing Post
@@ -1030,7 +1030,7 @@ function Seller:NextToPrice(onlyPressed)
         end
     end
     -- The listing of an auction of yours that has been undercut: read on the
-    -- Bags tab, so that "relist or hold" can be said from what is really
+    -- Sell tab, so that "relist or hold" can be said from what is really
     -- listed (see Seller:Undercut). One read an item, again after 5 minutes.
     if ns.UI and ns.UI.tab == "SELL" then
         for key in pairs(self.wantRows or {}) do
@@ -1047,7 +1047,7 @@ function Seller:NextToPrice(onlyPressed)
 end
 
 -- True while something in your bags that is to be posted has no live price
--- (and is not being held): the Bags tab then reads prices faster.
+-- (and is not being held): the Sell tab then reads prices faster.
 function Seller:Unpriced()
     local now = GetTime()
     local last = self.pricedAt or {}
@@ -1193,11 +1193,11 @@ end
 -- the row itself (next to the button being pressed), for 4 seconds. Chat gets
 -- the message once, not once per press.
 -- what = nil for the Post button's notes, "cancel" for the Cancel button's
--- (both on the Bags tab): each row shows only its own.
+-- (both on the Sell tab): each row shows only its own.
 function Seller:Note(key, text, what)
     local was = self.note
     self.note = { key = key, text = text, at = GetTime(), what = what }
-    -- the same, for the snipe box and the top of the Bags tab: what a post is doing right now
+    -- the same, for the snipe box and the top of the Sell tab: what a post is doing right now
     if what == nil then self.activity = { text = "Posting " .. nameOf(key) .. ": " .. text, at = GetTime() } end
     if self.quietNotes then -- the one key is being spammed: the row shows it, chat is left alone
     elseif not was or was.text ~= text or GetTime() - was.at > 4 then
@@ -1404,12 +1404,12 @@ end
 -- deal) replaced the record of what you held; the journal then marked the
 -- dropped units "lost". Once, at the update, those units are noted (trades of
 -- the last 48 hours only). When your bags hold more of such an item than the
--- record says, that many go back on the Bags tab with what they cost. Never
+-- record says, that many go back on the Sell tab with what they cost. Never
 -- more than was marked lost, and nothing that is lost after the update:
 -- what you own apart from the addon's purchases is not taken for its own.
 local LOST_WHY = { ["no longer in your bags, mailbox or auctions"] = true, ["not found in bags or mailbox"] = true }
 -- Units the journal marks "not found" that are in your bags after all go back
--- on the Bags tab with what they cost: per item never more than `items` says,
+-- on the Sell tab with what they cost: per item never more than `items` says,
 -- and only what the bags hold beyond the record.
 local function adopt(self, items)
     local J, now, total = ns.Journal, GetServerTime(), 0
@@ -1444,7 +1444,7 @@ local function adopt(self, items)
             total = total + n
             self.prices[key] = nil
             ns.Log("RECOVER %s: %d unit(s) marked not found are in the bags: tracked again", tostring(key), n)
-            say(("|cff33ff66%s: %d that the addon had lost track of are in your bags. They are back on the Bags tab.|r"):format(nameOf(key), n))
+            say(("|cff33ff66%s: %d that the addon had lost track of are in your bags. They are back on the Sell tab.|r"):format(nameOf(key), n))
         end
     end
     return total
@@ -1552,7 +1552,7 @@ end
 -- (after the cut) is profit.
 --
 --   Seller:Loose()   what is in your bags that the addon does not track: the
---                    Bags tab lists these with an Add button each. SELLING
+--                    Sell tab lists these with an Add button each. SELLING
 --                    HAS NOTHING TO DO WITH WHAT THE RADAR IS SET TO BUY:
 --                    everything in your bags that is not bound to you is
 --                    offered, whatever kind of item it is (gear that binds
@@ -1775,10 +1775,10 @@ function Seller:Advice(e)
         local p = self.prices[key]
         if p and p.price then
             if not paid then
-                return ("Post at %s each (Bags tab). Your cost is not known, so check that price yourself first."):format(short(p.price)), "warn"
+                return ("Post at %s each (Sell tab). Your cost is not known, so check that price yourself first."):format(short(p.price)), "warn"
             end
             local each = floor(p.price * (1 - cfg.cut)) - paid
-            local text = ("Post %d at %s each (Bags tab, Post): %s after the cut, in your hands about an hour after it sells.%s"):format(
+            local text = ("Post %d at %s each (Sell tab, Post): %s after the cut, in your hands about an hour after it sells.%s"):format(
                 e.count, short(p.price), signed(each * e.count), sells)
             -- the quick way out, when a vendor pays more than it cost: less profit, but the gold is back at once
             local v = ns.Sniper and ns.Sniper.vendorOf(key) or 0
@@ -1793,7 +1793,7 @@ function Seller:Advice(e)
                 :format(short(net or 0), short(e.vendorAlt), ahOpen() and "The live price is being checked; then press Post." or "Open the auction house and press Post.",
                     signed((e.vendorAlt - paid) * e.count)), "do"
         end
-        return ahOpen() and "Its live price is being checked. Post appears on the Bags tab in a moment."
+        return ahOpen() and "Its live price is being checked. Post appears on the Sell tab in a moment."
             or "Open the auction house: the live price is checked, then press Post.", "do"
     elseif e.action == "HOLD" then
         local low = St.p[key]
@@ -1838,7 +1838,7 @@ function Seller:Advice(e)
             return ("Wait. Someone lists at %s. Posting again costs a fee of %s first and you have %s.%s")
                 :format(short(low), short(self:DepositTotal(key, true, e.count)), short(GetMoney()), expires), "wait"
         elseif each and each * e.count >= cfg.minProfit then
-            return ("Someone lists at %s. Press Cancel on its row (Bags tab), collect it at a mailbox and post again at %s: still %s. The posting fee is paid again.")
+            return ("Someone lists at %s. Press Cancel on its row (Sell tab), collect it at a mailbox and post again at %s: still %s. The posting fee is paid again.")
                 :format(short(low), short(repost), signed(each * e.count)), "do"
         elseif each then
             return ("Wait. Someone lists at %s; going under that would leave %s, less than your minimum.%s If it runs out it comes back by mail.")
@@ -1964,8 +1964,24 @@ function Seller:Undercut(e)
         if repost then r.relistProfit = (floor(repost * (1 - cfg.cut)) - cost) * qty - feeCost end
     end
     if repost and r.relistProfit then
-        facts[#facts + 1] = ("relisted at %s it leaves %s (the posting fee of %s is lost with the cancel) against %s if it sells where it is"):format(
-            short(repost), signed(r.relistProfit), short(feeCost), signed(r.holdProfit))
+        -- EVERYTHING A RELIST COSTS, said in full, and all of it is in the figure:
+        --   the fee paid for this auction is gone the moment it is cancelled;
+        --   a new fee is paid for the new auction (back when it sells, where
+        --   fees come back at all; gone as well if that one runs out unsold);
+        --   the lower price, on every unit; and the cut, as on any sale.
+        local back = AuctionMeshDB.cfg.feeBack ~= false
+        local oldFee = floor((L.fee or 0) * qty / max(1, L.qty or qty) + 0.5)
+        r.oldFee, r.newFee = oldFee, newFee
+        local costs = {}
+        costs[#costs + 1] = ("%s less on each of the %d (after the 5%% cut)"):format(short(floor(price * (1 - cfg.cut)) - floor(repost * (1 - cfg.cut))), qty)
+        if back then
+            if oldFee > 0 then costs[#costs + 1] = ("the %s fee paid for this auction is lost with the cancel"):format(short(oldFee)) end
+            costs[#costs + 1] = ("a new fee of %s is paid first: it comes back when it sells, and is lost too if that auction runs out"):format(short(newFee))
+        else
+            costs[#costs + 1] = ("a new fee of %s, which does not come back on this realm"):format(short(newFee))
+        end
+        facts[#facts + 1] = ("relisted at %s it leaves %s against %s if it sells where it is. What a relist costs, all counted in that: %s"):format(
+            short(repost), signed(r.relistProfit), signed(r.holdProfit), table.concat(costs, "; "))
     end
     local rec, why, brief
     local n2 = (ahead == 1) and "1 cheaper unit" or (("%s%d cheaper units"):format(r.more and "at least " or "", ahead))

@@ -6,6 +6,15 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.63.0 (2026-11-23)
+
+- **The tabs are Buy, Sell, Sold, Chart, More.** Trades is now **Buy**, Bags is **Sell**, Gold is **Chart**, and what has sold has its own tab.
+- **The Sold tab.** Two lists: **SOLD, GOLD ON ITS WAY** (auctions the auction house lists as sold and not paid out yet: quantity, cost, what it sold at, when its gold arrives, profit) and **PAID, LAST 24 HOURS** (sales whose gold you have collected). The tab's label counts what is on its way (`Sold (12)`), and the line at the top adds up the gold coming and the profit on what was paid. The Sell tab no longer has a sold section.
+- **Sort by any column.** Click a column's name in a heading (PROFIT, SPREAD, VOLUME, COST, P / L, GOLD ARRIVES, and so on) to sort that tab by it, largest first; click again to turn it round; click the heading's name for the usual order. The sorted column is marked `v` or `^`. Works on Buy, Sell and Sold. On the Sell tab a click on a section's name still opens and folds it. Sorting changes what is shown and nothing else: which deal a press buys is still the sniper's choice.
+- **The chart's ranges: hours and days, and Auto.** A row of buttons: `Auto 1h 3h 6h 12h 1d 2d 7d 30d`. **Auto** (the default) grows with what is on record: the shortest range that holds all of it, so an hour at first, then 3, 6, 12 hours, a day, and on up to 30 days. Picking a range keeps it. The range buttons are on their own row now, so the figures at the top have the whole width.
+- **Relist advice: everything a relist costs is spelled out, and all of it is in the figure.** The full advice (mouse on the row) now ends with, for example: `relisted at 89c it leaves + 12s90c against + 16s50c if it sells where it is. What a relist costs, all counted in that: 11c less on each of the 30 (after the 5% cut); the 30c fee paid for this auction is lost with the cancel; a new fee of 30c is paid first: it comes back when it sells, and is lost too if that auction runs out.` On a realm where posting fees never come back, the new fee is the cost and is counted instead.
+- Not confirmed in game: only run in the offline tests. In particular, sorting by a click needs the game to say where the mouse is; that part has only run against a stand-in.
+
 ## 3.62.0 (2026-11-23)
 
 - **A relist is never advised when it throws the profit away.** Two of the rules could say RELIST for any relist that left anything at all: "it will not sell before it runs out", and the end of a timed hold. An auction that makes 1g51s where it is could be sent down to a price that left a few silver. Now, whatever rule says "relist", it is only said if the relist keeps at least half of what the auction makes where it is (or gives up no more than the smallest profit you bother with). Otherwise the advice is HOLD: `the price has dropped: a relist at 59c would give up 12s of the 16s50c it makes where it is. It may come back unsold: post it again then`.

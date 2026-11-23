@@ -89,7 +89,7 @@ local ARMED_KEEP = 780            -- while armed: only a listing about to become
 local LADDER_MAX = 900            -- a listing older than this is never used for a flip straight from the radar
 local LADDER_ROWS = 20            -- rows of a listing that are remembered for it
 -- UPKEEP BUDGET: of every N+1 requests, N are radar reads (see Sniper:UpkeepTurn)
--- (bagsNew: on the Bags tab while selling still has something to read: a
+-- (bagsNew: on the Sell tab while selling still has something to read: a
 -- price for what you want to post, the listing of an undercut auction. 0:
 -- every request goes to that until it is all in.)
 Sniper.upkeep = { every = 8, bags = 3, bagsNew = 0 }
@@ -421,7 +421,7 @@ function Sniper:Evaluate(key, rows, commodity)
         local sr = self.searching
         local src = sr and sr.key == key and sr.src or nil
         self.last = { key = key, deal = deal ~= nil, reason = reason, at = GetTime(), src = src }
-        -- the last answer to something the radar asked about (shown on the Trades tab)
+        -- the last answer to something the radar asked about (shown on the Buy tab)
         if deal or ALERT_SRC[src or ""] then self.lastAlert = self.last end
     end
     self.reasons = self.reasons or {}
@@ -847,7 +847,7 @@ end
 -- hold, the list of your own auctions) and gets one request only after the
 -- radar has had N reads in a row:
 --   * 8 on every tab but Bags: at least 8 of every 9 requests are radar reads;
---   * 3 on the Bags tab, where you are posting and want current prices.
+--   * 3 on the Sell tab, where you are posting and want current prices.
 -- It used to be one for one: every item check took the turn of a radar read,
 -- so twelve focus items a minute meant sixteen seconds of every minute with
 -- the radar at half speed.
@@ -861,11 +861,11 @@ function Sniper:UpkeepEvery()
     local c = self.upkeep
     local U = ns.UI
     if U and U.tab == "SELL" and not self:SnipeMode() then
-        -- REQUESTS FOLLOW THE TAB. You are on the Bags tab to sell: while
+        -- REQUESTS FOLLOW THE TAB. You are on the Sell tab to sell: while
         -- selling has anything to read (a price for something to post, the
         -- listing of an undercut auction) EVERY request goes to that. Once
         -- it is all in, the radar has three of every four again, so deals
-        -- still show on the Trades tab's label. On the Trades tab it is the
+        -- still show on the Buy tab's label. On the Buy tab it is the
         -- other way round: nothing is read for selling there at all.
         local Se = ns.Seller
         if Se and Se.Unpriced and Se:Unpriced() then return c.bagsNew end
@@ -1333,7 +1333,7 @@ function Sniper:NextCheck(upkeep)
     end
     local snipe = self:SnipeMode()
     if not snipe then
-        -- what you hold, priced for posting (every 45s on the Bags tab, every 10 minutes elsewhere)
+        -- what you hold, priced for posting (every 45s on the Sell tab, every 10 minutes elsewhere)
         local want = Se and Se.NextToPrice and Se:NextToPrice()
         if want then Se.pending = { key = want, at = GetTime() }; return want, "price", nil, nil, true end
         -- The price table's candidates: prices the radar has read that look
@@ -1597,7 +1597,7 @@ local function recordFlip(deal, units, spent, proof)
         -- ONE ITEM, ONE RECORD, whatever kind of deal each purchase was. (A
         -- purchase of another kind used to REPLACE the record: you hold 7 Thick
         -- Leather bought under vendor price, buy 1 as a flip, and the 7 were
-        -- gone from the Bags tab: in your bags, with nothing offering to sell them.)
+        -- gone from the Sell tab: in your bags, with nothing offering to sell them.)
         local total = (f.units or 0) + units
         f.cost = floor(((f.cost or unitCost) * (f.units or 0) + spent) / total + 0.5)
         if f.kind == deal.kind then
@@ -2160,7 +2160,7 @@ function Sniper:OnPurchase(ok, why)
         if b.item and b.vendor and b.vendor > 0 then d = setmetatable({ sell = b.vendor }, { __index = b.deal }) end
         recordFlip(d, b.units, spent, why)
         if ns.Scout then ns.Scout:Bought(b.key, b.units, spent) end
-        if ns.Gold then ns.Gold:Cause(("Bought %d x %s"):format(b.units, nameOf(b.key)), -1) end -- (for the Gold tab's swings)
+        if ns.Gold then ns.Gold:Cause(("Bought %d x %s"):format(b.units, nameOf(b.key)), -1) end -- (for the Chart tab's swings)
         if self.dealSeen then self.dealSeen[b.key] = nil end
         if self.streak then self.streak[b.key] = 0 end
         if b.stake then
@@ -2260,7 +2260,7 @@ function Sniper:ReadOwned()
             n = n + 1
         end
     end
-    do  -- for the Gold tab: what has newly sold is cash from this moment, and is named on the chart
+    do  -- for the Chart tab: what has newly sold is cash from this moment, and is named on the chart
         local prev, names, more = self.ownSoldQty or {}, {}, 0
         for key, q in pairs(soldQty) do
             if q > (prev[key] or 0) then

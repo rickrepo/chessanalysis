@@ -146,7 +146,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
                 db.chars = db.chars or {}
                 db.chars[ns.charKey] = { name = name, realm = tostring(realm), seen = GetServerTime() }
                 if ns.Gold then
-                    -- this character's cash over time (the Gold tab): gold in hand plus what has sold.
+                    -- this character's cash over time (the Chart tab): gold in hand plus what has sold.
                     -- What has sold is known once the list of your own auctions has been read this session.
                     -- Known from either of two readings: the auction house's own list
                     -- of your auctions (this session), or the last look into the

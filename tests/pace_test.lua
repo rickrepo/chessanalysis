@@ -294,13 +294,13 @@ if SCEN == "armed" then
     local st = strip(AuctionMeshFrame.status._text or "")
     UI:Render(); st = strip(AuctionMeshFrame.status._text or "")
     print("     " .. st:gsub("\n", "\n     "))
-    check(st:find("Radar: a read every 0%.6%ds%.$") ~= nil and select(2, st:gsub("\n", "")) == 0, "the Trades tab shows it in one line: a read every 0.6xs")
+    check(st:find("Radar: a read every 0%.6%ds%.$") ~= nil and select(2, st:gsub("\n", "")) == 0, "the Buy tab shows it in one line: a read every 0.6xs")
     local m = ns.Watch:LastMinute()
     check((m.radar or 0) >= 90 and (m.radar or 0) <= 99 and (m.alert or 0) == 0 and (m.buy or 0) == 0 and (m.upkeep or 0) + (m.sell or 0) == 0,
         "the last minute: 9x radar reads and no other request")
 
 elseif SCEN == "unarmed" then
-    -- the panel open on the Trades tab, no input: 12 focus items want their listings read
+    -- the panel open on the Buy tab, no input: 12 focus items want their listings read
     run(180)
     local first = log[1]
     check(first and first.name == "BROWSE class 7" and first.t - t0 < 0.5, "the first request after the auction house opens is a radar read")
@@ -350,15 +350,15 @@ elseif SCEN == "money" then
     check((w.side or 0) == 0 and w.radar >= 88, "armed: no side class is read")
 
 elseif SCEN == "bags" then
-    -- on the Bags tab upkeep may take one request in four (prices are wanted there); the radar keeps three
+    -- on the Sell tab upkeep may take one request in four (prices are wanted there); the radar keeps three
     run(20)
     UI.tab = "SELL"; UI:Render()
     local a = T - t0
     run(60)
     local w = window(a, a + 60)
-    show("Bags tab", w)
-    check(w.runOther <= 1 and w.minBetween >= 3, "Bags tab: still never two in a row, 3 radar reads between two other requests")
-    check(w.radar >= 68, ("Bags tab: the radar keeps %d reads a minute"):format(w.radar))
+    show("Sell tab", w)
+    check(w.runOther <= 1 and w.minBetween >= 3, "Sell tab: still never two in a row, 3 radar reads between two other requests")
+    check(w.radar >= 68, ("Sell tab: the radar keeps %d reads a minute"):format(w.radar))
 
 elseif SCEN == "alert" then
     -- a listing appears under vendor price that is NOT a deal by the rules (too little profit)

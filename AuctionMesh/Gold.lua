@@ -204,9 +204,39 @@ end
 --           first, last (the amounts at the two ends), from, to, span, short,
 --           days = { { col, t } ... } (where each day begins) }
 Gold.MIN_SPAN = 600 -- never less than ten minutes across
-Gold.LINES = { d2 = { span = 2 * 86400, name = "2 days" }, d7 = { span = 7 * 86400, name = "7 days" }, d30 = { span = 30 * 86400, name = "30 days" } }
+-- THE RANGES: hours (1, 3, 6, 12) and days (1, 2, 7, 30). ORDER is how they
+-- are offered, shortest first.
+Gold.LINES = {
+    h1 = { span = 3600, name = "1 hour", short = "1h" }, h3 = { span = 3 * 3600, name = "3 hours", short = "3h" },
+    h6 = { span = 6 * 3600, name = "6 hours", short = "6h" }, h12 = { span = 12 * 3600, name = "12 hours", short = "12h" },
+    d1 = { span = 86400, name = "1 day", short = "1d" }, d2 = { span = 2 * 86400, name = "2 days", short = "2d" },
+    d7 = { span = 7 * 86400, name = "7 days", short = "7d" }, d30 = { span = 30 * 86400, name = "30 days", short = "30d" },
+}
+Gold.ORDER = { "h1", "h3", "h6", "h12", "d1", "d2", "d7", "d30" }
+
+-- When the record begins (nil while there is none).
+function Gold:Started()
+    local d = self.d
+    if not d then return nil end
+    local t
+    local function take(x) if x and (not t or x < t) then t = x end end
+    take(d.h[1] and d.h[1].t); take(d.d[1] and d.d[1].t); take(d.ev[1] and d.ev[1].t)
+    return t
+end
+
+-- AUTO: the range grows with the record. The shortest range that holds
+-- everything on record: an hour at first, then 3, 6, 12 hours, a day, and so
+-- on up to 30 days.
+function Gold:AutoView()
+    local t = self:Started()
+    local age = t and (self.now() - t) or 0
+    for _, id in ipairs(self.ORDER) do
+        if self.LINES[id].span >= age then return id end
+    end
+    return self.ORDER[#self.ORDER]
+end
 function Gold:Line(view, cols)
-    local v = self.LINES[view] or self.LINES.d2
+    local v = self.LINES[view] or self.LINES.d1
     local d = self.d or { h = {}, d = {}, ev = {} }
     local now = self.now()
     local from = now - v.span
@@ -261,7 +291,7 @@ end
 -- The biggest swings in the same range, largest first, at most n. Each is
 -- { t, d, g, why, more, n } with col = the column of the line it sits on.
 function Gold:Swings(view, n, cols, from)
-    local v = self.LINES[view] or self.LINES.d2
+    local v = self.LINES[view] or self.LINES.d1
     local d = self.d or { ev = {} }
     local now = self.now()
     from = from or (now - v.span) -- (the chart passes where it really begins)
