@@ -6,6 +6,13 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.58.0 (2026-11-23)
+
+- **The Gold chart's line is a true line.** It was pieced together from small rectangles, which is why it went up and down in blocks. It is now drawn with the game's own line segments, one from each point to the next: level where your cash does not change, sloping from the old amount to the new one where it does, in one unbroken line. The area under it is still filled.
+- **If this client cannot draw lines**, or its lines fail when used, the chart goes back to the block drawing by itself and says so once in the log (`GOLD CHART: line segments are not usable on this client`). It never stops drawing.
+- Worth knowing: your cash changes in jumps (a purchase, a sale) and sits still in between, so the line will always have level stretches joined by steep slopes. That is the data, not the drawing.
+- Not confirmed in game: whether this client's line segments work is exactly what has not been seen yet. A screenshot of the Gold tab will show it.
+
 ## 3.57.0 (2026-11-23)
 
 From four real screenshots.

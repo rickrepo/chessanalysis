@@ -19,6 +19,13 @@ local function widget(parent, name)
         SetEnabled = function(s, v) s._enabled = v and true or false end,
         GetParent = function(s) return s._parent end, SetParent = function(s, p) s._parent = p end,
         CreateFontString = function(s) return widget(s) end, CreateTexture = function(s) return widget(s) end,
+        -- the game's Line object: a start and an end, kept so tests can look at them
+        CreateLine = function(s)
+            local l = widget(s)
+            rawset(l, "SetStartPoint", function(me, _, _, x, yy) me._x0, me._y0 = x, yy end)
+            rawset(l, "SetEndPoint", function(me, _, _, x, yy) me._x1, me._y1 = x, yy end)
+            return l
+        end,
         GetStringHeight = function() return 12 end, GetFont = function() return "font", 10 end,
         GetPoint = function() return "CENTER", nil, "CENTER", 0, 0 end,
     }
@@ -3967,13 +3974,42 @@ do
     print("     " .. strip(gd.big._text) .. "   " .. strip(gd.chg._text))
     check(strip(gd.big._text) == "1g15s" and strip(gd.chg._text) == "+ 15s00c  [+15.00%]  2 days" and st.up == true,
         "at the top, large: the gold now, and the change over the range with its percentage (+ 15s on the 1g it began with)")
-    -- the line: an amount in every column, the area under it filled, joined from column to column
-    local shown, gaps = 0, 0
+    -- A TRUE LINE: one real line segment from each point to the next, the area under it filled
+    local shown, blocks = 0, 0
     for i = 1, C.cols do
-        local w = gd.cols[i]
-        if w.fill._shown and w.line._shown then shown = shown + 1 else gaps = gaps + 1 end
+        if gd.cols[i].fill._shown and gd.segs[i]._shown then shown = shown + 1 end
+        if gd.cols[i].line._shown then blocks = blocks + 1 end
     end
-    check(shown == C.cols and gaps == 0, "the line runs across the whole chart, with the area under it filled")
+    check(st.lines == true and shown == C.cols and blocks == 0 and st.segs == C.cols,
+        "the line is drawn with real line segments across the whole chart (no blocks), with the area under it filled")
+    do
+        local cS = math.ceil((48 - 30) / 48 * C.cols) -- the column of the sale
+        local flat, rise = gd.segs[cS - 3], gd.segs[cS]
+        check(flat._y0 == flat._y1 and flat._x1 - flat._x0 == C.colW, "where the amount does not change the line is level")
+        check(rise._y1 > rise._y0 + 40 and rise._x1 - rise._x0 == C.colW and rise._x0 == (cS - 1) * C.colW and gd.segs[cS + 1]._y0 == rise._y1,
+            "at the sale it slopes up from the old amount to the new one, and the next piece starts where it ends: one unbroken line")
+        -- a client that cannot draw lines: the blocks are used, as before
+        UI.goldNoLines = true; UI:Render()
+        local segsShown, blocksShown = 0, 0
+        for i = 1, C.cols do
+            if gd.segs[i]._shown then segsShown = segsShown + 1 end
+            if gd.cols[i].line._shown then blocksShown = blocksShown + 1 end
+        end
+        check(segsShown == 0 and blocksShown == C.cols and UI.goldState.lines == false, "without line segments the line is pieced together from blocks, as it was")
+        UI.goldNoLines = nil
+        -- line segments that fail when used: the chart falls back by itself, once, and says so in the log
+        local real = rawget(gd.segs[5], "SetStartPoint")
+        rawset(gd.segs[5], "SetStartPoint", function() error("not supported") end)
+        UI:Render()
+        check(UI.goldNoLines == true, "if the line segments fail when used, the chart goes back to blocks by itself")
+        UI:Render()
+        blocksShown = 0
+        for i = 1, C.cols do if gd.cols[i].line._shown then blocksShown = blocksShown + 1 end end
+        check(blocksShown == C.cols and #(ns.errList or {}) == 0, "and still draws, with no error")
+        rawset(gd.segs[5], "SetStartPoint", real)
+        UI.goldNoLines = nil; UI:Render()
+        st = UI.goldState
+    end
     local L = st.line
     check(L.cols[1].v == 10000 and L.cols[C.cols].v == 11500 and L.lo == 10000 and L.hi == 16000,
         "it begins at 1g, peaks at 1g60s and ends at 1g15s")

@@ -985,27 +985,70 @@ function UI:RenderGold(short)
             end
         end
     end
-    -- the line, and the area under it
+    -- THE LINE, AND THE AREA UNDER IT.
+    -- pts[0] is the amount the chart begins with, pts[i] the amount at the end
+    -- of column i. With real line segments (see where the widgets are made)
+    -- the line runs straight from each point to the next; without them it is
+    -- pieced together from blocks.
+    local lines = gd.segs ~= nil and not UI.goldNoLines
+    local pts = {}
+    if L.cols[1] and not L.cols[1].none then pts[0] = first end
+    for i = 1, C.cols do
+        local c = L.cols[i]
+        pts[i] = (c and not c.none) and c.v or nil
+    end
     local prev
     for i = 1, C.cols do
         local w, c = gd.cols[i], L.cols[i]
         if not c or c.none then
             w.fill:Hide(); w.line:Hide()
         else
-            local yv = y(c.v)
-            w.fill:SetHeight(math.max(1, yv))
+            -- the area: up to the middle of this stretch of line
+            local from = pts[i - 1] or c.v
+            w.fill:SetHeight(math.max(1, lines and y((from + c.v) / 2) or y(c.v)))
             w.fill:SetColorTexture(RGB[1], RGB[2], RGB[3], 0.22)
             w.fill:Show()
-            -- from the least to the most it was in this stretch, joined to the stretch before
-            local a, b = math.min(c.lo, prev or c.lo), math.max(c.hi, prev or c.hi)
-            local y0, y1 = y(a), y(b)
-            w.line:ClearAllPoints()
-            w.line:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", (i - 1) * C.colW, y0)
-            w.line:SetHeight(math.max(2, y1 - y0 + 2))
-            w.line:SetColorTexture(RGB[1], RGB[2], RGB[3], 1)
-            w.line:Show()
+            if lines then
+                w.line:Hide()
+            else
+                -- from the least to the most it was in this stretch, joined to the stretch before
+                local a, b2 = math.min(c.lo, prev or c.lo), math.max(c.hi, prev or c.hi)
+                local y0, y1 = y(a), y(b2)
+                w.line:ClearAllPoints()
+                w.line:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", (i - 1) * C.colW, y0)
+                w.line:SetHeight(math.max(2, y1 - y0 + 2))
+                w.line:SetColorTexture(RGB[1], RGB[2], RGB[3], 1)
+                w.line:Show()
+            end
             prev = c.v
         end
+    end
+    if gd.segs then
+        local drawn = 0
+        local ok = not lines or pcall(function()
+            for i = 1, C.cols do
+                local sg, a, b2 = gd.segs[i], pts[i - 1], pts[i]
+                if a and b2 then
+                    sg:SetStartPoint("BOTTOMLEFT", gd.plot, (i - 1) * C.colW, y(a))
+                    sg:SetEndPoint("BOTTOMLEFT", gd.plot, i * C.colW, y(b2))
+                    sg:SetColorTexture(RGB[1], RGB[2], RGB[3], 1)
+                    sg:Show()
+                    drawn = drawn + 1
+                else
+                    sg:Hide()
+                end
+            end
+        end)
+        if not lines or not ok then
+            for i = 1, C.cols do gd.segs[i]:Hide() end
+            if lines then
+                -- this client's lines do not work the way they should: blocks from now on, and say so once
+                UI.goldNoLines = true
+                ns.Log("GOLD CHART: line segments are not usable on this client; the line is drawn in blocks")
+                self.dirty = true
+            end
+        end
+        self.goldSegs = drawn
     end
     -- where each day begins, with its date under the stretch it covers
     do
@@ -1128,7 +1171,8 @@ function UI:RenderGold(short)
             w.value:SetText("")
         end
     end
-    self.goldState = { view = view, first = first, last = last, change = chg, up = up, lo = lo, hi = hi, grid = gridVals, swings = swings, line = L }
+    self.goldState = { view = view, first = first, last = last, change = chg, up = up, lo = lo, hi = hi, grid = gridVals, swings = swings, line = L,
+                       lines = gd.segs ~= nil and not UI.goldNoLines, segs = self.goldSegs }
 end
 
 function UI:RenderPicks(short)
@@ -2330,6 +2374,21 @@ function UI:Create()
             local line = plot:CreateTexture(nil, "OVERLAY")
             line:SetSize(C.colW, 2)
             gd.cols[i] = { fill = fill, line = line }
+        end
+        -- THE LINE ITSELF: real line segments (the game's Line object), one from
+        -- each point to the next, so the line slopes between amounts instead
+        -- of going up and down in blocks. If this client cannot make them, the
+        -- line is drawn from the columns' own pieces as before.
+        if type(plot.CreateLine) == "function" then
+            local segs, good = {}, true
+            for i = 1, C.cols do
+                local ok, ln = pcall(plot.CreateLine, plot, nil, "OVERLAY")
+                if not ok or type(ln) ~= "table" then good = false; break end
+                if ln.SetThickness then ln:SetThickness(2) end
+                ln:Hide()
+                segs[i] = ln
+            end
+            if good then gd.segs = segs end
         end
         -- where each day begins, and its date
         gd.days = {}
