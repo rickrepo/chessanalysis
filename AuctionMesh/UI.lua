@@ -78,7 +78,7 @@ function UI:Refresh()
     self.scroll, self.fast = {}, nil
     local n = 0
     for _, e in ipairs(Se:Entries()) do if e.action ~= "LISTED" then n = n + 1 end end
-    self:Notice(("Refreshed: bags read again. %d item%s to deal with (tab Bags).%s"):format(n, n == 1 and "" or "s",
+    self:Notice(("Refreshed: %s. %d item%s to deal with (tab Bags).%s"):format(Se:BagsSeenText(), n, n == 1 and "" or "s",
         back > 0 and (" %d unit%s the addon had lost track of %s back."):format(back, back == 1 and "" or "s", back == 1 and "is" or "are") or ""), true)
     self:Render()
 end

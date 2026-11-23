@@ -6,6 +6,13 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.55.0 (2026-11-23)
+
+- **The reagent bag.** The bags were read as numbers 0 to 5, with 5 taken to be the reagent bag (it is on the retail client). The reagent bag's number is now asked of the game itself, and every bag the game names is read. Whether the old assumption was wrong on this client has not been seen in a log.
+- **Refresh says what it read**, so this can be checked at a glance: `Refreshed: 14 stacks in your bags (96 slots), 9 in the reagent bag (32 slots).` If it says `no reagent bag found` while you have one, send a Snapshot or the log: the log line also lists the bag numbers that were read.
+- Note for anyone on 3.53 or earlier: there, the "in your bags" list only offered items the radar had a price for. Since 3.54 it offers everything that is not bound to you, reagent bag included.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.54.0 (2026-11-23)
 
 Streamlined: fewer places, no duplicates, and the front says plainly what is being sniped.

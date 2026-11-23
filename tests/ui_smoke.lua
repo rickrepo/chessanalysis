@@ -3077,7 +3077,7 @@ do
         local e = held()
         check(e ~= nil and e.count == 8 and AuctionMeshDB.flips[9191].cost == 30 and t.lost == 0,
             "Refresh: they are back on the Bags tab, 8 of them at the 30c each they cost")
-        check(UI.scroll.SELL == 0 and strip(AuctionMeshFrame.status._text):find("^Refreshed: bags read again%. %d+ items? to deal with %(tab Bags%)%. 8 units the addon had lost track of are back%."),
+        check(UI.scroll.SELL == 0 and strip(AuctionMeshFrame.status._text):find("^Refreshed: %d+ stacks? in your bags %(16 slots%), no reagent bag found%. %d+ items? to deal with %(tab Bags%)%. 8 units the addon had lost track of are back%."),
             "the lists start from their top again and the panel says what the refresh found")
         -- pressed again: nothing more is taken (never more than was marked not found)
         setBag(9191, 20)
@@ -3759,6 +3759,38 @@ do
     fire("BAG_UPDATE_DELAYED")
     LIST[9292], LIST[9293] = nil, nil
     Se.prices[9292], Se.prices[9293] = nil, nil
+    UI.tab = "BUY"; UI.notice = nil; UI:Render()
+end
+
+print("the reagent bag is read like any other bag")
+do
+    local flips = AuctionMeshDB.flips
+    local realSlots, realInfo = C_Container.GetContainerNumSlots, C_Container.GetContainerItemInfo
+    local reagent = { [1] = { itemID = 9601, stackCount = 40, quality = 1 }, [2] = { itemID = 9602, stackCount = 12, quality = 1 } }
+    ITEMS[9601], ITEMS[9602] = { "Reagent Ore", 3 }, { "Reagent Herb", 2 }
+    C_Container.GetContainerNumSlots = function(b) return b == 5 and 32 or realSlots(b) end
+    C_Container.GetContainerItemInfo = function(b, sl) if b == 5 then return reagent[sl] end return realInfo(b, sl) end
+    for s2 = 1, 16 do bags[s2] = nil end
+    check(table.concat(Se.BagList(), ",") == "0,1,2,3,4,5", "the bags read: the backpack, four bags and the reagent bag (its number is asked of the game; 5 if it names none)")
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
+    UI:Open("SELL")
+    local b = AuctionMeshFrame.refresh
+    b._scripts.OnClick(b)
+    local st = strip(AuctionMeshFrame.status._text)
+    print("     " .. st)
+    check(st:find("^Refreshed: 0 stacks in your bags %(16 slots%), 2 in the reagent bag %(32 slots%)%."), "Refresh says what it read: the bags, and the reagent bag with its slots")
+    local keys = {}
+    for _, l in ipairs(Se:Loose()) do keys[l.key] = l.count end
+    check(keys[9601] == 40 and keys[9602] == 12, "what is in the reagent bag is offered on the Bags tab like anything else")
+    LIST[9601] = { { 50, 100 }, { 52, 100 } }
+    check(Se:Farm(9601) == 40 and flips[9601] and flips[9601].units == 40, "and can be added from there")
+    advance(3)
+    local bag, slot, n = Se.FindInBags(9601)
+    check(bag == 5 and slot == 1 and n == 40 and Se.prices[9601] and Se.prices[9601].price == 49, "it is found in the reagent bag for posting, and priced")
+    flips[9601] = nil; LIST[9601] = nil; Se.prices[9601] = nil
+    for i = #ns.Journal.list, 1, -1 do if ns.Journal.list[i].key == 9601 then table.remove(ns.Journal.list, i) end end
+    C_Container.GetContainerNumSlots, C_Container.GetContainerItemInfo = realSlots, realInfo
+    Se:ScanBags()
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
 end
 

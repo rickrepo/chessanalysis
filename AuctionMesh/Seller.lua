@@ -35,7 +35,27 @@ function Seller:PriceReady(key)
 end
 local HOLD_TTL = 600        -- re-check held items after this
 local PRICE_TIMEOUT = 6
-local LAST_BAG = 5          -- 0-4 bags + reagent bag
+-- THE BAGS THAT ARE READ: the backpack, the four bags, and the reagent bag.
+-- The reagent bag's number is asked of the game (it is 5 on the retail client,
+-- which is what this used to assume); every number the game names for an
+-- equipped bag is read, and 5 as well in case it names none.
+local bagNumbers
+local function bagList()
+    if bagNumbers then return bagNumbers end
+    local seen, list = {}, {}
+    local function add(b) if type(b) == "number" and b >= 0 and b <= 12 and not seen[b] then seen[b] = true; list[#list + 1] = b end end
+    local plain = (type(NUM_BAG_SLOTS) == "number") and NUM_BAG_SLOTS or 4
+    for b = 0, plain do add(b) end
+    local reagent = type(Enum) == "table" and type(Enum.BagIndex) == "table" and Enum.BagIndex.ReagentBag or nil
+    add(reagent)
+    for b = plain + 1, (type(NUM_TOTAL_EQUIPPED_BAG_SLOTS) == "number") and NUM_TOTAL_EQUIPPED_BAG_SLOTS or 5 do add(b) end
+    add(5)
+    table.sort(list)
+    bagNumbers = list
+    Seller.reagentBag = (type(reagent) == "number") and reagent or 5
+    return list
+end
+Seller.BagList = bagList
 
 local COLORS = {
     VENDOR = { 0.2, 1, 0.4, "|cff33ff66" },
@@ -70,20 +90,39 @@ local bagQuality = {} -- key -> the item's quality (2 = uncommon, 3 = rare, 4 = 
 
 function Seller:ScanBags()
     local counts, quality = {}, {}
-    for bag = 0, LAST_BAG do
-        for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
+    -- what was read, for the Refresh button's message and the log: slots in
+    -- the ordinary bags, slots in the reagent bag, stacks found in each
+    local seen = { slots = 0, stacks = 0, reagentSlots = 0, reagentStacks = 0 }
+    local list = bagList()
+    for _, bag in ipairs(list) do
+        local n = C_Container.GetContainerNumSlots(bag) or 0
+        local reagent = bag == Seller.reagentBag
+        if reagent then seen.reagentSlots = seen.reagentSlots + n else seen.slots = seen.slots + n end
+        for slot = 1, n do
             local info = C_Container.GetContainerItemInfo(bag, slot)
-            if info and info.itemID and not info.isBound then
-                counts[info.itemID] = (counts[info.itemID] or 0) + (info.stackCount or 1)
-                if type(info.quality) == "number" then quality[info.itemID] = info.quality end
+            if info and info.itemID then
+                if reagent then seen.reagentStacks = seen.reagentStacks + 1 else seen.stacks = seen.stacks + 1 end
+                if not info.isBound then
+                    counts[info.itemID] = (counts[info.itemID] or 0) + (info.stackCount or 1)
+                    if type(info.quality) == "number" then quality[info.itemID] = info.quality end
+                end
             end
         end
     end
     bagCount, bagQuality = counts, quality
+    self.bagsSeen = seen
+end
+
+-- What the last reading of the bags covered, in words.
+function Seller:BagsSeenText()
+    local b = self.bagsSeen
+    if not b then return "bags not read yet" end
+    return ("%d stack%s in your bags (%d slots), %s"):format(b.stacks, b.stacks == 1 and "" or "s", b.slots,
+        b.reagentSlots > 0 and ("%d in the reagent bag (%d slots)"):format(b.reagentStacks, b.reagentSlots) or "no reagent bag found")
 end
 
 function Seller.FindInBags(key)
-    for bag = 0, LAST_BAG do
+    for _, bag in ipairs(bagList()) do
         for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             if info and info.itemID == key and not info.isBound and not info.isLocked then
@@ -272,7 +311,7 @@ end
 function Seller:SellVendor(onlyKey)
     if self.selling then return end
     local queue, remaining, before = {}, {}, {}
-    for bag = 0, LAST_BAG do
+    for _, bag in ipairs(bagList()) do
         for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             local f = info and flips()[info.itemID]
@@ -1433,7 +1472,7 @@ function Seller:Rescan()
     end
     local back = adopt(self, owed)
     if ahOpen() and ns.Sniper then ns.Sniper.needOwned = true end
-    ns.Log("REFRESH by click: bags read again, %d unit(s) picked up again", back)
+    ns.Log("REFRESH by click: bags read again (%s; bag numbers read: %s), %d unit(s) picked up again", self:BagsSeenText(), table.concat(bagList(), ","), back)
     return back
 end
 
