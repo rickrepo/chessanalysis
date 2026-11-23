@@ -2254,6 +2254,7 @@ end
 ---------------------------------------------------------------- lifecycle
 
 function Sniper:Start()
+    if ns.BankAlt and ns.BankAlt() then return end -- the bank alt: nothing runs at the auction house
     self.active = true
     self.checkedAt = {} -- new AH visit: everything may have changed
     self.ownRead = false

@@ -322,6 +322,10 @@ end
 ---------------------------------------------------------------- control
 
 function Swarm:Start(quiet)
+    if ns.BankAlt and ns.BankAlt() then
+        if ns.Print and not quiet then ns.Print("This character is your bank alt: the addon reads no prices here (Setup tab to change).") end
+        return
+    end
     if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then
         if ns.Print and not quiet then ns.Print("Open the Auction House first.") end
         return

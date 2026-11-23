@@ -360,6 +360,9 @@ function Seller:MailGold(delta)
 end
 
 function Seller:CollectMail()
+    -- the bank alt: its mail is its own. Nothing is taken out, and nothing your
+    -- other character holds is given up on for not being in these bags.
+    if ns.BankAlt and ns.BankAlt() then return end
     if self.mailBusy or self.mailFull then return end
     self.mailBusy = true
     -- read what is there BEFORE anything is taken, so the figures are current
@@ -1636,7 +1639,14 @@ end
 function Seller:Refresh(show)
     local UI = ns.UI
     if not UI then return end
-    if show == "open" and #self:Entries() > 0 then UI:Open("SELL") end
+    if show == "open" and ns.BankAlt and ns.BankAlt() then
+        -- the bank alt: the panel opens at a vendor only, and only with something in these bags to sell
+        local any = false
+        if merchantOpen() then
+            for _, e in ipairs(self:Entries()) do if e.action ~= "MAIL" and e.action ~= "LISTED" then any = true end end
+        end
+        if any then UI:Open("SELL") end
+    elseif show == "open" and #self:Entries() > 0 then UI:Open("SELL") end
     UI:Dirty()
 end
 
@@ -1696,6 +1706,8 @@ function Seller:Init()
             Seller:Refresh()
         elseif event == "MAIL_INBOX_UPDATE" then
             Seller:CollectMail()
+        elseif event == "AUCTION_HOUSE_SHOW" and ns.BankAlt and ns.BankAlt() then
+            -- the bank alt: nothing of the addon's happens at the auction house
         elseif event == "AUCTION_HOUSE_SHOW" then
             for k, p in pairs(Seller.prices) do if p.price then Seller.prices[k] = nil end end
             Seller:Recover()
@@ -1719,6 +1731,7 @@ function Seller:Init()
     -- Remind on login if there is unfinished business.
     C_Timer.After(8, function()
         Seller:ScanBags()
+        if ns.BankAlt and ns.BankAlt() then return end -- the bank alt: no reminder, nothing looked for
         Seller:Recover()
         local n = #Seller:Entries()
         if n > 0 then say(n .. " item(s) to sell. Open the AuctionMesh panel (auction house tab, or the addon list by the minimap) to see what to do.") end

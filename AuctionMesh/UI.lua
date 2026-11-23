@@ -1009,7 +1009,8 @@ function UI:RenderMode()
     local S = ns.Sniper
     local sk = S:StakeKey()
     local text, c
-    if sk then text, c = "STAKE-OUT: " .. S.nameOf(sk), { 1, 0.82, 0 }
+    if ns.BankAlt() then text, c = "BANK ALT: VENDORS ONLY", { 0.55, 0.75, 1 }
+    elseif sk then text, c = "STAKE-OUT: " .. S.nameOf(sk), { 1, 0.82, 0 }
     elseif S.lowGold then text, c = "VENDOR ONLY: GOLD LOW", { 1, 0.5, 0.25 }
     elseif not ns.Deals.cfg.flips then text, c = "VENDOR ONLY", { 0.2, 1, 0.4 }
     else text, c = "VENDOR + FLIPS", ACCENT end
@@ -1019,7 +1020,9 @@ function UI:RenderMode()
 end
 function UI:ModeClick()
     local S = ns.Sniper
-    if S:StakeKey() then
+    if ns.BankAlt() then
+        self:Notice("This character is your bank alt: the addon opens at vendors only. To change it: Setup tab, 'Bank alt'.", true)
+    elseif S:StakeKey() then
         S:SetStake(nil)
         self:Notice("Stake-out ended. The radar has every request again.", true)
     else
@@ -1045,6 +1048,11 @@ function UI:RenderSetup()
     sp.spend:SetText(("%d%% a flip"):format(floor(ns.Deals.cfg.maxSpend * 100 + 0.5)))
     sp.dock:SetText(cfg.dock ~= false and "Inside the auction house" or "A window of its own")
     sp.auto:SetText(cfg.autoOpen and "Opens by itself: on" or "Opens by itself: off")
+    do
+        local c = cfg.bankAlt and (AuctionMeshDB.chars or {})[cfg.bankAlt]
+        sp.bank:SetText(not cfg.bankAlt and "Bank alt: none" or ("Bank alt: " .. (c and c.name or cfg.bankAlt) .. (ns.BankAlt() and " (this one)" or "")))
+        UI.outline(sp.bank, ns.BankAlt() and ACCENT or LINE)
+    end
     sp.tune:SetText(ns.Tuner.cfg.enabled and "Auto-adjust: on" or "Auto-adjust: off")
     do  -- how you buy
         local mode = UI.BuyMode()
@@ -1874,14 +1882,17 @@ function UI:Create()
     upTo(L, sp.snap)
 
     group("ADDON")
-    L, at = row("The panel")
+    L, at = row("The panel, and your bank alt")
     sp.dock = tip(button(sp, 190, "", function() ns.Do.Dock(AuctionMeshDB.cfg.dock == false) end),
         "Inside the auction house window, or as a window of its own that you can drag anywhere.")
     sp.dock:SetPoint("TOPRIGHT", 0, at + 5)
     sp.auto = tip(button(sp, 150, "", function() ns.Do.Auto(not AuctionMeshDB.cfg.autoOpen) end),
         "On: the panel opens and starts reading prices when you open the auction house. Off: click the AuctionMesh tab under the auction house window.")
     sp.auto:SetPoint("RIGHT", sp.dock, "LEFT", -6, 0)
-    upTo(L, sp.auto)
+    sp.bank = tip(button(sp, 190, "", function() ns.Do.BankAlt() end),
+        "Click to pick which of your characters is the bank alt: none, then each character in turn. On the bank alt the addon opens at vendors only, to sell what it bought; nothing runs at the auction house or the mailbox. Kept for the whole account. A character is on the list once it has logged in with the addon.")
+    sp.bank:SetPoint("RIGHT", sp.auto, "LEFT", -6, 0)
+    upTo(L, sp.bank)
 
     L, at = row("Auto-adjust (pace, smallest profit, quiet time)")
     sp.forget = tip(button(sp, 190, "Forget what was learned", function()
@@ -2819,7 +2830,9 @@ function UI:Init()
         f:RegisterEvent(e)
     end
     f:SetScript("OnEvent", function(_, event)
-        if event == "AUCTION_HOUSE_SHOW" then
+        if event == "AUCTION_HOUSE_SHOW" and ns.BankAlt() then
+            -- the bank alt: no tab under the auction house, and the panel stays closed
+        elseif event == "AUCTION_HOUSE_SHOW" then
             UI:CreateAHTab()
             if frame and frame:IsShown() then frame:Hide() end -- re-place inside the auction house
             if AuctionMeshDB.cfg.autoOpen then

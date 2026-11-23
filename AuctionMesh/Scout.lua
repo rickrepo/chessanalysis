@@ -551,6 +551,10 @@ function Scout:Snapshot(o)
     add("unsold auctions may hold ", tostring(cfg.maxTied or 50), "% | buy with: ", (ns.UI and ns.UI.BuyMode and ns.UI.BUY_NAMES[ns.UI.BuyMode()] or "?"), (cfg.buyKey and (" (key " .. cfg.buyKey .. ")") or ""),
         " | one-click buy: ", cfg.autoConfirm == false and "BLOCKED by the game (second input needed)" or (cfg.autoTried and "works" or "on, not tried yet"),
         " | auto-adjust ", cfg.tune ~= false and "on" or "off", " | posting fee comes back: ", cfg.feeBack == nil and "not known yet" or tostring(cfg.feeBack))
+    -- (the character's name is left out: the snapshot is sent on)
+    if cfg.bankAlt then
+        add("bank alt: ", (ns.BankAlt and ns.BankAlt()) and "THIS character (vendors only: nothing runs at the auction house or the mailbox)" or "another character")
+    end
     do
         local parts = {}
         for _, k in ipairs(cfg.focusItems or {}) do parts[#parts + 1] = plainName(k) .. "(" .. k .. ")" end

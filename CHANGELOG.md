@@ -6,6 +6,16 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.48.0 (2026-11-23)
+
+- **Bank alt.** One of your characters can be marked as the bank alt, and the setting is kept for the whole account. On that character the addon is for vendors only:
+  - **At a vendor** the panel opens on the Bags tab when something the addon bought is in that character's bags, and selling works as on any character. With nothing to sell it stays closed.
+  - **At the auction house** nothing happens: no AuctionMesh tab, the panel stays closed, the radar and the sniper do not start (not by hand either) and no request is sent.
+  - **At the mailbox** nothing is collected, and nothing your other character holds is given up on as "not found" for not being in the bank alt's bags.
+  - No reminder at login. The badge at the top left reads `BANK ALT: VENDORS ONLY`. The panel can still be opened by hand (`/amesh`, or the addon list by the minimap) to change the setting.
+- **Picking it: Setup tab, last group, the button "Bank alt"**. Each click moves on: none, then each of your characters in turn. The game gives addons no list of your characters, so the addon keeps its own: a character is on it once it has logged in with this version. Log in on the bank alt once, then pick it from either character.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.47.0 (2026-11-23)
 
 - **Details is redone: one view, "What to focus on", with two lists and nothing else.**

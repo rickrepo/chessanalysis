@@ -3650,6 +3650,70 @@ do
     UI.tab = "BUY"; UI:Render()
 end
 
+print("bank alt: on that character the addon opens at vendors only")
+do
+    local cfg, Do, Sw, flips = AuctionMeshDB.cfg, ns.Do, ns.Swarm, AuctionMeshDB.flips
+    AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED"); MerchantFrame:Hide(); MailFrame:Hide(); UI:Close()
+    for s2 = 1, 16 do bags[s2] = nil end
+    fire("BAG_UPDATE_DELAYED")
+    check(ns.charKey == "Tester-Realm" and AuctionMeshDB.chars["Tester-Realm"] ~= nil and AuctionMeshDB.chars["Tester-Realm"].name == "Tester",
+        "the character that logs in is added to the list of your characters")
+    check(cfg.bankAlt == nil and not ns.BankAlt(), "no bank alt until you pick one")
+    AuctionMeshDB.chars["Banker-Realm"] = { name = "Banker", realm = "Realm", seen = GetServerTime() } -- another character that has logged in before
+    -- Setup: one button; each click moves to the next character, then back to none
+    UI:Open("HISTORY")
+    local sp = AuctionMeshFrame.setup
+    check(sp.bank ~= nil and sp.bank._text == "Bank alt: none", "Setup has a 'Bank alt' button: none to begin with")
+    sp.bank._scripts.OnClick(sp.bank)
+    check(cfg.bankAlt == "Banker-Realm" and sp.bank._text == "Bank alt: Banker" and not ns.BankAlt() and UI.modeText ~= "BANK ALT: VENDORS ONLY",
+        "a click picks the first of your characters; on this one nothing changes")
+    sp.bank._scripts.OnClick(sp.bank)
+    check(cfg.bankAlt == "Tester-Realm" and sp.bank._text == "Bank alt: Tester (this one)" and ns.BankAlt() and UI.modeText == "BANK ALT: VENDORS ONLY",
+        "the next click picks this character: the button says so and the badge at the top left reads BANK ALT: VENDORS ONLY")
+    check(strip(AuctionMeshFrame.status._text):find("^Tester %(this character%) is your bank alt: here the addon opens at vendors only"), "and the panel says what that means")
+    UI:Close()
+    -- the auction house: nothing
+    local n0 = #sent
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(5)
+    check(not UI:IsShown() and not Sw.active and not S.active and #sent == n0,
+        "at the auction house the panel stays closed, the radar and the sniper do not start, and no request is sent")
+    S:Start(); Sw:Start(true)
+    check(not Sw.active and not S.active, "they cannot be started by hand there either")
+    AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
+    -- the mailbox: nothing is taken, and what another character holds is not given up on
+    flips[2592] = { kind = "FLIP", units = 5, cost = 30, sell = 90, at = GetServerTime() - 1000 }
+    inbox[#inbox + 1] = { itemID = 2592, stackCount = 5 }
+    local inboxWas = #inbox
+    MailFrame:Show(); fire("MAIL_SHOW"); advance(4); fire("MAIL_INBOX_UPDATE"); advance(400); fire("MAIL_INBOX_UPDATE"); advance(4)
+    check(#inbox == inboxWas and not UI:IsShown() and flips[2592] and flips[2592].units == 5 and flips[2592].missingSince == nil,
+        "at the mailbox nothing is collected, the panel stays closed, and a holding that is not in these bags is not marked as not found")
+    MailFrame:Hide(); fire("MAIL_CLOSED")
+    table.remove(inbox)
+    -- a vendor, with nothing of the addon's in these bags
+    MerchantFrame:Show(); fire("MERCHANT_SHOW"); advance(1)
+    check(not UI:IsShown(), "at a vendor with nothing to sell in these bags it stays closed (what another character holds does not open it)")
+    MerchantFrame:Hide(); fire("MERCHANT_CLOSED")
+    -- a vendor, with something to sell
+    ITEMS[2770] = ITEMS[2770] or { "Copper Ore", 5 }
+    flips[2770] = { kind = "VENDOR", units = 12, cost = 3, sell = 5, at = GetServerTime() }
+    bags[1] = { itemID = 2770, stackCount = 12 }; fire("BAG_UPDATE_DELAYED")
+    MerchantFrame:Show(); fire("MERCHANT_SHOW"); advance(1)
+    check(UI:IsShown() and UI.tab == "SELL", "at a vendor with something of the addon's in the bags the panel opens on the Bags tab")
+    local goldWas = gold
+    Se:SellVendor(2770); advance(3) -- (the row's own Sell button)
+    check(gold == goldWas + 60 and flips[2770] == nil and bags[1] == nil, "and selling works as on any character: 12 Copper Ore to the vendor for 60c")
+    MerchantFrame:Hide(); fire("MERCHANT_CLOSED"); UI:Close()
+    -- no bank alt again: everything is back
+    Do.BankAlt(false)
+    check(cfg.bankAlt == nil and not ns.BankAlt(), "set back to none")
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
+    S:Start()
+    check(S.active == true, "and the auction house works as before")
+    flips[2592] = nil; ns.Journal:Dropped(2592, nil, "test"); ns.Journal:Dropped(2770, nil, "test")
+    AuctionMeshDB.chars["Banker-Realm"] = nil
+    UI.notice = nil
+end
+
 -- nothing in the whole run raised an error inside the redraw or an input (they are caught, so they must be looked for)
 for _, e in ipairs(ns.errList or {}) do print("  ERROR caught " .. e.n .. " x in " .. e.name .. ": " .. e.msg) end
 check(#(ns.errList or {}) == 0, "no error was caught in a redraw or an input during the whole run")
