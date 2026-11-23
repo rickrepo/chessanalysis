@@ -6,6 +6,19 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.65.0 (2026-11-23)
+
+- **Cancelling one undercut auction no longer takes the Cancel buttons off the others.** Fixed in three places:
+  - A list of your auctions that is suddenly empty (or that the game marks as incomplete) is no longer believed at once. It is asked for again, and the answer to the addon's own request is what counts. Before, an empty list right after a cancel made every other auction look ended: they left UNDERCUT, lost their buttons and showed up under "ended, check a mailbox". *That the game sends such a list after a cancel is an inference from what you described, not something seen in a log; the offline test reproduces it and the fix holds there.*
+  - On the Sell tab your auctions are read again at once after a cancel, also while a deal is on screen (before, the read waited until no deal was shown). On the Buy tab deals still come first.
+  - The Cancel button is on every undercut row while the auction house is open. If the addon has no auction on record for it, a click reads your auctions first and says so; the next click cancels. It no longer needs a fresh radar price to appear.
+- **P / L on an undercut row is the profit of the advised choice, with every lost fee in it.** For RELIST: the units at the relist price after the cut, less what they cost, less the fee of this auction that the cancel loses (and a new fee for each time it would run out again). For HOLD: at your price, less a fee for each time it runs out before it sells. Where posting fees never come back, the fee already paid and the new one are both taken off. Example (30 units, cost 40c, listed at 1s00c, relist at 89c, fee 30c): the row said + 16s50c whatever the advice; with RELIST it now says + 12s90c. The cost of waiting decides between the two but is not gold lost, so it is not in this figure. When it cannot be worked out (no sale rate yet) the plain figure is shown in grey. The mouse-over text adds "Following it leaves you + 12s90c, after 30c in fees lost."
+- **"Ended, check a mailbox" is on the Sold tab**, between what is on its way and what was paid. The Sell tab only has what is still to sell.
+- **Farmed items are under TO POST with everything else.** No separate "FARMED, TO POST" section: the COST column says `farmed`. Farmed stays apart where results are added up (the footer, the record of trades).
+- **The Sold tab has a SPREAD column**: what it sold at over what it cost (the same figure as SPREAD on the Buy tab), `all profit` for farmed. Click SPREAD to sort by it (widest first, farmed on top; click again for narrowest first). The quantity moved into the name (`x10`) to make room.
+- **The "input every N ms" figure follows your pressing again.** No fault was found in the counting: the figure was the average of the last four seconds and was redrawn every 0.6 seconds, so pressing faster or slower hardly moved it. It is now the last second of inputs, brought up to date five times a second while you press (only that line, not the panel).
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.64.0 (2026-11-23)
 
 - **Relist or hold is now worked out, not ruled.** The advice on an undercut auction was a list of rules with thresholds in them ("within the hour", "a quarter of the profit", "half of it"). It is now one sum, the same for every auction: each choice is given a value in copper, and the larger one is the advice.

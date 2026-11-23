@@ -1526,8 +1526,16 @@ function Sniper:Tick()
     -- side classes and item upkeep take the upkeep turn in turns: a side class
     -- that is due is not kept waiting by item after item
     if upkeep and ns.upkeepLast == "item" and Sw and Sw.active and Sw.SideDue and Sw:SideDue() and not self:SnipeMode() then upkeep = false end
-    if not urgent and not upkeep then return end
-    if upkeep and self.needOwned and C_AuctionHouse.QueryOwnedAuctions and next(self.verified) == nil and not self:SnipeMode() then
+    -- (on the Sell tab your own auctions are what you are working on: after a
+    -- cancel they are read again at once, also with a deal on screen and
+    -- without waiting for the upkeep turn; elsewhere a deal comes first)
+    local selling = ns.UI and ns.UI.tab == "SELL"
+    local ownNow = selling and self.needOwnedNow and self.needOwned and not self:SnipeMode()
+    if not urgent and not upkeep and not ownNow then return end
+    if (upkeep or ownNow) and self.needOwned and C_AuctionHouse.QueryOwnedAuctions
+        and (next(self.verified) == nil or selling) and not self:SnipeMode() then
+        self.needOwnedNow = nil
+        self.ownAskedAt = GetTime()
         self.needOwned = false
         ns.Gate:Use("list my own auctions", nil, "upkeep")
         C_AuctionHouse.QueryOwnedAuctions({})
@@ -2228,6 +2236,29 @@ function Sniper:ReadOwned()
     local AH, own, n = C_AuctionHouse, {}, 0
     local ids = {} -- key -> { { id, qty, price, ends } }: each active auction, so one can be cancelled
     local total = AH.GetNumOwnedAuctions and AH.GetNumOwnedAuctions() or 0
+    -- A LIST THAT CANNOT BE RIGHT IS NOT BELIEVED. Right after a cancel the game
+    -- says "your auctions changed" while its own list is empty or half loaded.
+    -- Believing that made every other auction look ended: on the Sell tab they
+    -- left UNDERCUT, lost their Cancel buttons and showed up under "ended,
+    -- check a mailbox". So: a list the game says is not complete, or an empty
+    -- one that is not the answer to our own request while auctions were known
+    -- a moment ago, is left unread and asked for again.
+    do
+        local partial = AH.HasFullOwnedAuctionResults and AH.HasFullOwnedAuctionResults() == false
+        local known = 0
+        for _, list in pairs(self.ownIds or {}) do
+            for _, a in ipairs(list) do if not a.gone then known = known + 1 end end -- (one you have just cancelled is not expected back)
+        end
+        -- (the answer to our own request is always believed, whatever it says: a
+        -- list is doubted once, never in a loop)
+        local answer = self.ownAskedAt and GetTime() - self.ownAskedAt < 5
+        if not answer and (partial or (total == 0 and known > 0)) then
+            ns.Log("OWNED: a %s list of your auctions is not believed (%d listed by the game, %d known a moment ago): asked for again",
+                partial and "partial" or "sudden empty", total, known)
+            self.needOwned, self.needOwnedNow = true, true
+            return
+        end
+    end
     local soldRows, soldQty, rowsLog = 0, {}, {}
     local soldPay = {}
     for i = 1, total do

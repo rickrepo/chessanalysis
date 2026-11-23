@@ -799,10 +799,12 @@ function Seller:Cancellable(key)
     if not (S and S.ownRead and S.ownIds and S.ownIds[key]) then return out end
     local low, _, t = nil, nil, nil
     if ns.Store and ns.Store.Get then low, _, t = ns.Store:Get(key) end
-    if not (low and t and GetServerTime() - t < 600) then return out end
+    -- with a current cheapest price: only auctions above it. Without one: any of them (the Cancel
+    -- button is your way to overrule the advice; it does not wait for the radar)
+    local known = low and t and GetServerTime() - t < 600
     local now = GetTime()
     for _, a in ipairs(S.ownIds[key]) do
-        if a.id and not a.gone and (not a.ends or a.ends > now) and (a.price or 0) > low then out[#out + 1] = a end
+        if a.id and not a.gone and (not a.ends or a.ends > now) and (not known or (a.price or 0) > low) then out[#out + 1] = a end
     end
     table.sort(out, function(x, y) return (x.price or 0) > (y.price or 0) end)
     return out
@@ -817,7 +819,13 @@ function Seller:CancelClick(key)
     local c = self.cancelling
     if c then self:Note(c.key, "Cancelling: waiting for the auction house to confirm.", "cancel"); return end
     local a = self:Cancellable(key)[1]
-    if not a then self:Note(key, "Nothing to cancel: none of your auctions of it is undercut right now.", "cancel"); return end
+    if not a then
+        -- the list of your auctions is not on record (or not current): it is read now, and the next click cancels
+        local S = ns.Sniper
+        if S then S.needOwned, S.needOwnedNow = true, true end
+        self:Note(key, "Reading your auctions first. Click Cancel again in a moment.", "cancel")
+        return
+    end
     local AH = C_AuctionHouse
     if AH.CanCancelAuction and AH.CanCancelAuction(a.id) == false then
         self:Note(key, "The game does not allow this auction to be cancelled.", "cancel")
@@ -897,7 +905,7 @@ function Seller:OnCancelled(auctionID)
             if o[c.price] <= 0 then o[c.price] = nil end
             if next(o) == nil then S.own[c.key] = nil end
         end
-        S.needOwned = true
+        S.needOwned, S.needOwnedNow = true, true -- (read again at once on the Sell tab: the other auctions' buttons depend on it)
     end
     self:Returned(c.key, c.qty, "cancelled")
     self.note = nil
@@ -2101,6 +2109,23 @@ function Seller:Undercut(e)
     r.rec, r.why, r.brief = rec, why, brief
     r.word = rec == "relist" and "RELIST" or r.checking and "CHECKING" or "HOLD"
 
+    -- THE PROFIT OR LOSS OF THE ADVISED CHOICE, in gold you end up with: the
+    -- sales after the cut and what the units cost, less every fee that is lost
+    -- on the way (the one already paid when this auction is cancelled or runs
+    -- out, and a new one each time it would run out again). The wait is what
+    -- decides between the two, but it is not gold lost, so it is not in here.
+    -- nil where it cannot be worked out (no sale rate, a queue that never moves).
+    do
+        local sunk = back and 0 or oldFee -- (where fees never come back the one already paid is gone either way)
+        local function pl(o)
+            if not (o and o.fromSales) then return nil end
+            return floor(o.fromSales - o.feeLost - sunk + 0.5), floor(o.feeLost + sunk + 0.5)
+        end
+        r.plHold, r.plHoldFees = pl(H)
+        r.plRelist, r.plRelistFees = pl(R)
+        if rec == "relist" then r.pl, r.plFees = r.plRelist, r.plRelistFees else r.pl, r.plFees = r.plHold, r.plHoldFees end
+    end
+
     -- the sums, for the mouse and the log
     local function line(name, o)
         if not o then return name .. ": no price to relist at" end
@@ -2130,6 +2155,8 @@ function Seller:Undercut(e)
         or "the wait is not charged for: fewer than five finished flips to measure what your gold earns"
     r.text = (rec == "relist" and ("RELIST at %s: %s. Press Cancel on this row (twice), collect it at a mailbox, and post it again. "):format(short(repost), why)
         or ("HOLD: %s. Your call: Cancel on this row relists it anyway. "):format(why))
+        .. (r.pl and ("Following it leaves you %s%s. "):format(signed(r.pl),
+                (r.plFees or 0) > 0 and (", after " .. short(r.plFees) .. " in fees lost") or "") or "")
         .. line("Hold", H) .. ". " .. line("Relist", R) .. ". Worked out from: " .. table.concat(basis, "; ") .. "."
 
     do  -- in the log whenever the advice for an item changes, with the sums it came from

@@ -182,7 +182,9 @@ local STATE = {
             -- the same button: "Cancel", then "Sure?".
             local Se = ns.Seller
             if Se.cancelling and Se.cancelling.key == e.key then return GOLD .. "Cancelling...|r", nil end
-            local can = ahOpen() and #Se:Cancellable(e.key) > 0
+            -- (always there on an undercut row while the auction house is open: with no auction
+            -- on record to cancel, a click reads your auctions first)
+            local can = ahOpen()
             local arm = Se.cancelArm
             local armed = arm and arm.key == e.key and GetTime() - arm.at < 5
             -- RELIST OR HOLD, with the reason (worked out by Seller:Undercut from the listing, the sale rate and the fees)
@@ -233,7 +235,13 @@ local function fillSell(r, e, short)
             or e.undercut and (ORANGE .. "UNDERCUT|r") or (GREY .. "LISTED|r"))
         or e.action == "AH" and (ready and (GOLD .. "READY|r") or (GREY .. "pricing|r"))
         or e.action == "VENDOR" and (GREEN .. "VENDOR|r") or e.action == "MAIL" and (CYAN .. "MAIL|r") or (RED .. "WAIT|r"))
-    if profit and e.action ~= "HOLD" then
+    if adv and adv.pl then
+        -- UNDERCUT: what the advised choice leaves you with, every lost fee and the relist included (Seller:Undercut)
+        r.profit:SetText((adv.pl >= 0 and (GREEN .. "+") or (RED .. "-")) .. short(math.abs(adv.pl)) .. "|r")
+    elseif adv and profit then
+        -- (it cannot be worked out, no sale rate yet: the plain figure if it sells at your price, in grey)
+        r.profit:SetText(GREY .. (profit >= 0 and "+" or "-") .. short(math.abs(profit * e.count)) .. "|r")
+    elseif profit and e.action ~= "HOLD" then
         r.profit:SetText((profit >= 0 and GREEN .. "+" or RED) .. short(profit * e.count) .. "|r")
     else
         r.profit:SetText("")
@@ -431,7 +439,6 @@ local CAPS = {
     vendor = { "QTY", "COST", "VENDOR", "IF LISTED", "P / L" },
     either = { "QTY", "COST", "MARKET", "VENDOR NOW", "P / L" },
     -- farmed or mined: it cost nothing, so what it sells for is all profit
-    farm = { "QTY", "COST", "MARKET", "STATUS", "ALL PROFIT" },
     -- in your bags, not tracked: what it is worth if you add and post it
     loose = { "QTY", "", "MARKET", "", "WORTH" },
 }
@@ -460,7 +467,7 @@ local function sortVal(item, col)
     if item.action then
         local paid, sell, _, profit = ns.Seller:Numbers(item)
         local adv = item.adv
-        return ({ item.count, paid or 0, sell or 0, (adv and adv.rec == "relist") and 2 or adv and 1 or 0, (profit or 0) * item.count })[col] or 0
+        return ({ item.count, paid or 0, sell or 0, (adv and adv.rec == "relist") and 2 or adv and 1 or 0, (adv and adv.pl) or (profit or 0) * item.count })[col] or 0
     end
     if item.key and item.profit and not item.ghost then -- a deal
         local units, total = ns.Sniper.NextBuy(item)
@@ -505,19 +512,34 @@ function UI:SortBy(tab, col)
     self:Render()
 end
 
--- THE SOLD TAB: what has sold. Two lists:
---   SOLD, GOLD ON ITS WAY   auctions the auction house lists as sold and not
---                           paid out yet (they were a section of the Sell tab)
---   PAID, LAST 24 HOURS     sales whose gold you have collected, from the
---                           record of your trades
+-- THE SOLD TAB: what has sold. Three lists:
+--   SOLD, GOLD ON ITS WAY    auctions the auction house lists as sold and not
+--                            paid out yet
+--   ENDED, CHECK A MAILBOX   auctions the auction house no longer lists: sold
+--                            or run out, the mailbox shows which (they were a
+--                            section of the Sell tab; nothing there to do)
+--   PAID, LAST 24 HOURS      sales whose gold you have collected, from the
+--                            record of your trades
+-- Columns: COST, SOLD AT, SPREAD (the price it sold at over what it cost, the
+-- same figure as SPREAD on the Buy tab), when, PROFIT (after the cut and
+-- fees). The quantity is in the name. A click on a caption sorts by it.
 -- Rows are plain cells: nothing to press here.
+local function spreadOf(cost, price, farm)
+    -- returns the text and the value to sort by (farmed: cost nothing, so no ratio: sorted above every ratio)
+    if farm then return GREEN .. "all profit|r", 1e9 end
+    if not cost or cost <= 0 or not price or price <= 0 then return GREY .. "?|r", -1e9 end
+    local v = (price - cost) / cost
+    return (v >= 0 and GREEN or RED) .. ("%+d%%"):format(floor(v * 100 + 0.5)) .. "|r", v
+end
+UI.SpreadOf = spreadOf
 function UI.SoldData(entries)
     local Se, S, J = ns.Seller, ns.Sniper, ns.Journal
     local short = Se.short
-    local d = { pending = {}, paid = {}, coming = 0, nextIn = nil, paidSum = 0 }
+    local d = { pending = {}, ended = {}, paid = {}, coming = 0, nextIn = nil, paidSum = 0 }
     local _, _, _, soldKeys = Se:SalesMoney()
     for _, e in ipairs(entries) do
-        if e.action == "LISTED" and soldKeys[e.key] == true then
+        local isSold = e.action == "LISTED" and soldKeys[e.key] == true
+        if isSold then
             local soldIn
             for _, r in ipairs(S.ownSoldPay or {}) do
                 local left = r.due - GetTime()
@@ -525,14 +547,26 @@ function UI.SoldData(entries)
             end
             local paid, sell, net, profit = Se:Numbers(e)
             local p = (profit or 0) * e.count
+            local sp, spv = spreadOf(paid, sell, e.farm)
             d.coming = d.coming + (net or 0) * e.count
             if soldIn and (not d.nextIn or soldIn < d.nextIn) then d.nextIn = soldIn end
             d.pending[#d.pending + 1] = {
                 key = e.key, plainRow = true, name = S.nameOf(e.key) .. (e.count > 1 and (" x" .. e.count) or ""),
-                cells = { tostring(e.count), e.farm and (GREEN .. "farmed|r") or paid and short(paid) or (ORANGE .. "?|r"), short(sell or 0),
+                cells = { e.farm and (GREEN .. "farmed|r") or paid and short(paid) or (ORANGE .. "?|r"), short(sell or 0), sp,
                           GREEN .. (soldIn and ("in %d min"):format(math.max(1, floor(soldIn / 60 + 0.5))) or "on its way") .. "|r" },
                 profit = (p >= 0 and (GREEN .. "+") or RED) .. short(p) .. "|r",
-                sortv = { e.count, paid or 0, sell or 0, soldIn or 0, p },
+                sortv = { paid or 0, sell or 0, spv, soldIn or 0, p },
+            }
+        elseif e.action == "LISTED" and e.live == 0 then
+            -- no longer on the auction house, and not (yet) listed there as sold
+            local paid, sell, _, profit = Se:Numbers(e)
+            local p = (profit or 0) * e.count
+            local sp, spv = spreadOf(paid, sell, e.farm)
+            d.ended[#d.ended + 1] = {
+                key = e.key, plainRow = true, name = S.nameOf(e.key) .. (e.count > 1 and (" x" .. e.count) or ""),
+                cells = { e.farm and (GREEN .. "farmed|r") or paid and short(paid) or (ORANGE .. "?|r"), short(sell or 0), sp, GOLD .. "mailbox|r" },
+                profit = GREY .. (p >= 0 and "+" or "-") .. short(math.abs(p)) .. "|r", -- (grey: only if it sold)
+                sortv = { paid or 0, sell or 0, spv, 0, p },
             }
         end
     end
@@ -541,17 +575,20 @@ function UI.SoldData(entries)
         if (t.sold or 0) > 0 and t.soldAt and now - t.soldAt <= 24 * 3600 then
             local p = J.realized(t) or 0
             local age = now - t.soldAt
+            local farm = t.kind == "FARM"
+            local sp, spv = spreadOf(t.cost, t.soldPrice, farm)
             d.paidSum = d.paidSum + p
             d.paid[#d.paid + 1] = {
                 key = t.key, plainRow = true, name = tostring(t.name) .. (t.sold > 1 and (" x" .. t.sold) or ""),
-                cells = { tostring(t.sold), t.kind == "FARM" and (GREEN .. "farmed|r") or t.cost and short(t.cost) or (ORANGE .. "?|r"), short(t.soldPrice or 0),
+                cells = { farm and (GREEN .. "farmed|r") or t.cost and short(t.cost) or (ORANGE .. "?|r"), short(t.soldPrice or 0), sp,
                           GREY .. (age < 5400 and (math.max(1, floor(age / 60)) .. " min ago") or (floor(age / 3600) .. " h ago")) .. "|r" },
                 profit = (p >= 0 and (GREEN .. "+") or RED) .. short(math.abs(p)) .. "|r",
-                sortv = { t.sold, t.cost or 0, t.soldPrice or 0, -age, p },
+                sortv = { t.cost or 0, t.soldPrice or 0, spv, -age, p },
+                age = age,
             }
         end
     end
-    table.sort(d.paid, function(a, b) return a.sortv[4] > b.sortv[4] end) -- newest first
+    table.sort(d.paid, function(x, y) return x.age < y.age end) -- newest first
     return d
 end
 
@@ -570,11 +607,12 @@ local function buildList(tab, deals, entries)
             list[#list + 1] = { note = ahOpen() and "None right now. A sound plays when one appears." or "Open the auction house to look for deals." }
         end
     elseif tab == "SELL" then
-        local by = { AH = {}, EITHER = {}, VENDOR = {}, MAIL = {}, HOLD = {}, FARM = {} }
+        local by = { AH = {}, EITHER = {}, VENDOR = {}, MAIL = {}, HOLD = {} }
         for _, e in ipairs(entries) do
             -- to post, with a vendor as the quicker way out: its own section, so both figures are on the row
-            -- (what you farmed or mined has a section of its own: it was not bought)
-            local t = by[(e.farm and e.action == "AH") and "FARM" or (e.action == "AH" and e.vendorAlt) and "EITHER" or e.action]
+            -- (what you farmed or mined is posted like anything else, in the same section: only its
+            -- COST differs, "farmed". It is kept apart where the results are added up, not here.)
+            local t = by[(e.action == "AH" and e.vendorAlt and not e.farm) and "EITHER" or e.action]
             if t then t[#t + 1] = e end
         end
         -- THE ORDER: what you can act on first (post, sell, collect, add), then
@@ -594,14 +632,13 @@ local function buildList(tab, deals, entries)
             if not folded then for _, it in ipairs(sorted("SELL", items)) do list[#list + 1] = it end end
         end
         sect("AH", "TO POST", CAPS.entry, by.AH)
-        sect("FARM", "FARMED, TO POST", CAPS.farm, by.FARM)
         sect("EITHER", "POST, OR VENDOR NOW", CAPS.either, by.EITHER)
         sect("VENDOR", "TO SELL TO A VENDOR", CAPS.vendor, by.VENDOR)
         sect("MAIL", "IN THE MAILBOX", CAPS.entry, by.MAIL)
         sect("HOLD", "HELD, PRICE TOO LOW", CAPS.entry, by.HOLD)
         -- what is in your bags that the addon does not track: one click on Add and it is yours to post, as farmed
         sect("LOOSE", "IN YOUR BAGS, NOT TRACKED", CAPS.loose, ns.Seller:Loose(), "press Add on one to sell it")
-        local stuck, ended, ok, sold = {}, {}, {}, {}
+        local stuck, ok = {}, {}
         local _, _, _, soldKeys = ns.Seller:SalesMoney()
         local S = ns.Sniper
         for _, e in ipairs(entries) do
@@ -619,8 +656,9 @@ local function buildList(tab, deals, entries)
                 end
                 e.undercut = not e.sold and undercut(e)
                 e.adv = (e.undercut and e.live ~= 0) and ns.Seller:Undercut(e) or nil
-                local t = e.sold and sold or e.live == 0 and ended or e.undercut and stuck or ok
-                t[#t + 1] = e
+                -- (what has sold, and what the auction house no longer lists, is on the Sold tab)
+                local t = (not e.sold and e.live ~= 0) and (e.undercut and stuck or ok) or nil
+                if t then t[#t + 1] = e end
             end
         end
         do  -- undercut: relist first, and the heading counts each advice
@@ -640,7 +678,6 @@ local function buildList(tab, deals, entries)
             if nRead > 0 then parts[#parts + 1] = GREY .. "reading " .. nRead .. "|r" end
             sect("STUCK", "UNDERCUT", { "QTY", "WHY", "", "ADVICE", "P / L" }, stuck, table.concat(parts, GREY .. ", |r"))
         end
-        sect("ENDED", "ENDED, CHECK A MAILBOX", CAPS.entry, ended, "sold or expired: the mailbox shows which")
         do  -- listed and not undercut: one line (what has SOLD is on its own tab)
             local sum = 0
             local Se, short = ns.Seller, ns.Seller.short
@@ -654,11 +691,16 @@ local function buildList(tab, deals, entries)
     elseif tab == "SOLD" then
         local d = UI.SoldData(entries)
         UI.soldNow = d
-        local caps = { "QTY", "COST", "SOLD AT", "GOLD ARRIVES", "PROFIT" }
+        local caps = { "COST", "SOLD AT", "SPREAD", "GOLD ARRIVES", "PROFIT" }
         list[#list + 1] = { head = ("SOLD, GOLD ON ITS WAY (%d)"):format(#d.pending), caps = capsFor("SOLD", caps), sortTab = "SOLD" }
         for _, it in ipairs(sorted("SOLD", d.pending)) do list[#list + 1] = it end
         if #d.pending == 0 then list[#list + 1] = { note = "Nothing sold and waiting to be paid. (The auction house pays out an hour after a sale.)" } end
-        list[#list + 1] = { head = ("PAID, LAST 24 HOURS (%d)"):format(#d.paid), caps = capsFor("SOLD", { "QTY", "COST", "SOLD AT", "WHEN", "PROFIT" }), sortTab = "SOLD" }
+        if #d.ended > 0 then
+            -- no longer on the auction house: sold or run out. The mailbox shows which (and has the gold or the item)
+            list[#list + 1] = { head = ("ENDED, CHECK A MAILBOX (%d)"):format(#d.ended), caps = capsFor("SOLD", { "COST", "LISTED AT", "SPREAD", "WHERE", "IF SOLD" }), sortTab = "SOLD" }
+            for _, it in ipairs(sorted("SOLD", d.ended)) do list[#list + 1] = it end
+        end
+        list[#list + 1] = { head = ("PAID, LAST 24 HOURS (%d)"):format(#d.paid), caps = capsFor("SOLD", { "COST", "SOLD AT", "SPREAD", "WHEN", "PROFIT" }), sortTab = "SOLD" }
         for _, it in ipairs(sorted("SOLD", d.paid)) do list[#list + 1] = it end
         if #d.paid == 0 then list[#list + 1] = { note = "No sale collected in the last 24 hours." } end
     end
@@ -790,15 +832,18 @@ end
 -- inBox: it is meant for the snipe box (a wheel notch elsewhere on the panel
 -- only counts while a deal is up; otherwise it scrolls the list).
 -- Returns true if the input was used for buying.
--- Seconds between your buy inputs, averaged over the last four seconds (nil
--- when the last input is over 1.5 seconds old or there is only one). A press
--- and its release each count.
+-- Seconds between your buy inputs, averaged over the LAST SECOND of them
+-- (and never fewer than three inputs, while those are under four seconds
+-- old). nil when the last input is over 1.5 seconds old or there is only
+-- one. A press and its release each count.
+-- (It was the average of the last four seconds: pressing faster or slower
+-- hardly moved the figure, so it looked stuck.)
 function UI.InputEvery()
     local t, now = UI.inputTimes, GetTime()
     if not t or #t < 2 or now - t[#t] > 1.5 then return nil end
-    local first, n = nil, 0
+    local last, first, n = t[#t], nil, 0
     for i = #t, 1, -1 do
-        if now - t[i] > 4 then break end
+        if now - t[i] > 4 or (n >= 3 and last - t[i] > 1) then break end
         first, n = t[i], n + 1
     end
     if n < 2 then return nil end
@@ -920,6 +965,31 @@ end
 -- Nothing happens while there is no deal; the first notch after one appears
 -- buys it, so the purchase starts within a few hundredths of a second of the
 -- deal being found, with no reaction time.
+-- THE PACE GAUGE under the snipe box: how fast your inputs come, against the
+-- game's lock. Drawn with the panel, and on its own five times a second
+-- while inputs are arriving (a text and a marker: no redraw of the panel).
+function UI:RenderPace()
+    local pg = frame and frame.snipe and rawget(frame.snipe, "pace")
+    if not pg then return end
+    local every, w = UI.InputEvery(), UI.PaceWindow()
+    local zone = UI.PaceZone(every)
+    UI.paceState = { every = every, zone = zone, window = w }
+    -- short: the figure and the verdict. The target is named only when
+    -- you are not on it. (The count of presses in time is kept for the session.)
+    local ideal = ("  %s(optimal: every %d ms or faster)|r"):format(GREY, floor(w / 2 * 1000 + 0.5))
+    if every then
+        local x = math.min(1, every / (2 * w)) * 240
+        pg.mark:ClearAllPoints(); pg.mark:SetPoint("CENTER", pg, "LEFT", x, 0); pg.mark:Show()
+        pg.text:SetText(("%sAn input every %d ms: %s|r%s"):format(
+            zone == "optimal" and GREEN or zone == "intime" and GOLD or RED, floor(every * 1000 + 0.5),
+            zone == "optimal" and "OPTIMAL" or zone == "intime" and "IN TIME, NOTHING TO SPARE" or "TOO SLOW",
+            zone == "optimal" and "" or ideal))
+    else
+        pg.mark:Hide()
+        pg.text:SetText(GREY .. "Not pressing.|r" .. ideal)
+    end
+end
+
 function UI:RenderSnipe(short)
     local sn = frame.snipe
     local S = ns.Sniper
@@ -1039,28 +1109,7 @@ function UI:RenderSnipe(short)
     end
     sn.fill:SetColorTexture(fill[1], fill[2], fill[3], 1)
     UI.outline(sn, colour)
-    do  -- THE PACE GAUGE
-        local pg = sn.pace
-        if pg then
-            local every, w = UI.InputEvery(), UI.PaceWindow()
-            local zone = UI.PaceZone(every)
-            UI.paceState = { every = every, zone = zone, window = w }
-            -- short: the figure and the verdict. The target is named only when
-            -- you are not on it. (The count of presses in time is kept for the session.)
-            local ideal = ("  %s(optimal: every %d ms or faster)|r"):format(GREY, floor(w / 2 * 1000 + 0.5))
-            if every then
-                local x = math.min(1, every / (2 * w)) * 240
-                pg.mark:ClearAllPoints(); pg.mark:SetPoint("CENTER", pg, "LEFT", x, 0); pg.mark:Show()
-                pg.text:SetText(("%sAn input every %d ms: %s|r%s"):format(
-                    zone == "optimal" and GREEN or zone == "intime" and GOLD or RED, floor(every * 1000 + 0.5),
-                    zone == "optimal" and "OPTIMAL" or zone == "intime" and "IN TIME, NOTHING TO SPARE" or "TOO SLOW",
-                    zone == "optimal" and "" or ideal))
-            else
-                pg.mark:Hide()
-                pg.text:SetText(GREY .. "Not pressing.|r" .. ideal)
-            end
-        end
-    end
+    self:RenderPace()
     -- The line under the button never leaves you guessing: the last outcome
     -- stays there with its age, next to the count for this session.
     -- (the session's count is in the footer: SESSION, TODAY, the year)
@@ -2880,6 +2929,10 @@ function UI:Create()
                 UI.clockSec = sec
                 frame.footer:SetText(table.concat(UI.TradesFooter(ns.Seller.short), GREY .. "   |   |r"))
             end
+        end
+        do  -- the pace gauge follows your inputs: its own text, five times a second while they arrive
+            local t = UI.inputTimes
+            if UI.tab == "BUY" and t and t[#t] and GetTime() - t[#t] < 2 then UI:RenderPace() end
         end
         do  -- a hold counting down on the Sell tab: redrawn once a second while one is shown
             local sec = floor(GetTime())

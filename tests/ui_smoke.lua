@@ -832,6 +832,9 @@ do
         local learnN, blocked = ns.Learn.d.n, ns.Learn:Blocked(2592)
         C_AuctionHouse.GetNumOwnedAuctions = function() return 0 end
         S:ReadOwned()
+        check(S.ownIds[2592] ~= nil and S.needOwned and S.needOwnedNow, "a list that is suddenly empty is not believed at once: it is asked for again")
+        S.ownAskedAt = GetTime(); S:ReadOwned() -- (the answer to the addon's own request)
+        check(S.ownIds[2592] == nil, "the answer to its own request is believed: the auction is gone")
         local invWas2 = GetInboxInvoiceInfo
         GetInboxInvoiceInfo = function(i) return inbox[i] and inbox[i].invoice end
         for s2 = 1, 16 do bags[s2] = nil end
@@ -871,7 +874,15 @@ do
     ns.Store:Put(2592, 110, 400, GetServerTime() + 1)
     S.own, S.ownIds, S.ownRead = {}, {}, false
     UI.tab = "SELL"; UI:Render(); r = rowOf(2592)
-    check(r and not r.btn._shown, "no Cancel button until the auction house has listed your auctions (the addon must know which one to cancel)")
+    check(r and r.btn._shown and r.btn._text == "Cancel", "the Cancel button is there before your auctions have been read")
+    S.needOwned, S.needOwnedNow = false, nil
+    do
+        local nc = #cancelled
+        r.btn._scripts.OnClick(r.btn); r.btn._scripts.OnClick(r.btn)
+        check(#cancelled == nc and S.needOwned and S.needOwnedNow and tostring(Se.note and Se.note.text or Se.note):find("Reading your auctions first", 1, true),
+            "a click then cancels nothing: it has your auctions read first, and says so")
+        Se.note = nil
+    end
     -- cleanup
     AuctionMeshDB.listed = {}; AuctionMeshDB.flips[2592] = nil; LIST[2592] = nil
     for s2 = 1, 16 do bags[s2] = nil end
@@ -2354,6 +2365,30 @@ do
         check(UI.paceState.zone == nil and strip(pg.text._text):find("^Not pressing%.") and not pg.mark._shown, "no inputs: 'Not pressing', and the marker is gone")
         ns.Gate.cycle = 1.0; pace(0.3)
         check(UI.paceState.zone == "optimal" and math.abs(UI.paceState.window - 0.75) < 1e-6, "the zones follow the measured lock: a slower server widens the window")
+        do  -- THE FIGURE FOLLOWS YOUR PRESSING: three seconds at 400 ms, then one second at 100 ms
+            ns.Gate.cycle = 0.74
+            local t, now = {}, GetTime()
+            for i = 0, 7 do t[#t + 1] = now - 4 + i * 0.4 end   -- ... up to 1.2 seconds ago
+            for i = 0, 10 do t[#t + 1] = now - 1 + i * 0.1 end  -- the last second: every 100 ms
+            UI.inputTimes = t
+            UI:Render()
+            print("     " .. strip(pg.text._text))
+            check(strip(pg.text._text) == "An input every 100 ms: OPTIMAL",
+                "pressing faster shows within a second: the figure is the last second of inputs (the average of four seconds said 222 ms)")
+            -- and it is redrawn on its own while inputs arrive, without a redraw of the panel
+            local renders, realRender = 0, UI.Render
+            UI.Render = function(...) renders = renders + 1; return realRender(...) end
+            UI.dirty = false
+            local closeWas = AuctionHouseFrame._shown
+            AuctionHouseFrame:Hide() -- (with the auction house shut the panel is not redrawn on a timer)
+            UI.inputTimes = { GetTime() - 0.9, GetTime() - 0.6, GetTime() - 0.3, GetTime() }
+            pg.text:SetText("stale")
+            AuctionMeshFrame._scripts.OnUpdate(AuctionMeshFrame, 0.25)
+            print("     " .. strip(pg.text._text) .. "  (panel redraws: " .. renders .. ")")
+            check(strip(pg.text._text):find("^An input every 300 ms: ") and renders == 0, "the gauge is brought up to date five times a second while inputs arrive, with no redraw of the panel")
+            UI.Render = realRender
+            if closeWas then AuctionHouseFrame:Show() end
+        end
         ns.Gate.cycle = nil; UI.inputTimes = nil
         -- the verdict on each try
         S.tally.inTime, S.tally.late = 0, 0
@@ -3691,8 +3726,15 @@ do
         "Add: 20 Farm Ore are tracked as farmed, at a cost of nothing; nothing is posted by that click")
     check(J.list[#J.list].key == 9292 and J.list[#J.list].kind == "FARM", "the record says farmed, not bought")
     UI.notice = nil; UI:Render()
-    check(heads():find("FARMED, TO POST (1)", 1, true) ~= nil and looseRow(9292) == nil,
-        "it moves to its own section, FARMED OR MINED, apart from what was flipped")
+    do
+        local h, cost = heads(), nil
+        for i = 1, #frames do
+            local fr = frames[i]
+            if rawget(fr, "detail") and fr._shown and rawget(fr, "item") and fr.item.key == 9292 then cost = strip(fr.c[2]._text) end
+        end
+        check(h:find("TO POST (1)", 1, true) ~= nil and not h:find("FARMED", 1, true) and looseRow(9292) == nil and cost == "farmed",
+            "it is under TO POST with everything else to post, not in a section of its own: its COST says farmed")
+    end
     advance(3); UI:Render()
     local p = Se.prices[9292]
     check(p and p.price == 99, "its price is read at once and set like any post: 1c under the cheapest (99c)")
@@ -3863,14 +3905,39 @@ do
         local rowsP = plainRows()
         print("     " .. table.concat(hd, "\n     "))
         for _, l in ipairs(rowsP) do print("     " .. l) end
-        check(UI.tab == "SOLD" and tab._text == "Sold (4)" and hd[1] == "SOLD, GOLD ON ITS WAY (4) | QTY / COST / SOLD AT / GOLD ARRIVES / PROFIT"
-            and hd[2]:find("^PAID, LAST 24 HOURS %(%d+%) | QTY / COST / SOLD AT / WHEN / PROFIT$"),
-            "the Sold tab: what has sold and is on its way (4), then what was paid in the last 24 hours")
-        check(rowsP[1] == "Auction Item 1 x10 | 10 / 40c / 1s00c / in 11 min | +5s50c" and rowsP[4]:find("^Auction Item 4 x10 | 10 / 40c / 1s00c / in 14 min"),
-            "each sold auction: quantity, what it cost, what it sold at, when its gold arrives, and the profit")
+        check(UI.tab == "SOLD" and tab._text == "Sold (4)" and hd[1] == "SOLD, GOLD ON ITS WAY (4) | COST / SOLD AT / SPREAD / GOLD ARRIVES / PROFIT"
+            and hd[#hd]:find("^PAID, LAST 24 HOURS %(%d+%) | COST / SOLD AT / SPREAD / WHEN / PROFIT$"),
+            "the Sold tab: what has sold and is on its way (4), then what was paid in the last 24 hours, each with its SPREAD")
+        check(rowsP[1] == "Auction Item 1 x10 | 40c / 1s00c / +150% / in 11 min | +5s50c" and rowsP[4]:find("^Auction Item 4 x10 | 40c / 1s00c / %+150%% / in 14 min"),
+            "each sold auction: what it cost, what it sold at, the spread between the two, when its gold arrives, and the profit")
         local paidRow
         for _, l in ipairs(rowsP) do if l:find("^Paid Ore x10") then paidRow = l end end
-        check(paidRow == "Paid Ore x10 | 10 / 40c / 1s00c / 10 min ago | +5s50c", "a sale already paid: the same figures, and how long ago")
+        check(paidRow == "Paid Ore x10 | 40c / 1s00c / +150% / 10 min ago | +5s50c", "a sale already paid: the same figures, and how long ago")
+        do  -- SPREAD sorts like any column; what was farmed has no ratio and comes above every ratio
+            local t2 = J:Bought(9791, "Thin Ore", "FLIP", 10, 80, 100)
+            ITEMS[9791] = { "Thin Ore", 1 }
+            t2.sold, t2.got, t2.soldAt, t2.soldPrice, t2.doneAt = 10, 950, GetServerTime() - 1200, 100, GetServerTime() - 1200
+            local t3 = J:Bought(9792, "Dug Ore", "FARM", 10, 0, 100)
+            ITEMS[9792] = { "Dug Ore", 1 }
+            t3.sold, t3.got, t3.soldAt, t3.soldPrice, t3.doneAt = 10, 950, GetServerTime() - 1800, 100, GetServerTime() - 1800
+            UI:SortBy("SOLD", 3)
+            local order = {}
+            for _, l in ipairs(plainRows()) do
+                local n = l:match("^(%a+ Ore) x10")
+                if n then order[#order + 1] = n .. " " .. (l:match("/ ([^/]+) / [^/]+ |") or "?") end
+            end
+            print("     by SPREAD: " .. table.concat(order, ", "))
+            check(table.concat(order, ", "):find("Dug Ore all profit, Paid Ore +150%, Thin Ore +25%", 1, true) ~= nil and headsText()[1]:find("SPREAD v", 1, true),
+                "sorted by SPREAD: farmed (all profit) first, then the widest spread down to the narrowest")
+            UI:SortBy("SOLD", 3)
+            order = {}
+            for _, l in ipairs(plainRows()) do local n = l:match("^(%a+ Ore) x10"); if n then order[#order + 1] = n end end
+            check(table.concat(order, ", "):find("Thin Ore, Paid Ore, Dug Ore", 1, true) ~= nil, "a second click: the narrowest first")
+            UI:SortBy("SOLD", 0)
+            for i = #J.list, 1, -1 do if J.list[i] == t2 or J.list[i] == t3 then table.remove(J.list, i) end end
+            ITEMS[9791], ITEMS[9792] = nil, nil
+            UI:Render()
+        end
         check(strip(AuctionMeshFrame.status._text):find("^On its way: %+ 38s00c, the next in 11 min      Profit on what was paid in the last 24 hours: "),
             "the line at the top adds them up: the gold on its way, and the profit on what was paid")
         -- SORTING: a click on a column's caption
@@ -3971,6 +4038,8 @@ do
         and text:find("Relist = + 12s90c (30 sell at 89c, first in line: + 13s20c; fees lost 30c)", 1, true)
         and text:find("Your call: Cancel on this row relists it anyway.", 1, true),
         "the sums are behind the mouse: what each choice brings, the fee a relist loses, and how to overrule it")
+    check(a.pl == 1650 and a.plFees == 0 and a.plRelist == 1290 and a.plRelistFees == 30 and text:find("Following it leaves you + 16s50c. ", 1, true),
+        "the profit of the advised choice: holding leaves 16s50c with no fee lost (a relist would leave 12s90c, the 30c fee of this auction gone)")
 
     -- THE WAIT HAS A PRICE once it is known what your gold earns. 20 sell an hour: 3 hours to your turn.
     --   no rate for your gold yet: hold 16s50c against 12s90c: HOLD
@@ -3986,6 +4055,8 @@ do
     check(text:find("the wait of 4 hours costs 6s41c", 1, true) and text:find("your free gold earns 6.0% an hour", 1, true)
         and text:find("^RELIST at 89c: a relist is worth %+ 11s77c, holding %+ 10s09c: 1s68c more%. Press Cancel on this row %(twice%)"),
         "the advice says what the wait costs, and what to press")
+    check(a.pl == 1290 and a.plFees == 30 and text:find("Following it leaves you + 12s90c, after 30c in fees lost. ", 1, true),
+        "the profit shown for a RELIST is at the lower price and less the fee lost with the cancel: 12s90c, not the 16s50c of the price it is listed at (the wait decides, but is not gold lost)")
     rho = 0
 
     -- IT RUNS OUT FIRST. 5 sell an hour: 12 hours to your turn, 10 left. Holding means posting it again once: one fee lost.
@@ -3995,6 +4066,7 @@ do
     print("     " .. text)
     check(a.rec == "hold" and a.hold.expiries == 1 and a.evHold == 1620 and a.evRelist == 1290 and text:find("fees lost 30c (it runs out 1 time first)", 1, true),
         "5 sell an hour: it runs out once before your turn. One fee lost (16s20c) still beats cutting the price (12s90c): HOLD")
+    check(a.pl == 1620 and a.plFees == 30, "and the profit shown for that HOLD has the fee of the auction that runs out taken off: 16s20c")
 
     -- A BIG PRICE CUT IS NEVER WORTH IT ON ITS OWN. Cheaper units at 60c: a relist would go to 59c.
     --   hold: wait for the 60 to sell, then yours at 1s00c: 16s20c; relist at 59c: 30 x (56c - 40c) - 30c = 4s50c
@@ -4036,6 +4108,7 @@ do
     cfg.feeBack = false; reset()
     a = advice()
     check(a.relist.feeLost == 30 and a.rec == "relist", "where posting fees never come back, the new fee is the cost of a relist (and it is counted)")
+    check(a.plFees == 60 and a.pl == a.relist.fromSales - 60, "there the profit shown has both fees off: the one already paid and the new one")
     cfg.feeBack = true
     rho = 0
 
@@ -4072,6 +4145,7 @@ do
     check(hs:find("[-] UNDERCUT (1) | QTY / WHY /  / ADVICE / P / L", 1, true) and row and (strip(row.c[4]._text) == "HOLD 30:00" or strip(row.c[4]._text):find("^HOLD 29:5%d$"))
         and row.brief._shown and strip(row.brief._text) == "holding is worth 3s60c more" and row.btn._text == "Cancel" and strip(row.detail._text):find("^HOLD: holding is worth"),
         "on the Sell tab the row says HOLD with the time left and, in a few words, what the sum came to; Cancel is still there to overrule it")
+    check(strip(row.profit._text) == "+16s50c", "its P / L is what holding leaves: + 16s50c")
     wait(60); UI:Render()
     check(strip(row.c[4]._text):find("^HOLD 28:5%d$") and UI.holdTick == true, "a minute later it reads 28:5x: it counts down by itself")
     -- the time runs out and nothing ahead of you has sold: the listing is read again, and the sum now says relist
@@ -4086,6 +4160,8 @@ do
     print("     " .. strip(row.c[4]._text) .. " | " .. strip(row.brief._text))
     check(n1 > n0 and strip(row.c[4]._text) == "RELIST" and strip(row.brief._text):find("^the queue is not moving; relist is worth"),
         "when its time is up the listing is read again by itself; the 60 ahead have not moved, so the sum now says RELIST")
+    print("     P / L: " .. strip(row.profit._text))
+    check(strip(row.profit._text) == "+12s90c", "and its P / L is now what the relist leaves, the lost fee and the lower price included: + 12s90c (it said + 16s50c)")
     -- the listing is read on the Sell tab when it is missing
     S.lastRows[9801] = nil; reset(); Se.pricedAt = {}
     St:Put(9801, 90, 500, GetServerTime())
@@ -4125,6 +4201,146 @@ do
     reset()
     gold = 900
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
+end
+
+print("cancelling one undercut auction leaves the Cancel buttons of the others")
+do
+    local cfg = AuctionMeshDB.cfg
+    local St = ns.Store
+    local listedWas, ownWas, readWas, foldWas, rowsWas, idsWas = AuctionMeshDB.listed, S.own, S.ownRead, cfg.fold, S.lastRows, S.ownIds
+    local soldQtyWas, soldPayWas = S.ownSoldQty, S.ownSoldPay
+    local numWas, infoWas, cancelWas = C_AuctionHouse.GetNumOwnedAuctions, C_AuctionHouse.GetOwnedAuctionInfo, C_AuctionHouse.CancelAuction
+    for s2 = 1, 16 do bags[s2] = nil end
+    fire("BAG_UPDATE_DELAYED")
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
+    Enum.AuctionStatus = { Active = 0, Sold = 1 }
+    AuctionMeshDB.listed = {}
+    local owned = {}
+    for i = 1, 3 do
+        local k = 9870 + i
+        ITEMS[k] = { "Cut Item " .. i, 1 }
+        AuctionMeshDB.listed[k] = { qty = 10, price = 100, cost = 40, plan = 100, fee = 10, at = GetServerTime() - 3600 }
+        owned[#owned + 1] = { auctionID = 8800 + i, itemKey = { itemID = k }, status = 0, quantity = 10, buyoutAmount = 100, timeLeftSeconds = 30000 }
+        LIST[k] = { { 90, 50 }, { 110, 300 } }
+        St:Put(k, 90, 350, GetServerTime())
+    end
+    C_AuctionHouse.GetNumOwnedAuctions = function() return #owned end
+    C_AuctionHouse.GetOwnedAuctionInfo = function(i) return owned[i] end
+    local cancelled = {}
+    C_AuctionHouse.CancelAuction = function(id)
+        cancelled[#cancelled + 1] = id
+        -- as the game does: the auction leaves your list, the list is announced as changed, and the cancel is confirmed
+        for i = #owned, 1, -1 do if owned[i].auctionID == id then table.remove(owned, i) end end
+        C_Timer.After(0.2, function() fire("OWNED_AUCTIONS_UPDATED"); fire("AUCTION_CANCELED", id) end)
+    end
+    S:ReadOwned()
+    cfg.fold = nil; Se.ucCache, Se.ucSeen, Se.wantRows, Se.note, Se.cancelArm, Se.cancelling = nil, nil, nil, nil, nil, nil
+    UI:Open("SELL"); UI.notice = nil; UI:Render()
+    local function rowOf(key)
+        for i = 1, #frames do local fr = frames[i]; if rawget(fr, "detail") and fr._shown and rawget(fr, "item") and fr.item.key == key then return fr end end
+    end
+    local function buttons()
+        local out = {}
+        for i = 1, 3 do
+            local r = rowOf(9870 + i)
+            out[#out + 1] = r and ((r.item.action == "LISTED" and r.btn._shown) and r.btn._text or ("-" .. tostring(r.item.action))) or "gone"
+        end
+        return table.concat(out, " ")
+    end
+    print("     before: " .. buttons())
+    check(buttons() == "Cancel Cancel Cancel", "three undercut auctions, each with its Cancel button")
+    local r1 = rowOf(9871)
+    r1.btn._scripts.OnClick(r1.btn); UI:Render()
+    r1 = rowOf(9871)
+    r1.btn._scripts.OnClick(r1.btn); UI:Render()
+    print("     just after the second click: " .. buttons())
+    for step = 1, 6 do
+        advance(1); St:Put(9872, 90, 350, GetServerTime()); St:Put(9873, 90, 350, GetServerTime()); UI:Render()
+        print(("     %ds after: %s"):format(step, buttons()))
+    end
+    check(#cancelled == 1 and cancelled[1] == 8801, "the first one is cancelled")
+    local b = buttons()
+    check(b:find("Cancel Cancel$") ~= nil, "the other two still have their Cancel buttons (" .. b .. ")")
+    -- THE GAME'S LIST IS EMPTY FOR A MOMENT after a cancel (it announces "your auctions changed" before it has them again)
+    do
+        local queryWas = C_AuctionHouse.QueryOwnedAuctions
+        local blank, asked = false, 0
+        C_AuctionHouse.GetNumOwnedAuctions = function() return blank and 0 or #owned end
+        C_AuctionHouse.QueryOwnedAuctions = function(...)
+            asked = asked + 1; blank = false
+            C_Timer.After(0.1, function() fire("OWNED_AUCTIONS_UPDATED") end)
+        end
+        C_AuctionHouse.CancelAuction = function(id)
+            cancelled[#cancelled + 1] = id
+            for i = #owned, 1, -1 do if owned[i].auctionID == id then table.remove(owned, i) end end
+            blank = true
+            C_Timer.After(0.2, function() fire("OWNED_AUCTIONS_UPDATED"); fire("AUCTION_CANCELED", id) end)
+        end
+        -- a deal is on screen too: on the Sell tab your own auctions are still read at once
+        local verWas = S.verified
+        S.verified = { [424242] = { key = 424242, commodity = true, units = 1, cost = 10, price = 10, sell = 20, profit = 8, at = GetTime(), expires = GetTime() + 600 } }
+        local r2 = rowOf(9872)
+        r2.btn._scripts.OnClick(r2.btn); UI:Render()
+        r2 = rowOf(9872)
+        r2.btn._scripts.OnClick(r2.btn); UI:Render()
+        advance(0.5); St:Put(9873, 90, 350, GetServerTime()); UI:Render()
+        print("     0.5s after, the game's list empty: " .. buttons())
+        check(buttons():find("Cancel$") ~= nil and rowOf(9873).item.action == "LISTED", "while the game's list is empty for a moment the third auction keeps its Cancel button")
+        for step = 1, 4 do
+            advance(1); St:Put(9873, 90, 350, GetServerTime()); UI:Render()
+        end
+        b = buttons()
+        print("     4s after: " .. b .. "  (own auctions asked for " .. asked .. " time(s))")
+        check(#cancelled == 2 and cancelled[2] == 8802 and asked >= 1 and b:find("Cancel$") ~= nil and S.ownIds[9873] and #S.ownIds[9873] == 1,
+            "the list is asked for again, at once, also with a deal on screen: the third auction is still yours and can still be cancelled")
+        local inEnded = false
+        for _, l in ipairs(rowsText()) do if l:find("Cut Item 3", 1, true) and l:find("mailbox", 1, true) then inEnded = true end end
+        check(not inEnded, "it is not shown as ended")
+        S.verified = verWas
+        C_AuctionHouse.QueryOwnedAuctions = queryWas
+    end
+    for i = 1, 3 do ITEMS[9870 + i] = nil; LIST[9870 + i] = nil; AuctionMeshDB.flips[9870 + i] = nil; ns.Journal:Dropped(9870 + i, nil, "test") end
+    C_AuctionHouse.GetNumOwnedAuctions, C_AuctionHouse.GetOwnedAuctionInfo, C_AuctionHouse.CancelAuction = numWas, infoWas, cancelWas
+    AuctionMeshDB.listed, S.own, S.ownRead, cfg.fold, S.lastRows, S.ownIds = listedWas, ownWas, readWas, foldWas, rowsWas, idsWas
+    S.ownSoldQty, S.ownSoldPay = soldQtyWas, soldPayWas
+    Se.ucCache, Se.ucSeen, Se.wantRows, Se.note, Se.cancelArm, Se.cancelling = nil, nil, nil, nil, nil, nil
+    UI.tab = "BUY"; UI.notice = nil; UI:Render()
+end
+
+print("an auction the auction house no longer lists is on the Sold tab, not the Sell tab")
+do
+    local cfg = AuctionMeshDB.cfg
+    local listedWas, ownWas, readWas, foldWas, idsWas = AuctionMeshDB.listed, S.own, S.ownRead, cfg.fold, S.ownIds
+    local soldQtyWas, soldPayWas = S.ownSoldQty, S.ownSoldPay
+    for s2 = 1, 16 do bags[s2] = nil end
+    fire("BAG_UPDATE_DELAYED")
+    ITEMS[9880], ITEMS[9881] = { "Gone Item", 1 }, { "Still Item", 1 }
+    AuctionMeshDB.listed = {
+        [9880] = { qty = 10, price = 100, cost = 40, plan = 100, fee = 10, at = GetServerTime() - 3600 },
+        [9881] = { qty = 10, price = 100, cost = 40, plan = 100, fee = 10, at = GetServerTime() - 3600 },
+    }
+    S.own, S.ownIds, S.ownRead = { [9881] = { [100] = 10 } }, { [9881] = { { id = 8890, qty = 10, price = 100 } } }, true
+    S.ownSoldQty, S.ownSoldPay = {}, {}
+    cfg.fold = { LISTED = false }
+    UI:Open("SELL"); UI.notice = nil; UI:Render()
+    local sell = table.concat(headsText(), "\n") .. "\n" .. table.concat(rowsText(), "\n")
+    print("     Sell: " .. table.concat(headsText(), "  ||  "))
+    check(sell:find("Still Item", 1, true) ~= nil and not sell:find("Gone Item", 1, true) and not sell:find("ENDED", 1, true),
+        "the Sell tab lists the auction that is still up, and has no ENDED section")
+    UI:Open("SOLD"); UI:Render()
+    local hd, line = headsText(), nil
+    for _, l in ipairs(plainRows()) do if l:find("^Gone Item x10") then line = l end end
+    print("     Sold: " .. table.concat(hd, "  ||  "))
+    print("     " .. tostring(line))
+    local at
+    for i, h in ipairs(hd) do if h:find("^ENDED, CHECK A MAILBOX %(1%) | COST / LISTED AT / SPREAD / WHERE / IF SOLD$") then at = i end end
+    check(at == 2 and line == "Gone Item x10 | 40c / 1s00c / +150% / mailbox | +5s50c",
+        "the Sold tab has it, under ENDED, CHECK A MAILBOX: what it cost, what it was listed at, the spread, and the profit if it sold")
+    ITEMS[9880], ITEMS[9881] = nil, nil
+    AuctionMeshDB.flips[9880], AuctionMeshDB.flips[9881] = nil, nil
+    AuctionMeshDB.listed, S.own, S.ownRead, cfg.fold, S.ownIds = listedWas, ownWas, readWas, foldWas, idsWas
+    S.ownSoldQty, S.ownSoldPay = soldQtyWas, soldPayWas
+    UI:Open("SELL"); UI:Render()
 end
 
 print("sorting by a column on the Buy and Sell tabs")
