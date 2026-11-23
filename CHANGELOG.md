@@ -6,6 +6,13 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.50.0 (2026-11-23)
+
+- **Clicking the `BANK ALT: VENDORS ONLY` badge switches the mode.** It used to do nothing there. One click takes that character out of bank-alt mode (to `VENDOR + FLIPS`); at the auction house everything starts at once, with no need to reopen it.
+- **The bank alt is remembered.** On the character that was last set as the bank alt, the badge has a third step: `VENDOR + FLIPS` > `VENDOR ONLY` > `BANK ALT: VENDORS ONLY` > back to the start. On your other characters it still goes between the first two only. Setup shows `Bank alt: off (Name)` while it is switched off.
+- (3.49.0 was not sent out on its own: its changes, the header fix and the farmed or mined items, are in this version.)
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.49.0 (2026-11-23)
 
 - **Fixed: the Refresh button lay over the Setup tab** on the floating panel while the auction house was open (the Dock button, Snapshot and Refresh together needed more room than there was). The four tabs and the buttons at the top right are narrower now, their sizes are in one place, and a test holds the narrowest panel to a gap between them (20 px).

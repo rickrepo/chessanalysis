@@ -1032,13 +1032,21 @@ function UI:RenderMode()
 end
 function UI:ModeClick()
     local S = ns.Sniper
+    local cfg = AuctionMeshDB.cfg
     if ns.BankAlt() then
-        self:Notice("This character is your bank alt: the addon opens at vendors only. To change it: Setup tab, 'Bank alt'.", true)
+        -- BANK ALT -> VENDOR + FLIPS. The character stays remembered as the
+        -- bank alt, so the badge can bring the mode back (see below).
+        if cfg.flips == false then self:SetVendorOnly(false) end
+        ns.Do.BankAlt(false)
     elseif S:StakeKey() then
         S:SetStake(nil)
         self:Notice("Stake-out ended. The radar has every request again.", true)
+    elseif cfg.flips == false and cfg.bankAltLast ~= nil and cfg.bankAltLast == ns.charKey then
+        -- on the character last set as the bank alt the badge has a third
+        -- step: VENDOR + FLIPS -> VENDOR ONLY -> BANK ALT -> VENDOR + FLIPS
+        ns.Do.BankAlt(ns.charKey)
     else
-        self:SetVendorOnly(AuctionMeshDB.cfg.flips ~= false)
+        self:SetVendorOnly(cfg.flips ~= false)
     end
     self:Render()
 end
@@ -1062,7 +1070,8 @@ function UI:RenderSetup()
     sp.auto:SetText(cfg.autoOpen and "Opens by itself: on" or "Opens by itself: off")
     do
         local c = cfg.bankAlt and (AuctionMeshDB.chars or {})[cfg.bankAlt]
-        sp.bank:SetText(not cfg.bankAlt and "Bank alt: none" or ("Bank alt: " .. (c and c.name or cfg.bankAlt) .. (ns.BankAlt() and " (this one)" or "")))
+        local last = not cfg.bankAlt and cfg.bankAltLast and (AuctionMeshDB.chars or {})[cfg.bankAltLast]
+        sp.bank:SetText(not cfg.bankAlt and (last and ("Bank alt: off (" .. last.name .. ")") or "Bank alt: none") or ("Bank alt: " .. (c and c.name or cfg.bankAlt) .. (ns.BankAlt() and " (this one)" or "")))
         UI.outline(sp.bank, ns.BankAlt() and ACCENT or LINE)
     end
     sp.tune:SetText(ns.Tuner.cfg.enabled and "Auto-adjust: on" or "Auto-adjust: off")

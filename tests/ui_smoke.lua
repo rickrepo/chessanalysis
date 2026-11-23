@@ -3674,6 +3674,35 @@ do
     check(cfg.bankAlt == "Tester-Realm" and sp.bank._text == "Bank alt: Tester (this one)" and ns.BankAlt() and UI.modeText == "BANK ALT: VENDORS ONLY",
         "the next click picks this character: the button says so and the badge at the top left reads BANK ALT: VENDORS ONLY")
     check(strip(AuctionMeshFrame.status._text):find("^Tester %(this character%) is your bank alt: here the addon opens at vendors only"), "and the panel says what that means")
+    do  -- the badge switches the mode, and the bank alt is remembered
+        local badge = AuctionMeshFrame.mode
+        local function press() badge._scripts.OnClick(badge); UI.notice = nil; UI:Render() end
+        press()
+        check(not ns.BankAlt() and cfg.bankAlt == nil and cfg.bankAltLast == "Tester-Realm" and UI.modeText == "VENDOR + FLIPS" and cfg.flips ~= false,
+            "a click on the BANK ALT badge switches it off: VENDOR + FLIPS, and the character stays remembered")
+        check(sp.bank._text == "Bank alt: off (Tester)", "Setup shows it is off, and who it was")
+        press()
+        check(UI.modeText == "VENDOR ONLY" and not ns.BankAlt(), "the next click: VENDOR ONLY")
+        press()
+        check(ns.BankAlt() and cfg.bankAlt == "Tester-Realm" and UI.modeText == "BANK ALT: VENDORS ONLY", "and the next brings BANK ALT back, without a visit to Setup")
+        -- at the auction house, leaving the mode starts everything at once
+        UI:Close(); AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
+        check(not S.active and not Sw.active, "(bank alt, auction house open: nothing runs)")
+        UI:Open("BUY"); press()
+        check(not ns.BankAlt() and S.active == true, "switched off at the auction house: the sniper starts at once, with no need to reopen it")
+        AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
+        UI:Open("BUY") -- (the docked panel left with the auction house)
+        -- on a character that was never the bank alt the badge has its two steps only
+        local me = ns.charKey
+        ns.charKey = "Banker-Realm"
+        press(); local a = UI.modeText
+        press(); local b = UI.modeText
+        press(); local c = UI.modeText
+        check(a == "VENDOR ONLY" and b == "VENDOR + FLIPS" and c == "VENDOR ONLY" and cfg.bankAlt == nil, "on another character the badge only goes between VENDOR + FLIPS and VENDOR ONLY")
+        ns.charKey = me
+        press()
+        check(ns.BankAlt() and UI.modeText == "BANK ALT: VENDORS ONLY", "(back on the bank alt, in bank-alt mode, for the rest of this test)")
+    end
     UI:Close()
     -- the auction house: nothing
     local n0 = #sent
@@ -3707,7 +3736,8 @@ do
     check(gold == goldWas + 60 and flips[2770] == nil and bags[1] == nil, "and selling works as on any character: 12 Copper Ore to the vendor for 60c")
     MerchantFrame:Hide(); fire("MERCHANT_CLOSED"); UI:Close()
     -- no bank alt again: everything is back
-    Do.BankAlt(false)
+    Do.BankAlt(false); cfg.bankAltLast = nil
+    if cfg.flips == false then UI:SetVendorOnly(false) end
     check(cfg.bankAlt == nil and not ns.BankAlt(), "set back to none")
     AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
     S:Start()

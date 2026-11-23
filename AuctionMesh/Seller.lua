@@ -1736,6 +1736,14 @@ end
 
 ---------------------------------------------------------------- events
 
+-- The auction house has opened (or bank-alt mode was switched off while it is open).
+function Seller:AtAuctionHouse()
+    for k, p in pairs(self.prices) do if p.price then self.prices[k] = nil end end
+    self:Recover()
+    self:Refresh()
+    if not self.ticker then self.ticker = C_Timer.NewTicker(0.3, function() Seller:Tick() end) end
+end
+
 function Seller:Init()
     self:ScanBags()
     if hooksecurefunc and TakeInboxMoney then
@@ -1778,10 +1786,7 @@ function Seller:Init()
         elseif event == "AUCTION_HOUSE_SHOW" and ns.BankAlt and ns.BankAlt() then
             -- the bank alt: nothing of the addon's happens at the auction house
         elseif event == "AUCTION_HOUSE_SHOW" then
-            for k, p in pairs(Seller.prices) do if p.price then Seller.prices[k] = nil end end
-            Seller:Recover()
-            Seller:Refresh()
-            if not Seller.ticker then Seller.ticker = C_Timer.NewTicker(0.3, function() Seller:Tick() end) end
+            Seller:AtAuctionHouse()
         elseif event == "AUCTION_HOUSE_CLOSED" then
             if Seller.ticker then Seller.ticker:Cancel(); Seller.ticker = nil end
             Seller.pending, Seller.posting, Seller.cancelling, Seller.cancelArm = nil, nil, nil, nil

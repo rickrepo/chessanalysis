@@ -337,16 +337,27 @@ function Do.BankAlt(key)
     end
     local was = ns.BankAlt()
     cfg.bankAlt = key or nil
+    -- the last character picked is remembered, so that the badge at the top
+    -- left can switch the mode off and on again without going through Setup
+    if key then cfg.bankAltLast = key end
     local is = ns.BankAlt()
+    local open = AuctionHouseFrame and AuctionHouseFrame:IsShown()
     if is and not was then
         -- this character is the bank alt from now on: what was running here stops
         if Swarm.active then Swarm:Stop() end
         if Sniper.active then Sniper:Stop() end
+    elseif was and not is and open then
+        -- no longer the bank alt, at the auction house: everything starts as if it had just been opened
+        UI:CreateAHTab()
+        Seller:AtAuctionHouse()
+        if cfg.snipeAuto then Sniper:Start() end
+        if cfg.autoScan and not Swarm.active and not Swarm.manual then Swarm:Start(true) end
     end
     local name = key and ((AuctionMeshDB.chars[key] or {}).name or key)
-    UI:Notice(not key and "No bank alt: the addon works the same on every character."
-        or is and (name .. " (this character) is your bank alt: here the addon opens at vendors only. Nothing runs at the auction house or the mailbox.")
-        or (name .. " is your bank alt: on that character the addon opens at vendors only." .. (was and " On this one it is back to normal the next time you open the auction house." or "")), true)
+    UI:Notice(not key and (was and "Bank-alt mode is off on this character: the addon works as on any other. Click the badge again to go through the modes; the bank alt is remembered."
+            or "No bank alt: the addon works the same on every character.")
+        or is and (name .. " (this character) is your bank alt: here the addon opens at vendors only. Nothing runs at the auction house or the mailbox. Click the badge to switch.")
+        or (name .. " is your bank alt: on that character the addon opens at vendors only."), true)
     UI:Render()
 end
 
