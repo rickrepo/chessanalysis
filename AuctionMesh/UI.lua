@@ -311,12 +311,10 @@ local function clock(s)
     return s >= 60 and ("%d:%02d"):format(s / 60, s % 60) or (s .. "s")
 end
 
--- Three short lines about sniping, each a measured fact:
---   1. the state: armed or not, and how many watched items can be bought
---      straight from the radar (their listing is good enough for a flip)
---   2. the last answer to something the radar asked about
---   3. the radar: seconds between its reads, and what the last minute's
---      requests went to
+-- The Buy tab's status: anything urgent about your gold first, then SPEED in
+-- numbers (two lines, each a measured fact of the last 60 seconds):
+--   1. SPEED n%: lock unused, radar reads lost, held for a deal
+--   2. what the requests went to, and the game's lock per request
 -- Switched off on this character (a bank alt is set and this is not it): said
 -- in full wherever a status line is. With the panel opened by hand nothing
 -- happens, and that must never look like something is stuck.
@@ -372,16 +370,25 @@ local function buyStatus(n)
             or S:Staking() and (GREEN .. "Running: every input asks its price. Nothing else is bought and the radar is off.|r")
             or (GREY .. "Not running: press in the snipe box to start it. Until then the radar reads as usual.|r"))
     else
-        local sr = S.searching
-        local alert = S:PeekNext()
-        if sr and (sr.src == "vendor" or sr.src == "market" or sr.src == "drop") then
-            lines[#lines + 1] = mode .. "Checking an alert: " .. name(sr.key)
-        elseif alert then
-            lines[#lines + 1] = mode .. "Alert next: " .. name(alert)
-        elseif Sw and Sw.active and #Sw.units > 0 then
+        if Sw and Sw.active and #Sw.units > 0 then
+            -- SPEED, IN NUMBERS (measured over the last 60 seconds; see Watch:Speed).
+            -- 100% = every request left the moment the game allowed it, and every one was answered.
             local W = ns.Watch
-            local m = W and W.LastMinute and W:LastMinute() or {}
-            lines[#lines + 1] = mode .. GREY .. (m.every and ("Radar: a read every %.2fs.|r"):format(m.every) or "Radar: starting.|r")
+            local m = W and W.Speed and W:Speed() or {}
+            if m.pct then
+                local pc = floor(m.pct * 100 + 0.5)
+                local bad = ORANGE
+                lines[#lines + 1] = mode .. (pc >= 99 and GREEN or pc >= 95 and GOLD or RED) .. ("SPEED %d%%|r"):format(pc)
+                    .. GREY .. "  last 60s: lock unused |r" .. (m.idle >= 0.6 and bad or GREY) .. ("%.1fs|r"):format(m.idle)
+                    .. GREY .. ", radar reads lost |r" .. (m.lost > 0 and bad or GREY) .. m.lost .. "|r"
+                    .. GREY .. (", held for a deal %.1fs|r"):format(m.held)
+                if #lines == 1 then -- (the second line, when nothing more urgent has taken one)
+                    lines[#lines + 1] = GREY .. ("Requests %d: radar %d, alert checks %d, buying %d, upkeep %d. The game's lock: %s a request.|r"):format(
+                        m.n, m.radar or 0, m.alert or 0, m.buy or 0, (m.upkeep or 0) + (m.sell or 0), m.lock and ("%.2fs"):format(m.lock) or "not measured yet")
+                end
+            else
+                lines[#lines + 1] = mode .. GREY .. "SPEED: measuring (the first requests are going out).|r"
+            end
         else
             lines[#lines + 1] = mode
         end

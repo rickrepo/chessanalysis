@@ -103,6 +103,7 @@ function Watch:Reset()
     self.sends, self.slowest, self.firstAt, self.lastCallAt, self.stall, self.queued, self.lastGameUI = 0, 0, nil, nil, nil, nil, nil
     self.total, self.recent, self.radarAt, self.between = {}, {}, nil, nil
     self.gapN, self.gapSum, self.gapWorst, self.gapLate, self.gapBy = 0, 0, 0, 0, {}
+    self.lostAt, self.idleAt, self.readyAt, self.holdSeen, self.pauseSeen, self.speedLogAt = {}, {}, nil, nil, nil, nil
 end
 
 -- WHAT THE REQUESTS WENT TO. Every request the addon sends is booked under
@@ -165,6 +166,69 @@ function Watch:LastMinute()
     return out
 end
 
+-- SPEED, IN NUMBERS (the Buy tab's status line, and one log line a minute).
+-- The game takes one request at a time and keeps its lock shut for a fixed
+-- time after each answer; nothing the addon does can shorten that. What the
+-- addon CAN lose is measured here, over the last 60 seconds on the Buy tab:
+--   idle   seconds the lock was open and the addon had not sent the next
+--          request yet (measured from the game's "ready" to the next "sent")
+--   lost   radar reads that got no answer, and the seconds they cost
+--   held   seconds the lock was left open on purpose: a deal was on screen
+--          (so that your press goes first) or a purchase was in progress.
+--          Not counted against the speed.
+-- SPEED = the share of the time (without what was held) that was not idle
+-- and not spent on a lost read. 100% = every request left the moment the
+-- game allowed it and every one was answered.
+function Watch:Ready()
+    local U = ns.UI
+    local open = U and U.IsShown and U:IsShown() and U.tab == "BUY"
+    self.readyAt = open and GetTime() or nil
+end
+function Watch:Idle()
+    local at = self.readyAt
+    self.readyAt = nil
+    if not at then return end
+    local U = ns.UI
+    if not (U and U.IsShown and U:IsShown() and U.tab == "BUY") then return end
+    local now = GetTime()
+    local secs = now - at
+    if secs <= 0 or secs > 30 then return end
+    if (self.pauseSeen or -1) >= at then return end -- (the panel was shut or one of the game's screens was up: not the addon's time)
+    local S = ns.Sniper
+    local held = ((self.holdSeen or -1) >= at) or (S and S.buying ~= nil) or false
+    local l = self.idleAt or {}
+    self.idleAt = l
+    l[#l + 1] = { t = now, secs = secs, held = held }
+end
+function Watch:Speed()
+    local now = GetTime()
+    local m = self:LastMinute()
+    local function sum(list, f)
+        list = list or {}
+        while list[1] and now - list[1].t > 60 do table.remove(list, 1) end
+        for _, e in ipairs(list) do f(e) end
+    end
+    m.idle, m.held, m.lost, m.lostSecs = 0, 0, 0, 0
+    sum(self.idleAt, function(e) if e.held then m.held = m.held + e.secs else m.idle = m.idle + e.secs end end)
+    sum(self.lostAt, function(e) m.lost, m.lostSecs = m.lost + 1, m.lostSecs + e.secs end)
+    local r = self.recent or {}
+    m.span = r[1] and math.min(60, now - r[1].t) or 0
+    m.lock = ns.Gate and ns.Gate.cycle or nil
+    m.tail = ns.Gate and ns.Gate.tail or nil
+    local worked = m.span - m.held
+    if m.n >= 10 and worked > 5 then
+        m.pct = math.max(0, math.min(1, 1 - (m.idle + m.lostSecs) / worked))
+    end
+    return m
+end
+function Watch:SpeedText()
+    local m = self:Speed()
+    return ("%s | lock unused %.1fs | reads lost %d (%.1fs) | held for a deal %.1fs | %d requests in %.0fs: radar %d, alerts %d, buying %d, upkeep %d, posting %d | lock %s a request%s")
+        :format(m.pct and ("%d%%"):format(math.floor(m.pct * 100 + 0.5)) or "not measured yet", m.idle, m.lost, m.lostSecs, m.held, m.n, m.span,
+            m.radar or 0, m.alert or 0, m.buy or 0, m.upkeep or 0, m.sell or 0, m.lock and ("%.2fs"):format(m.lock) or "?",
+            m.tail and (" (%.2fs after an answer)"):format(m.tail) or ""), m
+end
+
 -- Every auction house call, ours or the game's. desc = what it was for.
 function Watch:Call(name, desc, ours)
     local now = GetTime()
@@ -204,6 +268,10 @@ end
 
 -- One incident. secs = the time it cost (nil if none). quiet = counted only.
 function Watch:Add(kind, secs, text, quiet)
+    if kind == "NO-ANSWER" then -- (with its time, for the SPEED figures of the last minute)
+        self.lostAt = self.lostAt or {}
+        self.lostAt[#self.lostAt + 1] = { t = GetTime(), secs = secs or 0 }
+    end
     self.count[kind] = (self.count[kind] or 0) + 1
     self.lost[kind] = (self.lost[kind] or 0) + (secs or 0)
     if secs and secs > (self.worst[kind] or 0) then self.worst[kind] = secs end
@@ -292,6 +360,10 @@ function Watch:Tick()
     local open = AuctionHouseFrame and AuctionHouseFrame.IsShown and AuctionHouseFrame:IsShown() and U and U.IsShown and U:IsShown()
     if not open then self.stall, self.lastCallAt = nil, nil; return end
     local now = GetTime()
+    if U.tab == "BUY" and now - (self.speedLogAt or 0) >= 60 then -- the figures of the last minute, once a minute
+        if self.speedLogAt then ns.Log("SPEED %s", (self:SpeedText())) end
+        self.speedLogAt = now
+    end
     if not self.lastCallAt then self.lastCallAt = now; return end
     if now - self.lastCallAt < 3 then return end
     local why, hold = self:WhyIdle()
@@ -325,8 +397,8 @@ function Watch:Lines()
         end
         add("what the addon's requests went to: ", table.concat(parts, " | "))
         local m = self:LastMinute()
-        add("last 60 seconds: ", m.radar or 0, " radar reads", m.every and (", one every %.2fs"):format(m.every) or "", " | ",
-            m.alert or 0, " alert checks | ", m.buy or 0, " buying | ", m.upkeep or 0, " upkeep | ", m.sell or 0, " posting")
+        -- (one line: the speed figures hold the last minute's requests by purpose as well)
+        add("speed, last 60 seconds: ", (self:SpeedText()), m.every and (" | a radar read every %.2fs"):format(m.every) or "")
         local n = self.gapN or 0
         local late = {}
         for why, c in pairs(self.gapBy or {}) do late[#late + 1] = ("%s: %d"):format(self.PURPOSE_NAMES[why] or why, c) end
@@ -390,10 +462,10 @@ ns.Gate = Gate
 -- window does NOT pause anything.
 local BLIZZ = { "ItemSellFrame", "CommoditiesSellFrame", "ItemBuyFrame", "CommoditiesBuyFrame", "WoWTokenSellFrame" }
 function Gate:UserBusy()
-    if GetTime() < (self.userUntil or 0) then return true end
+    if GetTime() < (self.userUntil or 0) then Watch.pauseSeen = GetTime(); return true end
     -- A deal has just appeared: nothing else is sent, so the auction house is
     -- free the instant you click Buy.
-    if GetTime() < (self.holdUntil or 0) then return true end
+    if GetTime() < (self.holdUntil or 0) then Watch.holdSeen = GetTime(); return true end
     -- The mouse resting on a button pauses nothing. (It used to: with the
     -- mouse on Post, the price check that Post was waiting for could not run;
     -- with the mouse on Buy, the radar stood still.)
@@ -401,12 +473,12 @@ function Gate:UserBusy()
     if type(ah) ~= "table" or not (ah.IsShown and ah:IsShown()) then return false end
     -- AuctionMesh only works while its own panel is open. On the game's own
     -- auction screens it sends nothing, so it never changes what the game shows you.
-    if not (ns.UI and ns.UI:IsShown()) then return true end
+    if not (ns.UI and ns.UI:IsShown()) then Watch.pauseSeen = GetTime(); return true end
     if ns.UI.docked then return false end
     -- Separate-window mode: stay quiet while one of the game's sell/buy dialogs is up.
     for _, name in ipairs(BLIZZ) do
         local f = rawget(ah, name)
-        if type(f) == "table" and f.IsShown and f:IsShown() then return true end
+        if type(f) == "table" and f.IsShown and f:IsShown() then Watch.pauseSeen = GetTime(); return true end
     end
     return false
 end
@@ -416,6 +488,28 @@ function Gate:Ready()
     if self:UserBusy() then return false end
     -- Safety: if the server never confirmed, don't wait forever.
     if self.outstanding > 0 and now - self.changedAt > 5 then self.outstanding = 0 end
+    -- AFTER AN ERROR THE GAME SAYS "READY" AT ONCE, AND THE NEXT REQUEST IS LOST.
+    -- After a normal answer the game keeps its lock shut for a fixed time (0.40s
+    -- in a real log: Gate.tail, measured). After an answer that is an error (a
+    -- refused purchase, the error that answers a cancelled price request) it
+    -- reports ready straight away. A radar read sent then came back as an
+    -- error with no data, both times in that log (sent 0.13s and 0.25s after
+    -- the request before it), and each cost half a second with no radar. So
+    -- background requests wait out the usual time after an error as well.
+    -- (That the server refuses them for coming too soon is an inference from
+    -- those two reads; "radar reads lost" in the SPEED line shows whether it holds.)
+    -- Your own purchases are not held by this: see ReadyForUser.
+    local tail = self.tail
+    if tail and self.errAt and now < self.errAt + tail * 0.9 then
+        if not self.wake then
+            self.wake = true
+            C_Timer.After(self.errAt + tail * 0.9 - now + 0.005, function()
+                Gate.wake = nil
+                if ns.OnAHReady then ns.OnAHReady() end
+            end)
+        end
+        return false
+    end
     return now >= self.nextAt and self.outstanding <= 0 and C_AuctionHouse.IsThrottledMessageSystemReady()
 end
 
@@ -484,7 +578,23 @@ local function isAHError(msg)
 end
 
 local function onEvent(_, event, ...)
+    if event == "AUCTION_HOUSE_SHOW_ERROR" or event == "COMMODITY_PURCHASE_FAILED" then
+        Gate.errAt = GetTime() -- (see Gate:Ready: background requests wait out the usual lock after an error too)
+    end
     if event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
+        do  -- MEASURE how long the lock stays shut after an answer (errors, which open it at once, are left out)
+            local ra, now = Gate.respAt, GetTime()
+            Gate.respAt = nil
+            if ra and not (Gate.errAt and Gate.errAt >= ra) then
+                local dt = now - ra
+                if dt > 0.2 and dt < 3 then
+                    Gate.tailN = (Gate.tailN or 0) + 1
+                    Gate.tailRaw = Gate.tailRaw and (Gate.tailRaw * 0.9 + dt * 0.1) or dt
+                    if Gate.tailN >= 5 then Gate.tail = Gate.tailRaw end
+                end
+            end
+        end
+        Watch:Ready()
         -- MEASURE the limit itself: seconds from a request being sent to the lock
         -- opening again, smoothed. The sweep interval is computed from this live
         -- figure, so if the server slows down at busy times the addon follows.
@@ -525,8 +635,10 @@ local function onEvent(_, event, ...)
         Gate.sentCount, Gate.sawSent = Gate.sentCount + 1, true
         Gate.sentAt = GetTime()
         Gate.outstanding, Gate.changedAt = Gate.outstanding + 1, GetTime()
+        Watch:Idle()
         Watch:Sent()
     elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED" then
+        Gate.respAt = GetTime()
         Gate.outstanding, Gate.changedAt = math.max(0, Gate.outstanding - 1), GetTime()
     elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
         Gate.outstanding, Gate.changedAt = math.max(0, Gate.outstanding - 1), GetTime()

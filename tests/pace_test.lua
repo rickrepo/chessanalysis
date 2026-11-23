@@ -294,7 +294,14 @@ if SCEN == "armed" then
     local st = strip(AuctionMeshFrame.status._text or "")
     UI:Render(); st = strip(AuctionMeshFrame.status._text or "")
     print("     " .. st:gsub("\n", "\n     "))
-    check(st:find("Radar: a read every 0%.6%ds%.$") ~= nil and select(2, st:gsub("\n", "")) == 0, "the Buy tab shows it in one line: a read every 0.6xs")
+    check(st:find("SPEED 100%  last 60s: lock unused 0.0s, radar reads lost 0, held for a deal 0.0s", 1, true) ~= nil
+        and st:find("The game's lock: 0%.6%ds a request%.$") ~= nil, "the Buy tab shows the speed in numbers: 100%, the lock never unused, no read lost, and the game's lock of 0.6xs")
+    do
+        local sp = ns.Watch:Speed()
+        print("     " .. (ns.Watch:SpeedText()))
+        check(sp.pct and sp.pct >= 0.995 and sp.idle < 0.3 and sp.lost == 0 and sp.held == 0,
+            ("a minute of radar against the simulated lock: speed %.1f%%, lock unused %.2fs, no read lost"):format((sp.pct or 0) * 100, sp.idle))
+    end
     local m = ns.Watch:LastMinute()
     check((m.radar or 0) >= 90 and (m.radar or 0) <= 99 and (m.alert or 0) == 0 and (m.buy or 0) == 0 and (m.upkeep or 0) + (m.sell or 0) == 0,
         "the last minute: 9x radar reads and no other request")

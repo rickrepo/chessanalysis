@@ -1135,10 +1135,11 @@ S:Evaluate(2447, { { price = 20, qty = 500 }, { price = 78, qty = 100 }, { price
 UI.notice = nil; UI.wheelSeen = nil; UI:Render()
 local st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
-check(st:find("Next check", 1, true) == nil and select(2, st:gsub("\n", "")) == 0,
-    "the Buy tab's status is one line: the mode and what the radar is doing")
+check(st:find("Next check", 1, true) == nil and select(2, st:gsub("\n", "")) == 1,
+    "the Buy tab's status is two lines: the speed, and what the requests went to")
 check(st:find("Peacebloom", 1, true) == nil, "a routine look at an item is not reported on the Buy tab")
-check(st:find("Radar: a read every %d+%.%d%ds%.$") ~= nil and st:find("MODE", 1, true) == nil, "it gives the measured time between radar reads (the mode itself is the badge at the top left)")
+check(st:find("^SPEED %d+%%  last 60s: lock unused %d+%.%ds, radar reads lost %d+, held for a deal %d+%.%ds\nRequests %d+: radar %d+, alert checks %d+, buying %d+, upkeep %d+%. The game's lock: %d%.%d%ds a request%.$") ~= nil
+    and st:find("MODE", 1, true) == nil, "it gives the speed in numbers: the share of the time used, the seconds the lock was unused, the reads lost, the requests by purpose and the game's lock")
 -- the answer to something the radar asked about is shown
 S.lastEval = nil; S.searching = { key = 2447, at = GetTime(), src = "market" }
 S:Evaluate(2447, { { price = 21, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)
@@ -1150,7 +1151,7 @@ check(st:find("Last alert", 1, true) == nil and S.lastAlert and S.lastAlert.key 
 UI.wheelSeen = GetTime(); UI:Render()
 st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
-check(select(2, st:gsub("\n", "")) == 0 and strip(AuctionMeshFrame.mode._text) == "VENDOR + FLIPS", "armed: still one line; the mode is on the badge")
+check(select(2, st:gsub("\n", "")) == 1 and strip(AuctionMeshFrame.mode._text) == "VENDOR + FLIPS", "armed: the same two lines; the mode is on the badge")
 check(strip(AuctionMeshFrame.snipe.label._text):find("ARMED.-radar first; %d+ listings? still being read for instant flips") ~= nil, "the snipe box says what is still being read for instant flips")
 do
     local was = S.ListingReady
@@ -4717,6 +4718,76 @@ do
     check(strip(gd.big._text) == "95s00c", "(the new amount is shown)")
     G.d = was; gold = goldWas; G.sold = soldWas; G.last, G.lastMoney = nil, gold
     UI.tab = "BUY"; UI.goldView = nil; UI:Render()
+end
+
+print("speed in numbers, and the wait after an error")
+do
+    local G, W = ns.Gate, ns.Watch
+    local readyWas = ns.OnAHReady
+    ns.OnAHReady = nil -- (the engines stand still: only the gate and the watch are looked at)
+    AuctionHouseFrame:Show(); UI:Open("BUY"); UI.notice = nil
+    S.buying, S.searching, G.holdUntil, G.userUntil, G.penaltyUntil = nil, nil, nil, nil, nil
+    W:Reset()
+    G.tail, G.tailN, G.tailRaw, G.errAt, G.respAt, G.wake, G.cycle, G.cycleN = nil, nil, nil, nil, nil, nil, nil, nil
+    -- one request: sent, answered 0.12s later, the lock opens 0.40s after the answer (as in the real log)
+    local function request(purpose)
+        G:Use("a test request", nil, purpose or "radar")
+        fire("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT")
+        T = T + 0.12; fire("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED")
+        T = T + 0.40; fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    end
+    for _ = 1, 20 do request() end
+    check(G.tail and math.abs(G.tail - 0.40) < 0.005 and math.abs(G.cycle - 0.52) < 0.005,
+        "measured: the lock opens 0.40s after an answer, 0.52s after the request was sent")
+    local m = W:Speed()
+    print("     " .. (W:SpeedText()))
+    check(m.pct == 1 and m.idle == 0 and m.held == 0 and m.lost == 0 and m.n == 20 and m.radar == 20,
+        "every request sent the moment the lock opened: SPEED 100%, lock unused 0.0s, no read lost")
+    -- the addon is half a second late with one request
+    T = T + 0.5; request()
+    -- a deal is on screen for two seconds: the radar holds, on purpose
+    G.holdUntil = T + 2; G:UserBusy(); T = T + 2; G.holdUntil = nil; request()
+    -- one radar read gets no answer
+    W:Add("NO-ANSWER", 0.53, "a test read", true)
+    m = W:Speed()
+    local want = 1 - (0.5 + 0.53) / (m.span - 2)
+    print("     " .. (W:SpeedText()))
+    check(math.abs(m.idle - 0.5) < 1e-6 and math.abs(m.held - 2) < 1e-6 and m.lost == 1 and math.abs(m.pct - want) < 1e-6 and want < 0.93,
+        "half a second late once, one read lost, two seconds held for a deal: counted each for itself, and the hold is not held against the speed")
+    S.snipe = nil
+    local Sw = ns.Swarm
+    local actWas, unitsWas = Sw.active, Sw.units
+    Sw.active, Sw.units = true, (#Sw.units > 0) and Sw.units or { 7 * 256 }
+    G.nextAt = 0
+    UI:Render()
+    local st = strip(AuctionMeshFrame.status._text)
+    for l in st:gmatch("[^\n]+") do print("     " .. l) end
+    check(st:find(("SPEED %d%%  last 60s: lock unused 0.5s, radar reads lost 1, held for a deal 2.0s"):format(math.floor(want * 100 + 0.5)), 1, true) ~= nil
+        and st:find("Requests 22: radar 22, alert checks 0, buying 0, upkeep 0. The game's lock: 0.52s a request.", 1, true) ~= nil,
+        "the Buy tab shows those numbers")
+    Sw.active, Sw.units = actWas, unitsWas
+    -- AFTER AN ERROR the game says ready at once: background requests still wait out the usual time
+    local tailN = G.tailN
+    G:Use("a purchase", nil, "buy"); fire("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT")
+    T = T + 0.25
+    G.ignoreErrorUntil = T + 2
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED"); fire("COMMODITY_PURCHASE_FAILED"); fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    G.nextAt = 0
+    check(G:Ready() == false and G:ReadyForUser() == true and G.tailN == tailN,
+        "a refused purchase: the game is ready at once, but a radar read is not sent yet (your own purchase could be); the early opening is not taken for the usual lock")
+    T = T + 0.30
+    check(G:Ready() == false, "0.30s after the error: still waiting")
+    T = T + 0.07
+    check(G:Ready() == true, "0.37s after it (the usual 0.40s, less a margin): the radar reads again")
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_SENT"); T = T + 0.1
+    fire("AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED"); fire("AUCTION_HOUSE_SHOW_ERROR", 10); fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    G.nextAt = 0
+    check(G:Ready() == false, "the error that answers a cancelled price request: the same wait")
+    T = T + 0.4
+    check(G:Ready() == true, "and the radar goes on after it")
+    G.ignoreErrorUntil, G.errAt = nil, nil
+    ns.OnAHReady = readyWas
+    W:Reset()
 end
 
 -- nothing in the whole run raised an error inside the redraw or an input (they are caught, so they must be looked for)

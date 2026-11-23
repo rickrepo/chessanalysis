@@ -6,6 +6,23 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.66.0 (2026-11-23)
+
+- **SPEED, in numbers, on the Buy tab.** Two lines under the snipe box, measured over the last 60 seconds:
+  - `SPEED 100%  last 60s: lock unused 0.0s, radar reads lost 0, held for a deal 6.1s`
+  - `Requests 113: radar 104, alert checks 4, buying 3, upkeep 2. The game's lock: 0.52s a request.`
+- **What the numbers are.** The game takes one request at a time and keeps its lock shut for a fixed time after each answer; no addon can send sooner. What the addon can lose is what is measured:
+  - **lock unused**: seconds the lock was open and the next request had not left yet (from the game's "ready" to the next "sent"). Should be 0.0s.
+  - **radar reads lost**: reads that got no answer. Should be 0.
+  - **held for a deal**: seconds the lock was left open on purpose because a deal was on screen or a purchase was in progress, so that your press goes first. Not counted against the speed.
+  - **SPEED** = the share of the time (without what was held) that was neither unused nor spent on a lost read. 100% is the most the game allows. Green from 99%, gold from 95%, red below; a figure that is off is orange.
+  - **Requests**: how many went to the radar and how many to anything else. Every request that is not a radar read costs one radar read.
+- The same figures go into the log once a minute (`SPEED ...`) and into the Snapshot.
+- **After a refused purchase the radar no longer loses a read.** In a real log two radar reads got no answer, each right after a failed try, each costing about half a second with no radar. Both had been sent 0.13s and 0.25s after the request before them: after an answer that is an error the game reports "ready" at once instead of after its usual 0.40s, and the read sent then came back as an error with no data. Background requests now wait out the usual time after an error as well (measured, less a 10% margin); your own purchases are not held by this. *That the server refuses a request for coming too soon is an inference from those two reads. "radar reads lost" on the SPEED line shows whether it holds.*
+- The lock is now also measured from the answer (it opened 0.40s after each answer in that log, 0.52s after the request was sent).
+- The status line no longer names the alert being checked; that is in the log.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.65.0 (2026-11-23)
 
 - **Cancelling one undercut auction no longer takes the Cancel buttons off the others.** Fixed in three places:
