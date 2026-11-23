@@ -210,7 +210,7 @@ local function fillSell(r, e, short)
     r.state:SetText(text)
     local paid, sell, _, profit, live = Se:Numbers(e)
     r.c[1]:SetText(tostring(e.count))
-    r.c[2]:SetText(paid and short(paid) or (ORANGE .. "?|r"))
+    r.c[2]:SetText(e.farm and (GREEN .. "farmed|r") or paid and short(paid) or (ORANGE .. "?|r"))
     r.c[3]:SetText(short(sell) .. ((e.f.kind == "FLIP" and not live and e.action ~= "LISTED") and (GREY .. "*|r") or ""))
     r.c[4]:SetText(e.action == "LISTED" and (e.sold and (GREEN .. "SOLD|r") or e.live == 0 and (GREEN .. "SOLD?|r") or e.undercut and (ORANGE .. "UNDERCUT|r") or (GREY .. "LISTED|r"))
         or e.action == "AH" and (ready and (GOLD .. "READY|r") or (GREY .. "pricing|r"))
@@ -221,7 +221,10 @@ local function fillSell(r, e, short)
         r.profit:SetText("")
     end
     local paidText = paid and short(paid) or (ORANGE .. "unknown|r")
-    if e.action == "HOLD" then
+    if e.farm and e.action ~= "HOLD" then
+        r.detail:SetText(("Farmed or mined: cost nothing  >  Sell %s%s  >  %s+%s|r each, all profit"):format(short(sell),
+            (not live and e.action ~= "LISTED") and (GREY .. " (about)|r") or "", GREEN, short(profit or 0)))
+    elseif e.action == "HOLD" then
         r.detail:SetText(("Paid %s each  >  market is lower right now"):format(paidText))
     else
         local profitText = ""
@@ -393,6 +396,10 @@ local CAPS = {
     -- what a vendor pays more for than it cost: the other way out has its own column
     vendor = { "QTY", "COST", "VENDOR", "IF LISTED", "P / L" },
     either = { "QTY", "COST", "MARKET", "VENDOR NOW", "P / L" },
+    -- farmed or mined: it cost nothing, so what it sells for is all profit
+    farm = { "QTY", "COST", "MARKET", "STATUS", "ALL PROFIT" },
+    -- in your bags, not tracked: what it is worth if you add and post it
+    loose = { "QTY", "", "MARKET", "", "WORTH" },
 }
 
 local function section(list, text, caps, items)
@@ -422,13 +429,15 @@ local function buildList(tab, deals, entries)
             list[#list + 1] = { note = ahOpen() and "None right now. A sound plays when one appears." or "Open the auction house to look for deals." }
         end
     elseif tab == "SELL" then
-        local by = { AH = {}, EITHER = {}, VENDOR = {}, MAIL = {}, HOLD = {} }
+        local by = { AH = {}, EITHER = {}, VENDOR = {}, MAIL = {}, HOLD = {}, FARM = {} }
         for _, e in ipairs(entries) do
             -- to post, with a vendor as the quicker way out: its own section, so both figures are on the row
-            local t = by[(e.action == "AH" and e.vendorAlt) and "EITHER" or e.action]
+            -- (what you farmed or mined has a section of its own: it was not bought)
+            local t = by[(e.farm and e.action == "AH") and "FARM" or (e.action == "AH" and e.vendorAlt) and "EITHER" or e.action]
             if t then t[#t + 1] = e end
         end
         if #by.AH > 0 then section(list, "TO POST AT THE AUCTION HOUSE", CAPS.entry, by.AH) end
+        if #by.FARM > 0 then section(list, "FARMED OR MINED, TO POST: ALL PROFIT", CAPS.farm, by.FARM) end
         if #by.EITHER > 0 then section(list, "TO POST, OR SELL TO A VENDOR NOW", CAPS.either, by.EITHER) end
         if #by.VENDOR > 0 then section(list, "TO SELL TO A VENDOR", CAPS.vendor, by.VENDOR) end
         if #by.MAIL > 0 then section(list, "IN THE MAILBOX", CAPS.entry, by.MAIL) end
@@ -459,6 +468,9 @@ local function buildList(tab, deals, entries)
         if #ended > 0 then section(list, "ENDED, CHECK A MAILBOX", CAPS.entry, ended) end
         if #ok > 0 then section(list, "LISTED", CAPS.entry, ok) end
         if #list == 0 then list[1] = { note = "Nothing to sell. Items you buy on the Trades tab appear here." } end
+        -- what is in your bags that the addon did not buy: one click on Add and it is yours to post, as farmed
+        local loose = ns.Seller:Loose()
+        if #loose > 0 then section(list, "IN YOUR BAGS, NOT BOUGHT BY THE ADDON: ADD WHAT YOU FARMED OR MINED", CAPS.loose, loose) end
     end
     return list
 end
@@ -1149,7 +1161,7 @@ function UI:Render()
     self.scroll[tab] = off
     for i = 1, MAXROWS do
         local r, item = rows[i], (i <= vis) and list[i + off] or nil
-        r.item, r.sect = nil, nil
+        r.item, r.sect, r.looseItem = nil, nil, nil
         r.heat:Hide()
         do  -- the item just bought (green) or missed (red): its row is framed for the length of the flash
             local c = item and item.key ~= nil and not item.action and tab == "BUY" and item.key == self.flashKey
@@ -1183,6 +1195,18 @@ function UI:Render()
                 r.state:SetText(""); r.profit:SetText(""); r.btn:Hide()
                 r.detail:SetText(item.m)
                 r.detail:Show()
+            elseif item.loose then
+                -- in your bags, not tracked: Add makes it a farmed holding (nothing is posted by that click)
+                r.looseItem = item
+                r.detail:Hide()
+                r.icon:SetTexture(C_Item.GetItemIconByID(item.key) or 134400)
+                local name = ns.Sniper.nameOf(item.key)
+                r.name:SetText(GREY .. (item.count > 1 and (name .. " x" .. item.count) or name) .. "|r")
+                r.c[1]:SetText(GREY .. item.count .. "|r"); r.c[2]:SetText("")
+                r.c[3]:SetText(GREY .. short(item.market) .. "|r"); r.c[4]:SetText("")
+                r.state:SetText("")
+                r.profit:SetText(GREY .. "about " .. short(floor(item.market * (1 - ns.Deals.cfg.cut)) * item.count) .. "|r")
+                r.btn:SetText("Add"); r.btn:Enable(); r.btn:Show()
             elseif item.ghost then
                 -- a deal that is over: its row for the length of the flash, with what happened
                 r.icon:SetTexture(C_Item.GetItemIconByID(item.key) or 134400)
@@ -1206,11 +1230,15 @@ function UI:Render()
     if tab == "BUY" then
         for _, part in ipairs(UI.TradesFooter(short)) do parts[#parts + 1] = part end
     elseif tab == "SELL" then
-        local invested, back, any = 0, 0, false
+        local invested, back, any, farmed = 0, 0, false, 0
         for _, e in ipairs(entries) do
             local paid, _, net = Se:Numbers(e)
-            if paid and e.action ~= "LISTED" then invested, back, any = invested + paid * e.count, back + net * e.count, true end
+            if e.farm then
+                -- farmed or mined, in your bags or listed: all of it is profit, counted apart from what you bought
+                if e.action ~= "HOLD" then farmed = farmed + (net or 0) * e.count end
+            elseif paid and e.action ~= "LISTED" then invested, back, any = invested + paid * e.count, back + net * e.count, true end
         end
+        if farmed > 0 then parts[#parts + 1] = ("Farmed or mined: %s+ %s|r when sold"):format(GREEN, short(farmed)) end
         if any then
             local profit = back - invested
             parts[#parts + 1] = ("Holding: paid %s  >  expect back %s  =  %s%s%s|r"):format(short(invested), short(back),
@@ -1247,6 +1275,16 @@ end
 ---------------------------------------------------------------- clicks
 
 local function rowButton(self)
+    local loose = rawget(self:GetParent(), "looseItem")
+    if loose then
+        -- "Add": what is in your bags becomes a farmed holding, to post (nothing is posted by this click)
+        local n = ns.Seller:Farm(loose.key)
+        if n > 0 then
+            UI:Notice(("Added %d x %s as farmed or mined: it cost nothing, so what it sells for is all profit. %s"):format(n, ns.Sniper.nameOf(loose.key),
+                ahOpen() and "Its price is being read: press Post on its row." or "Open the auction house to post it."), true)
+        end
+        return UI:Dirty()
+    end
     local item = self:GetParent().item
     if not item then return end
     if not item.action then
@@ -1264,6 +1302,14 @@ local function rowButton(self)
 end
 
 local function rowEnter(self)
+    local loose = rawget(self, "looseItem")
+    if loose then
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetItemByID(loose.key)
+        GameTooltip:AddLine(GREY .. "In your bags, not bought by the addon. Add: it is tracked as farmed or mined (cost nothing) and can be posted like anything else. Nothing is posted by that click.|r", 1, 1, 1, true)
+        GameTooltip:Show()
+        return
+    end
     local item = self.item
     if not item then return end
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
@@ -1427,8 +1473,24 @@ local function button(parent, w, text, onClick, name)
     return b
 end
 
+-- THE HEADER, measured. From the left: the mode badge, then four tabs. From
+-- the right: the close button (floating only), Dock / Pop out (floating: only
+-- while the auction house is open), Snapshot, Refresh. The narrowest panel is
+-- the floating one (WIDTH), with Dock shown: the sizes below leave a gap
+-- there, and UI.HeaderRoom works it out so the test can hold it to that.
+-- (In 3.47 Refresh was added without this sum, and lay over the Setup tab.)
+local HDR = { tabX = 178, tabW = 72, tabGap = 4, tabs = 4, close = 34, edge = 12, pop = 56, snap = 68, refresh = 56, gap = 4 }
+UI.HDR = HDR
+-- pixels between the last tab and the leftmost button on the right
+function UI.HeaderRoom(width, floating, withDock)
+    local tabsRight = HDR.tabX + HDR.tabs * HDR.tabW + (HDR.tabs - 1) * HDR.tabGap
+    local x = width - (floating and HDR.close or HDR.edge)
+    if withDock then x = x - HDR.pop - HDR.gap end
+    x = x - HDR.snap - HDR.gap - HDR.refresh
+    return x - tabsRight
+end
 local function makeTab(parent, text, onClick)
-    return button(parent, 86, text, onClick)
+    return button(parent, HDR.tabW, text, onClick)
 end
 -- the selected tab gets the teal outline (the game's own tab under the auction house keeps the game's style)
 local function selectTab(t, on)
@@ -1546,14 +1608,14 @@ function UI:Create()
     frame.tabSell = makeTab(frame, "Bags", function() UI:StopKeyCapture(); UI.tab = "SELL"; UI:Render() end)
     frame.tabPick = makeTab(frame, "Picks", function() UI:StopKeyCapture(); UI.tab = "PICKS"; UI:Render() end)
     frame.tabHist = makeTab(frame, "Setup", function() UI.tab = "HISTORY"; UI:Render() end)
-    frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", 6, 0)
-    frame.tabPick:SetPoint("LEFT", frame.tabSell, "RIGHT", 6, 0)
-    frame.tabHist:SetPoint("LEFT", frame.tabPick, "RIGHT", 6, 0)
+    frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", HDR.tabGap, 0)
+    frame.tabPick:SetPoint("LEFT", frame.tabSell, "RIGHT", HDR.tabGap, 0)
+    frame.tabHist:SetPoint("LEFT", frame.tabPick, "RIGHT", HDR.tabGap, 0)
 
     -- POP OUT / DOCK. Inside the auction house the panel is part of that window
     -- and cannot be dragged on its own; this button turns it into a separate
     -- window that can, and back.
-    frame.pop = button(frame, 62, "Pop out", function() ns.Do.Dock(not UI.docked) end)
+    frame.pop = button(frame, HDR.pop, "Pop out", function() ns.Do.Dock(not UI.docked) end)
     frame.pop:SetHeight(18)
     frame.pop:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
@@ -1565,9 +1627,9 @@ function UI:Create()
     frame.pop:SetScript("OnLeave", function() GameTooltip:Hide() end)
     -- SNAPSHOT: on every tab. One short block of text to copy and paste to
     -- Claude: gold, mailbox, auctions, bags, settings and the last snipes.
-    frame.snap = button(frame, 74, "Snapshot", function() ns.Do.Snapshot() end)
+    frame.snap = button(frame, HDR.snap, "Snapshot", function() ns.Do.Snapshot() end)
     frame.snap:SetHeight(18)
-    frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -6, 0)
+    frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -HDR.gap, 0)
     outline(frame.snap, ACCENT)
     frame.snap:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
@@ -1578,9 +1640,9 @@ function UI:Create()
     frame.snap:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- REFRESH: reads your bags (and the open mailbox) again and redraws everything
-    frame.refresh = button(frame, 58, "Refresh", function() UI:Refresh() end)
+    frame.refresh = button(frame, HDR.refresh, "Refresh", function() UI:Refresh() end)
     frame.refresh:SetHeight(18)
-    frame.refresh:SetPoint("RIGHT", frame.snap, "LEFT", -6, 0)
+    frame.refresh:SetPoint("RIGHT", frame.snap, "LEFT", -HDR.gap, 0)
     frame.refresh:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
         GameTooltip:AddLine("Refresh", 1, 1, 1)
@@ -1882,7 +1944,7 @@ function UI:Create()
     upTo(L, sp.snap)
 
     group("ADDON")
-    L, at = row("The panel, and your bank alt")
+    L, at = row("Panel / bank alt")
     sp.dock = tip(button(sp, 190, "", function() ns.Do.Dock(AuctionMeshDB.cfg.dock == false) end),
         "Inside the auction house window, or as a window of its own that you can drag anywhere.")
     sp.dock:SetPoint("TOPRIGHT", 0, at + 5)
@@ -2198,8 +2260,8 @@ function UI:Place()
         frame:SetFrameStrata("DIALOG")
         frame:SetMovable(false)
         frame.closeBtn:Hide()
-        frame.tabBuy:SetPoint("TOPLEFT", 178, -8)
-        frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -12, -6)
+        frame.tabBuy:SetPoint("TOPLEFT", HDR.tabX, -8)
+        frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -HDR.edge, -6)
         frame.pop:SetText("Pop out"); frame.pop:Show()
     else
         frame:SetParent(UIParent)
@@ -2208,17 +2270,17 @@ function UI:Place()
         frame:SetFrameStrata("HIGH")
         frame:SetMovable(true)
         frame.closeBtn:Show()
-        frame.tabBuy:SetPoint("TOPLEFT", 178, -8)
+        frame.tabBuy:SetPoint("TOPLEFT", HDR.tabX, -8)
         -- "Dock" only makes sense while the auction house is open
-        frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -34, -6)
+        frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -HDR.close, -6)
         frame.pop:SetText("Dock"); frame.pop:SetShown(ahOpen() and true or false)
         -- with no Dock button the Snapshot button takes its place
         frame.snap:ClearAllPoints()
-        if ahOpen() then frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -6, 0) else frame.snap:SetPoint("TOPRIGHT", -34, -6) end
+        if ahOpen() then frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -HDR.gap, 0) else frame.snap:SetPoint("TOPRIGHT", -HDR.close, -6) end
         local pos = AuctionMeshDB.cfg.pos
         if pos then frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else frame:SetPoint("CENTER", 0, 40) end
     end
-    if dock then frame.snap:ClearAllPoints(); frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -6, 0) end
+    if dock then frame.snap:ClearAllPoints(); frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -HDR.gap, 0) end
     self.docked = dock
     self:FitHeader()
 end
@@ -2295,8 +2357,12 @@ local function tradeLines(out, t, byKey, short)
     local J, Se = ns.Journal, ns.Seller
     local left = J.left(t)
     out[#out + 1] = { l = WHITE .. tostring(t.name) .. " x" .. t.qty .. "|r", r = GREY .. ago(t.at) .. "|r", trade = t }
-    out[#out + 1] = { l = t.cost and ("Bought at %s each"):format(short(t.cost)) or "Bought (cost not known)",
-        r = t.cost and ("- " .. short(t.cost * t.qty)) or (GREY .. "?|r") }
+    if t.kind == "FARM" then
+        out[#out + 1] = { l = "Farmed or mined: cost nothing", r = GREY .. "-|r" }
+    else
+        out[#out + 1] = { l = t.cost and ("Bought at %s each"):format(short(t.cost)) or "Bought (cost not known)",
+            r = t.cost and ("- " .. short(t.cost * t.qty)) or (GREY .. "?|r") }
+    end
     local sold, vend = t.sold or 0, t.vend or 0
     if sold > 0 and vend == 0 then
         out[#out + 1] = { l = ("Sold %d at %s each, after the cut"):format(sold, short(t.soldPrice or 0)), r = GREEN .. "+ " .. short(t.got or 0) .. "|r" }
@@ -2377,7 +2443,7 @@ function UI:FocusData()
     -- purchases: profit made, or expected at the listed / planned price
     for _, t in ipairs(J.list or {}) do
         local counted = t.qty - (t.lost or 0)
-        if t.cost and counted > 0 then
+        if t.cost and counted > 0 and t.kind ~= "FARM" then -- (what you farmed is not a purchase)
             local left = J.left(t)
             local p, open = J.realized(t) or 0, left > 0
             if open then

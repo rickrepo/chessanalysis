@@ -102,7 +102,10 @@ end
 function Seller.ForgetUnits(key, n)
     local f = flips()[key]
     if not f then return end
-    f.units = (f.units or 0) - n
+    local was = f.units or 0
+    f.units = was - n
+    -- of a holding that is part farmed, part bought, the same share stays farmed
+    if f.farm and was > 0 and f.units > 0 then f.farm = floor(f.farm * f.units / was + 0.5) end
     if f.units <= 0 then flips()[key] = nil; Seller.prices[key] = nil end
 end
 
@@ -157,6 +160,8 @@ function Seller:Entries()
         if inBags > 0 then
             local action = f.kind == "VENDOR" and "VENDOR" or "AH"
             local p = self.prices[key]
+            -- farmed or mined (added by you, cost nothing): all of this holding, or it counts as bought
+            local farm = (f.farm or 0) >= units and units > 0
             local vendorAlt
             if action == "VENDOR" then
                 -- bought under vendor price, but worth more on the auction house: that is the recommendation
@@ -167,9 +172,9 @@ function Seller:Entries()
                 -- held as a flip, but a vendor pays more than it cost (some of it was
                 -- bought under vendor price): the vendor is a second way out here too
                 local v = Seller.VendorOf(key, f)
-                if v > (f.cost or 0) then vendorAlt = v end
+                if v > (f.cost or 0) and not farm then vendorAlt = v end
             end
-            out[#out + 1] = { key = key, action = action, count = inBags, f = f, vendorAlt = vendorAlt }
+            out[#out + 1] = { key = key, action = action, count = inBags, f = f, vendorAlt = vendorAlt, farm = farm or nil }
         end
         if inMail > 0 then
             local seen = self.mailCount and (self.mailCount[key] or 0) >= inMail
@@ -188,7 +193,7 @@ function Seller:Entries()
             AuctionMeshDB.listed[key] = nil -- auctions last 12h at most; this record is stale
         else
             out[#out + 1] = { key = key, action = "LISTED", count = (live and live > 0) and live or L.qty, live = live,
-                              f = { kind = "FLIP", cost = L.cost, sell = L.price }, listed = L }
+                              f = { kind = "FLIP", cost = L.cost, sell = L.price }, listed = L, farm = L.farm or nil }
         end
     end
     local order = { AH = 1, VENDOR = 2, MAIL = 3, HOLD = 4, LISTED = 5 }
@@ -663,6 +668,7 @@ function Seller:Returned(key, n, why)
         f = { kind = "FLIP", units = n, cost = L.cost or 0, unknownCost = (L.cost == nil), sell = L.plan or L.price }
         flips()[key] = f
     end
+    if L.farm then f.farm = (f.farm or 0) + n end -- farmed or mined: it still is when it comes back unsold
     f.at, f.missingSince = now, nil
     f.proof = cancelled and "auction cancelled, returned by mail" or "auction expired, returned by mail"
     f.retPending = (f.retPending or 0) + n -- still to come out of the mailbox
@@ -1030,6 +1036,11 @@ function Seller:OnResults(key, rows, commodity)
         -- bought under vendor price, and the auction house does not beat the vendor by enough: sell it to a vendor
         price, why = nil, "a vendor pays as much"
     end
+    if price and (f.farm or 0) >= (f.units or 0) and (f.units or 0) > 0 then
+        -- farmed or mined: it cost nothing, so the only floor is the vendor. Not posted for less than a vendor pays.
+        local v = ns.Sniper and ns.Sniper.vendorOf and ns.Sniper.vendorOf(key) or 0
+        if v > 0 and floor(price * (1 - Deals.cfg.cut)) - feeEach < v then price, why = nil, "a vendor pays more than the auction house right now" end
+    end
     if price then
         self.prices[key] = { price = price, commodity = commodity, why = why, at = GetTime() }
     else
@@ -1168,11 +1179,13 @@ function Seller:CheckPosted()
         local L = AuctionMeshDB.listed[q.key]
         local cost = f and not f.unknownCost and f.cost or (L and L.cost) or nil
         local plan = f and f.sell or q.price -- the resale price predicted when it was bought
+        local farm = f ~= nil and (f.farm or 0) >= (f.units or 0) and (f.units or 0) > 0
         if L then
             L.qty, L.price, L.cost, L.at, L.plan = L.qty + posted, q.price, cost, GetServerTime(), plan
             L.fee = (L.fee or 0) + (q.deposit or 0)
+            L.farm = (L.farm and farm) or nil
         else
-            AuctionMeshDB.listed[q.key] = { qty = posted, price = q.price, cost = cost, at = GetServerTime(), plan = plan, fee = q.deposit or 0 }
+            AuctionMeshDB.listed[q.key] = { qty = posted, price = q.price, cost = cost, at = GetServerTime(), plan = plan, fee = q.deposit or 0, farm = farm or nil }
         end
     end
     if ns.Journal then ns.Journal:Posted(q.key, min(gone, q.qty), q.price) end
@@ -1405,6 +1418,62 @@ function Seller:Track(key, cost)
         cost and "" or " (cost unknown, so it posts at market: check the price before you click)"))
     self.prices[key] = nil
     self:Refresh("open")
+end
+
+-- FARMED OR MINED: WHAT YOU DID NOT BUY. Ore you mined, herbs you picked,
+-- whatever an alt mailed you: it cost nothing, so all of what it sells for
+-- (after the cut) is profit.
+--
+--   Seller:Loose()   what is in your bags that the addon does not track and
+--                    that the auction house has a price for (from the radar):
+--                    the Bags tab lists these with an Add button each.
+--   Seller:Farm(key) adds it, on your click: tracked at a cost of nothing,
+--                    priced like anything else you post (under the real
+--                    market, never for less than a vendor pays), and posted
+--                    by your click on Post, Post next, or the one key.
+-- Nothing is added by itself: what is in your bags is yours until you say so.
+Seller.LOOSE_MAX = 12
+function Seller:Loose()
+    local St = ns.Store
+    local out = {}
+    if not St then return out end
+    for key, n in pairs(bagCount) do
+        local f = flips()[key]
+        local extra = n - (f and f.units or 0)
+        local market = (St.fp and St.fp[key]) or (St.p and St.p[key])
+        if extra > 0 and market and market > 0 then out[#out + 1] = { key = key, loose = true, count = extra, market = market } end
+    end
+    table.sort(out, function(a, b)
+        local va, vb = a.count * a.market, b.count * b.market
+        if va ~= vb then return va > vb end
+        return a.key < b.key
+    end)
+    while #out > self.LOOSE_MAX do out[#out] = nil end
+    return out
+end
+
+function Seller:Farm(key)
+    self:ScanBags()
+    local f = flips()[key]
+    local have = f and f.units or 0
+    local extra = (bagCount[key] or 0) - have
+    if extra <= 0 then return 0 end
+    local St = ns.Store
+    local market = St and ((St.fp and St.fp[key]) or (St.p and St.p[key])) or 0
+    if f then
+        -- some of this item is already tracked (bought): one record, the cost spread over all of it
+        if not f.unknownCost then f.cost = floor((f.cost or 0) * have / (have + extra) + 0.5) end
+        f.units, f.farm = have + extra, (f.farm or 0) + extra
+    else
+        flips()[key] = { kind = "FLIP", sell = market, units = extra, cost = 0, farm = extra, at = GetServerTime(),
+                         proof = "farmed or mined: added by you" }
+    end
+    if ns.Journal then ns.Journal:Bought(key, nameOf(key), "FARM", extra, 0, market, "farmed or mined") end
+    ns.Log("FARM %s: %d unit(s) added by click as farmed or mined (cost nothing)", tostring(key), extra)
+    self.prices[key] = nil
+    if ahOpen() then self.priority = key end -- its price is asked for at once
+    self:Refresh()
+    return extra
 end
 
 local function acceptDrop()

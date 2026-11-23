@@ -3232,6 +3232,9 @@ do
 
     -- THE HEADER BAR FITS THE SPACE IT HAS
     do
+        -- the tabs and the buttons on the right never share the same pixels, on the narrowest panel either
+        check(UI.HeaderRoom(720, true, true) >= 12, ("floating panel (720 wide) with Dock shown: %d px between the Setup tab and the Refresh button"):format(UI.HeaderRoom(720, true, true)))
+        check(UI.HeaderRoom(720, true, false) >= 12 and UI.HeaderRoom(794, false, true) >= 12, "and more than that with no Dock button, or docked in the auction house")
         local f = AuctionMeshFrame
         local realR, realL = rawget(f.tabHist, "GetRight"), rawget(f.refresh, "GetLeft")
         rawset(f.tabHist, "GetRight", function() return 300 end)
@@ -3712,6 +3715,99 @@ do
     flips[2592] = nil; ns.Journal:Dropped(2592, nil, "test"); ns.Journal:Dropped(2770, nil, "test")
     AuctionMeshDB.chars["Banker-Realm"] = nil
     UI.notice = nil
+end
+
+print("farmed or mined: what you did not buy, added by a click and posted as pure profit")
+do
+    local flips, J, St = AuctionMeshDB.flips, ns.Journal, ns.Store
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
+    for s2 = 1, 16 do bags[s2] = nil end
+    S.verified = {}; LIST[2319], LIST[4234], LIST[2589], LIST[2770] = nil, nil, nil, nil
+    ITEMS[9292] = { "Farm Ore", 4 }     -- a vendor pays 4c
+    ITEMS[9293] = { "Dull Herb", 95 }   -- a vendor pays 95c, the auction house about the same
+    LIST[9292] = { { 100, 40 }, { 101, 60 } }
+    LIST[9293] = { { 96, 40 }, { 97, 60 } }
+    St:Put(9292, 100, 100, GetServerTime()) -- the radar has seen both on the auction house
+    St:Put(9293, 96, 100, GetServerTime())
+    bags[1] = { itemID = 9292, stackCount = 20 }
+    bags[2] = { itemID = 9293, stackCount = 10 }
+    bags[3] = { itemID = 9999, stackCount = 3 } -- something the auction house has no price for
+    ITEMS[9999] = { "Odd Thing", 1 }
+    fire("BAG_UPDATE_DELAYED")
+    UI:Open("SELL"); UI.notice = nil; UI:Render()
+    local function heads() return table.concat(headsText(), "\n") end
+    local function looseRow(key)
+        for i = 1, #frames do
+            local f = frames[i]
+            local l = rawget(f, "looseItem")
+            if rawget(f, "detail") and f._shown and l and l.key == key then return f end
+        end
+    end
+    check(heads():find("IN YOUR BAGS, NOT BOUGHT BY THE ADDON: ADD WHAT YOU FARMED OR MINED (2)", 1, true) ~= nil,
+        "the Bags tab lists what is in your bags that the addon did not buy and the auction house has a price for")
+    check(flips[9292] == nil and flips[9293] == nil and looseRow(9999) == nil, "nothing is tracked by itself, and an item with no auction price is not offered")
+    local row = looseRow(9292)
+    check(row ~= nil and strip(row.name._text) == "Farm Ore x20" and row.btn._text == "Add" and strip(row.profit._text) == "about 19s00c",
+        "each has an Add button and what it is worth after the cut (20 x 95c)")
+    local n0 = #posted
+    row.btn._scripts.OnClick(row.btn)
+    local f = flips[9292]
+    check(f ~= nil and f.units == 20 and f.cost == 0 and f.farm == 20 and not f.unknownCost and #posted == n0,
+        "Add: 20 Farm Ore are tracked as farmed, at a cost of nothing; nothing is posted by that click")
+    check(J.list[#J.list].key == 9292 and J.list[#J.list].kind == "FARM", "the record says farmed, not bought")
+    UI.notice = nil; UI:Render()
+    check(heads():find("FARMED OR MINED, TO POST: ALL PROFIT (1)", 1, true) ~= nil and looseRow(9292) == nil,
+        "it moves to its own section, FARMED OR MINED, apart from what was flipped")
+    advance(3); UI:Render()
+    local p = Se.prices[9292]
+    check(p and p.price == 99, "its price is read at once and set like any post: 1c under the cheapest (99c)")
+    local fr
+    for i = 1, #frames do
+        local x = frames[i]
+        if rawget(x, "detail") and x._shown and rawget(x, "item") and x.item.key == 9292 then fr = x end
+    end
+    print("     " .. strip(fr.name._text) .. " | " .. strip(fr.c[2]._text) .. " | " .. strip(fr.profit._text) .. " | " .. strip(fr.detail._text))
+    check(strip(fr.c[2]._text) == "farmed" and strip(fr.profit._text) == "+18s80c" and strip(fr.detail._text):find("^Farmed or mined: cost nothing  >  Sell 99c  >  %+94c each, all profit"),
+        "the row says farmed where the cost would be, and all of what it sells for after the cut is profit (20 x 94c)")
+    local ft = strip(AuctionMeshFrame.footer._text)
+    check(ft:find("Farmed or mined: + 18s80c when sold", 1, true) ~= nil and ft:find("Holding:", 1, true) == nil,
+        "the footer counts it apart from what you bought")
+    -- posted with the ordinary Post click
+    Se:Post(9292); advance(1)
+    local L = AuctionMeshDB.listed[9292]
+    check(#posted == n0 + 1 and posted[#posted].qty == 20 and posted[#posted].price == 99 and L and L.farm == true and L.cost == 0 and flips[9292] == nil,
+        "Post puts all 20 up at 99c; the auction is still marked farmed")
+    UI:Render()
+    for i = 1, #frames do
+        local x = frames[i]
+        if rawget(x, "detail") and x._shown and rawget(x, "item") and x.item.key == 9292 then fr = x end
+    end
+    check(strip(fr.c[2]._text) == "farmed" and fr.item.action == "LISTED", "and its listed row says farmed too")
+    -- not a purchase: Details' biggest purchases leaves it out
+    check(drawerText():find("Farm Ore x20  at", 1, true) == nil, "it is not among your purchases in Details")
+    -- the only floor is the vendor
+    row = looseRow(9293)
+    row.btn._scripts.OnClick(row.btn)
+    advance(3)
+    local ph = Se.prices[9293]
+    check(flips[9293] and flips[9293].farm == 10 and ph and ph.price == nil and tostring(ph.hold):find("a vendor pays more", 1, true),
+        "something a vendor pays more for than the auction house (95c against 90c after the cut) is not posted")
+    -- more of an item that is partly bought: the cost is spread over all of it
+    flips[9292] = { kind = "FLIP", units = 10, cost = 40, sell = 99, at = GetServerTime() }
+    bags[1] = { itemID = 9292, stackCount = 30 }; fire("BAG_UPDATE_DELAYED")
+    check(Se:Farm(9292) == 20 and flips[9292].units == 30 and flips[9292].cost == 13 and flips[9292].farm == 20,
+        "20 farmed added to 10 bought at 40c: one holding of 30 at 13c each")
+    local mixed
+    for _, e in ipairs(Se:Entries()) do if e.key == 9292 and e.action ~= "LISTED" then mixed = e end end
+    check(mixed and mixed.farm == nil, "a holding that is part bought is listed with what you bought, not as farmed")
+    -- clean up
+    flips[9292], flips[9293], AuctionMeshDB.listed[9292] = nil, nil, nil
+    for i = #J.list, 1, -1 do if J.list[i].key == 9292 or J.list[i].key == 9293 then table.remove(J.list, i) end end
+    for s2 = 1, 16 do bags[s2] = nil end
+    fire("BAG_UPDATE_DELAYED")
+    LIST[9292], LIST[9293] = nil, nil
+    Se.prices[9292], Se.prices[9293] = nil, nil
+    UI.tab = "BUY"; UI.notice = nil; UI:Render()
 end
 
 -- nothing in the whole run raised an error inside the redraw or an input (they are caught, so they must be looked for)

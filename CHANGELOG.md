@@ -6,6 +6,19 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.49.0 (2026-11-23)
+
+- **Fixed: the Refresh button lay over the Setup tab** on the floating panel while the auction house was open (the Dock button, Snapshot and Refresh together needed more room than there was). The four tabs and the buttons at the top right are narrower now, their sizes are in one place, and a test holds the narrowest panel to a gap between them (20 px).
+- **Farmed or mined items: post what you did not buy.** Ore you mined, herbs you picked, anything an alt mailed you.
+  - The Bags tab has a new section at the bottom, **IN YOUR BAGS, NOT BOUGHT BY THE ADDON**: the items in your bags that the auction house has a price for (the 12 worth the most), each with what it is worth after the cut and an **Add** button.
+  - **Add** tracks the item as farmed, at a cost of nothing. Nothing is posted by that click, and nothing is ever added by itself.
+  - It moves to its own section, **FARMED OR MINED, TO POST: ALL PROFIT**, apart from what was flipped. Its price is read at once and set the same way as for a flip (just under the real market, a few cheap units ignored). Post, Post next and the one key post it like anything else.
+  - Because it cost nothing, all of what it sells for after the cut is counted as profit. The only floor is the vendor: it is not posted for less than a vendor pays.
+  - Its row says `farmed` where the cost would be (also once it is listed, and if it comes back unsold), the Bags footer counts it apart (`Farmed or mined: + X when sold`), and it is left out of "Your biggest purchases" in Details.
+  - Adding farmed units of an item you also bought makes one holding, with the cost spread over all of it; that holding is listed with what you bought.
+- The Setup row with the bank alt button is labelled `Panel / bank alt` (the longer label could be cut off).
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.48.0 (2026-11-23)
 
 - **Bank alt.** One of your characters can be marked as the bank alt, and the setting is kept for the whole account. On that character the addon is for vendors only:
