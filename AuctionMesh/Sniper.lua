@@ -89,7 +89,8 @@ local ARMED_KEEP = 780            -- while armed: only a listing about to become
 local LADDER_MAX = 900            -- a listing older than this is never used for a flip straight from the radar
 local LADDER_ROWS = 20            -- rows of a listing that are remembered for it
 -- UPKEEP BUDGET: of every N+1 requests, N are radar reads (see Sniper:UpkeepTurn)
-Sniper.upkeep = { every = 8, bags = 3 }
+-- (bagsNew: on the Bags tab while something you want to post has no price yet)
+Sniper.upkeep = { every = 8, bags = 3, bagsNew = 1 }
 local ALERT_SRC = { vendor = true, market = true, drop = true }
 local SEARCH_TIMEOUT = 3 -- default; the Tuner replaces it with a figure from the measured pace
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
@@ -857,7 +858,15 @@ end
 function Sniper:UpkeepEvery()
     local c = self.upkeep
     local U = ns.UI
-    if U and U.tab == "SELL" and not self:SnipeMode() then return c.bags end
+    if U and U.tab == "SELL" and not self:SnipeMode() then
+        -- You are on the Bags tab to post, and some of it has no price yet:
+        -- every other request reads a price until they are all in (it was one
+        -- in four, and a dozen items took half a minute of what looked like
+        -- nothing happening). The radar still has every other request.
+        local Se = ns.Seller
+        if Se and Se.Unpriced and Se:Unpriced() then return c.bagsNew end
+        return c.bags
+    end
     return c.every
 end
 function Sniper:UpkeepTurn()
@@ -1656,6 +1665,11 @@ function Sniper:SessionTouch()
         se = { at = now, won = 0, lost = 0, gone = 0, profit = 0 }
         self.session = se
         ns.Log("SESSION started (first input after a break)")
+    elseif se.last then
+        -- TODAY'S CLOCK: the time of all of today's sessions, kept across
+        -- reloads and log-outs. Each input adds the time since the one before.
+        local t = AuctionMeshDB and AuctionMeshDB.totals
+        if t and t.day then t.day.secs = (t.day.secs or 0) + (now - se.last) end
     end
     se.last = now
     return se

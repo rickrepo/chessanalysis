@@ -166,7 +166,7 @@ function Seller:Entries()
             if action == "VENDOR" then
                 -- bought under vendor price, but worth more on the auction house: that is the recommendation
                 if self:BestExit(key, f) == "AH" then action, vendorAlt = "AH", f.sell end
-            elseif p and p.hold and now - p.at < HOLD_TTL then
+            elseif p and p.hold and now - p.at < HOLD_TTL and not farm then -- (what you farmed is never held back)
                 action = "HOLD"
             elseif not f.unknownCost then
                 -- held as a flip, but a vendor pays more than it cost (some of it was
@@ -204,6 +204,24 @@ function Seller:Entries()
     return out
 end
 
+-- WHERE THE PRICES ARE (Bags tab). Posting needs a live price for each item,
+-- and each price is one request. Returns how many of what is to post have a
+-- price ready, how many there are, the item being read right now, and about
+-- how many seconds the rest will take at the current pace.
+function Seller:PriceProgress(entries)
+    local ready, total = 0, 0
+    for _, e in ipairs(entries or self:Entries()) do
+        if e.action == "AH" then
+            total = total + 1
+            if self:PriceReady(e.key) then ready = ready + 1 end
+        end
+    end
+    local S, G = ns.Sniper, ns.Gate
+    local cycle = (G and G.cycle) or 0.65
+    local every = (S and S.UpkeepEvery and S:UpkeepEvery() or 3) + 1 -- requests per price check, the radar's reads included
+    return ready, total, self.pending and self.pending.key or nil, math.ceil((total - ready) * every * cycle)
+end
+
 function Seller:Instructions(entries)
     local n = { AH = 0, VENDOR = 0, MAIL = 0, HOLD = 0, LISTED = 0 }
     for _, e in ipairs(entries) do n[e.action] = (n[e.action] or 0) + 1 end
@@ -215,12 +233,17 @@ function Seller:Instructions(entries)
     end
     if n.AH > 0 then
         if ahOpen() then
-            local ready = 0
-            for _, e in ipairs(entries) do
-                local p = e.action == "AH" and self.prices[e.key]
-                if p and p.price and GetTime() - p.at < PRICE_TTL then ready = ready + 1 end
+            -- what is going on, in figures: so many prices are in, so many to go, about how long
+            local ready, total, now, secs = self:PriceProgress(entries)
+            if ready >= total then
+                add("AH", ("All %d priced and ready: press Post on each item, or Post next."):format(total))
+            elseif ns.Sniper and ns.Sniper.SnipeMode and ns.Sniper:SnipeMode() then
+                lines[#lines + 1] = ("|cffffd100READING PRICES: %d of %d ready.|r |cffff8040Paused while you roll the wheel (every request goes to sniping). Stop rolling and the rest are read.|r"):format(ready, total)
+            else
+                lines[#lines + 1] = ("|cffffd100READING PRICES: %d of %d ready%s. About %ds for the rest.|r |cffaaaaaaEach price is one request to the auction house. %s|r"):format(
+                    ready, total, now and (", now " .. nameOf(now)) or "", secs,
+                    ready > 0 and "The ready ones can be posted now." or "Post lights up on a row as its price comes in.")
             end
-            add("AH", ("Press Post on each item, or Post next (%d of %d priced and ready)."):format(ready, n.AH))
         else
             add("AH", "Open the Auction House to post " .. n.AH .. " item(s).")
         end
@@ -962,6 +985,22 @@ function Seller:NextToPrice(onlyPressed)
     end
 end
 
+-- True while something in your bags that is to be posted has no live price
+-- (and is not being held): the Bags tab then reads prices faster.
+function Seller:Unpriced()
+    local now = GetTime()
+    local last = self.pricedAt or {}
+    for key, f in pairs(flips()) do
+        if (f.kind == "FLIP" or f.kind == "VENDOR") and (bagCount[key] or 0) > 0 then
+            local p = self.prices[key]
+            -- (only one that can be asked for now: each item is asked at most once in 20 seconds,
+            -- so an item whose price does not come cannot keep the faster pace on)
+            if (not p or (p.price and now - p.at >= PRICE_TTL)) and (not last[key] or now - last[key] >= 20) then return true end
+        end
+    end
+    return false
+end
+
 function Seller:Tick()
     if not ahOpen() then return end
     -- Pricing searches are sent by the sniper (Sniper:NextCheck gives them the
@@ -1041,10 +1080,21 @@ function Seller:OnResults(key, rows, commodity)
         -- bought under vendor price, and the auction house does not beat the vendor by enough: sell it to a vendor
         price, why = nil, "a vendor pays as much"
     end
-    if price and (f.farm or 0) >= (f.units or 0) and (f.units or 0) > 0 then
-        -- farmed or mined: it cost nothing, so the only floor is the vendor. Not posted for less than a vendor pays.
+    if (f.farm or 0) >= (f.units or 0) and (f.units or 0) > 0 then
+        -- FARMED OR MINED IS NEVER HELD BACK. It cost nothing: whatever it
+        -- sells for is profit, so there is no price it has to wait for. (3.49
+        -- held it when a vendor paid more than the auction house. It was
+        -- yours to post, and it sat there.) With no price from the rule above
+        -- it goes just under the cheapest listing; a vendor paying more is
+        -- said on its row, and the choice is yours.
+        if not price then
+            local low = priced[1] and priced[1].price
+            price = low and max(Deals.cfg.step or 1, Deals.round(low - Deals.cfg.undercut, Deals.cfg)) or nil
+            if price then why = "undercut" end
+        end
         local v = ns.Sniper and ns.Sniper.vendorOf and ns.Sniper.vendorOf(key) or 0
-        if v > 0 and floor(price * (1 - Deals.cfg.cut)) - feeEach < v then price, why = nil, "a vendor pays more than the auction house right now" end
+        self.vendorMore = self.vendorMore or {}
+        self.vendorMore[key] = (price and v > 0 and floor(price * (1 - Deals.cfg.cut)) - feeEach < v) and v or nil
     end
     if price then
         self.prices[key] = { price = price, commodity = commodity, why = why, at = GetTime() }

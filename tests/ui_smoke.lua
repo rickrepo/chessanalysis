@@ -177,7 +177,7 @@ AuctionMeshDB.cfg.minProfit, ns.Deals.cfg.minProfit = 20, 20 -- the walkthrough 
 -- which is what happens when the game does not allow a price request without a click.
 -- One-click buying and holding fire have their own section at the end.
 S.hold = 0
-S.upkeep.every, S.upkeep.bags = 0, 0 -- the walkthrough is about what is shown, not about request turns (those have their own section and tests/pace_test.lua)
+S.upkeep.every, S.upkeep.bags, S.upkeep.bagsNew = 0, 0, 0 -- the walkthrough is about what is shown, not about request turns (those have their own section and tests/pace_test.lua)
 ns.Auto.cfg.manyHidden, ns.Auto.cfg.crowded = 1e9, 1e9 -- the walkthrough is not a real session: auto-adjust must not move the smallest profit under it (it has its own section)
 ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1 -- the capital limits have their own section at the end
 AuctionMeshDB.cfg.autoConfirm = false -- the walkthrough drives the two-input path; one-input buying has its own section
@@ -245,7 +245,7 @@ check(S.verified[2447] == nil, "Peacebloom (500 cheap units) correctly rejected"
 do
     local ft = strip(AuctionMeshFrame.footer._text)
     print("     " .. ft)
-    check(ft:find("^SESSION starts with your first press   |   TODAY  0 bought  %+ 0c   |   %d%d%d%d  0 bought  %+ 0c$"),
+    check(ft:find("^SESSION starts with your first press   |   TODAY 0:00  0 bought  %+ 0c   |   %d%d%d%d  0 bought  %+ 0c$"),
         "footer: SESSION (not started yet), TODAY and the year")
     check(strip(AuctionMeshFrame.mode._text) == "VENDOR + FLIPS", "the mode badge at the top left reads VENDOR + FLIPS")
 end
@@ -1729,14 +1729,15 @@ do
         S.session = nil
         UI.tab = "BUY"; UI.notice = nil; UI:Render()
         local function foot() return strip(AuctionMeshFrame.footer._text) end
-        check(foot() == ("SESSION starts with your first press   |   TODAY  3 bought  + 5s00c   |   %d  40 bought  + 90s00c"):format(year),
+        check(foot() == ("SESSION starts with your first press   |   TODAY 0:00  3 bought  + 5s00c   |   %d  40 bought  + 90s00c"):format(year),
             "before your first press: no session yet; today and the year are there from earlier")
         -- the first press starts the session and its clock
         UI.InputPress(true, "wheel")
         UI:Render()
-        check(foot():find("^SESSION 0:00  0 bought, 0 missed  %+ 0c   |   TODAY  3 bought"), "your first press starts the session: its clock is at 0:00")
+        check(foot():find("^SESSION 0:00  0 bought, 0 missed  %+ 0c   |   TODAY 0:00  3 bought"), "your first press starts the session: its clock is at 0:00, and so is today's")
         advance(65)
         check(foot():find("^SESSION 1:0%d  0 bought, 0 missed"), "the clock runs by itself (1:05 after 65 seconds), with no redraw of the panel needed")
+        check(foot():find("TODAY 1:0%d  3 bought"), "today has a clock too, running with the session")
         -- a purchase counts in all three
         LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
         S.checkedAt = {}; S.priority = 2770; advance(1)
@@ -1756,10 +1757,12 @@ do
         check(foot():find("^SESSION %d:%d%d %(over%)  1 bought, 1 missed"), "ten minutes without a press: the session is over, its figures stay")
         UI.InputPress(true, "wheel"); UI:Render()
         check(foot():find("^SESSION 0:00  0 bought, 0 missed  %+ 0c") and AuctionMeshDB.totals.day.n == 4, "the next press starts a new session from zero; today keeps its total")
+        check(foot():find("TODAY 1:0%d  4 bought") and AuctionMeshDB.totals.day.secs >= 65 and AuctionMeshDB.totals.day.secs < 70,
+            "today's clock keeps the time of the session before (up to its last press) and goes on from there")
         -- the day turns: today starts again, the year goes on
         AuctionMeshDB.totals.day.id = AuctionMeshDB.totals.day.id - 1
         UI:Render()
-        check(AuctionMeshDB.totals.day.n == 0 and AuctionMeshDB.totals.year.n == 41 and foot():find("TODAY  0 bought", 1, true), "a new day: today starts at zero, the year goes on")
+        check(AuctionMeshDB.totals.day.n == 0 and AuctionMeshDB.totals.year.n == 41 and foot():find("TODAY 0:00  0 bought", 1, true), "a new day: today starts at zero (its clock too), the year goes on")
         -- the first time, the totals are filled from the journal of your trades
         AuctionMeshDB.totals = nil
         local tt = S:Totals()
@@ -1784,7 +1787,7 @@ do
         local now = GetServerTime()
         for _, k in ipairs({ 3356, 3820, 785 }) do ns.Store.fp[k], ns.Store.ft[k] = 300, now end
         local everyWas, bagsWas = S.upkeep.every, S.upkeep.bags
-        S.upkeep.every, S.upkeep.bags = 8, 8
+        S.upkeep.every, S.upkeep.bags, S.upkeep.bagsNew = 8, 8, 8
         S.wide, S.triggers, S.judged, S.checkedAt, S.ownSweep, S.sweep = {}, {}, {}, {}, {}, {}
         local n0 = #sent
         local function searched(k) for i = n0 + 1, #sent do if sent[i] == "search" .. k then return true end end return false end
@@ -1817,7 +1820,7 @@ do
         check(S.triggers[3820] ~= nil and S.wide[3820] == nil, "Stranglekelp at 1s40c under a 3s market (less than half): an ordinary alert, checked at once")
         S.triggers, S.trigInfo, S.wide = {}, {}, {}
         S.InFocus, S.InWide = realFocus, realWide
-        S.upkeep.every, S.upkeep.bags = everyWas, bagsWas
+        S.upkeep.every, S.upkeep.bags, S.upkeep.bagsNew = everyWas, bagsWas, 0
         for _, k in ipairs({ 3356, 3820, 785 }) do ns.Store.fp[k], ns.Store.ft[k] = nil, nil; ITEMS[k] = nil; LIST[k] = nil; S.ownSweep[k] = nil; S.sweep[k] = nil end
         LIST[2319] = leather
         ns.radarSince = 0
@@ -3813,13 +3816,21 @@ do
     check(strip(fr.c[2]._text) == "farmed" and fr.item.action == "LISTED", "and its listed row says farmed too")
     -- not a purchase: Details' biggest purchases leaves it out
     check(drawerText():find("Farm Ore x20  at", 1, true) == nil, "it is not among your purchases in Details")
-    -- the only floor is the vendor
+    -- never held back: even where a vendor pays more than the auction house, it is priced and can be posted
     row = looseRow(9293)
     row.btn._scripts.OnClick(row.btn)
-    advance(3)
+    advance(3); UI:Render()
     local ph = Se.prices[9293]
-    check(flips[9293] and flips[9293].farm == 10 and ph and ph.price == nil and tostring(ph.hold):find("a vendor pays more", 1, true),
-        "something a vendor pays more for than the auction house (95c against 90c after the cut) is not posted")
+    check(flips[9293] and flips[9293].farm == 10 and ph and ph.price == 95 and ph.hold == nil,
+        "something a vendor pays more for (95c against 90c after the cut) is still priced, 1c under the cheapest: farmed items are never held back")
+    local held = false
+    for _, e in ipairs(Se:Entries()) do if e.key == 9293 and e.action == "HOLD" then held = true end end
+    for i = 1, #frames do
+        local x = frames[i]
+        if rawget(x, "detail") and x._shown and rawget(x, "item") and x.item.key == 9293 then fr = x end
+    end
+    check(not held and fr.item.key == 9293 and strip(fr.detail._text):find("%(a vendor pays more: 95c each%)$") and fr.btn._text == "Post",
+        "it is under FARMED OR MINED with its Post button, and the row says a vendor pays more: the choice is yours")
     -- more of an item that is partly bought: the cost is spread over all of it
     flips[9292] = { kind = "FLIP", units = 10, cost = 40, sell = 99, at = GetServerTime() }
     bags[1] = { itemID = 9292, stackCount = 30 }; fire("BAG_UPDATE_DELAYED")
@@ -3835,6 +3846,54 @@ do
     fire("BAG_UPDATE_DELAYED")
     LIST[9292], LIST[9293] = nil, nil
     Se.prices[9292], Se.prices[9293] = nil, nil
+    UI.tab = "BUY"; UI.notice = nil; UI:Render()
+end
+
+print("posting: what is going on while prices are read")
+do
+    local flips = AuctionMeshDB.flips
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
+    for s2 = 1, 16 do bags[s2] = nil end
+    S.verified = {}
+    local keys = { 9401, 9402, 9403 }
+    for i, k in ipairs(keys) do
+        ITEMS[k] = { "Post Item " .. i, 1 }
+        LIST[k] = { { 100 + i, 40 }, { 110 + i, 60 } }
+        flips[k] = { kind = "FLIP", units = 5, cost = 20, sell = 100, at = GetServerTime() }
+        bags[i] = { itemID = k, stackCount = 5 }
+        Se.prices[k] = nil
+    end
+    Se.pricedAt = {}; Se.pending = nil; Se.priority = nil
+    fire("BAG_UPDATE_DELAYED")
+    local wasNew, wasBags = S.upkeep.bagsNew, S.upkeep.bags
+    S.upkeep.bagsNew, S.upkeep.bags = 1, 3
+    UI:Open("SELL"); UI.notice = nil; UI.wheelSeen = nil; UI:Render()
+    local st = strip(AuctionMeshFrame.status._text)
+    print("     " .. st:gsub("\n", "\n     "))
+    check(st:find("READING PRICES: 0 of 3 ready", 1, true) and st:find("About %d+s for the rest%.") and st:find("Post lights up on a row as its price comes in.", 1, true),
+        "with nothing priced yet the Bags tab says so in figures: 0 of 3 ready, and about how long the rest takes")
+    check(Se:Unpriced() == true and S:UpkeepEvery() == 1, "while prices are missing every other request reads one (it was one in four)")
+    -- rolling the wheel: sniping has every request, and the tab says the prices wait
+    UI.wheelSeen = GetTime(); UI:Render()
+    st = strip(AuctionMeshFrame.status._text)
+    check(st:find("READING PRICES: 0 of 3 ready.", 1, true) and st:find("Paused while you roll the wheel", 1, true), "while you roll the wheel the prices wait, and the tab says that too")
+    UI.wheelSeen = nil
+    -- they come in one by one
+    local seen = {}
+    for _ = 1, 40 do
+        advance(0.5); UI:Render()
+        local r = Se:PriceProgress()
+        seen[r] = true
+        if r == 3 then break end
+    end
+    st = strip(AuctionMeshFrame.status._text)
+    check(seen[1] and seen[2] and seen[3] and st:find("All 3 priced and ready: press Post on each item, or Post next.", 1, true),
+        "the count goes up as each price comes in, and ends at: all 3 priced and ready")
+    check(Se:Unpriced() == false and S:UpkeepEvery() == 3, "with every price in, the radar has three of every four requests again")
+    for _, k in ipairs(keys) do flips[k] = nil; LIST[k] = nil; Se.prices[k] = nil; ns.Journal:Dropped(k, nil, "test") end
+    for s2 = 1, 16 do bags[s2] = nil end
+    fire("BAG_UPDATE_DELAYED")
+    S.upkeep.bagsNew, S.upkeep.bags = wasNew, wasBags
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
 end
 

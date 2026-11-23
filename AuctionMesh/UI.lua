@@ -222,8 +222,10 @@ local function fillSell(r, e, short)
     end
     local paidText = paid and short(paid) or (ORANGE .. "unknown|r")
     if e.farm and e.action ~= "HOLD" then
-        r.detail:SetText(("Farmed or mined: cost nothing  >  Sell %s%s  >  %s+%s|r each, all profit"):format(short(sell),
-            (not live and e.action ~= "LISTED") and (GREY .. " (about)|r") or "", GREEN, short(profit or 0)))
+        local vm = e.action ~= "LISTED" and Se.vendorMore and Se.vendorMore[e.key]
+        r.detail:SetText(("Farmed or mined: cost nothing  >  Sell %s%s  >  %s+%s|r each, all profit%s"):format(short(sell),
+            (not live and e.action ~= "LISTED") and (GREY .. " (about)|r") or "", GREEN, short(profit or 0),
+            vm and (ORANGE .. ("   (a vendor pays more: %s each)|r"):format(short(vm))) or ""))
     elseif e.action == "HOLD" then
         r.detail:SetText(("Paid %s each  >  market is lower right now"):format(paidText))
     else
@@ -1143,7 +1145,9 @@ function UI.TradesFooter(short)
     else
         parts[1] = ("%sSESSION|r %sstarts with your first press|r"):format(WHITE_C, GREY)
     end
-    parts[2] = ("%sTODAY|r  %d bought  %s"):format(WHITE_C, t.day.n, worth(t.day.profit))
+    -- today's clock: all of today's sessions, running while one is on
+    local live = (se and GetTime() - (se.last or se.at) <= 600) and (GetTime() - (se.last or se.at)) or 0
+    parts[2] = ("%sTODAY|r %s%s|r  %d bought  %s"):format(WHITE_C, live > 0 and GOLD or GREY, clockText((t.day.secs or 0) + live), t.day.n, worth(t.day.profit))
     parts[3] = ("%s%d|r  %d bought  %s"):format(WHITE_C, t.year.id, t.year.n, worth(t.year.profit))
     return parts
 end

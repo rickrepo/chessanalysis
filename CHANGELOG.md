@@ -6,6 +6,16 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.53.0 (2026-11-23)
+
+- **Posting: you can see what is going on, and it is faster.** Posting needs a live price for each item, and each price is one request to the auction house. Until now only one request in four read a price while you were on the Bags tab, and nothing said so: a dozen items took about half a minute of what looked like a frozen panel.
+  - The Bags tab now says it in figures: `READING PRICES: 4 of 12 ready, now Runecloth. About 10s for the rest.` and, when done, `All 12 priced and ready`. Items whose price is in can be posted while the rest are read.
+  - While prices are missing, every other request reads one (twice as fast as before); once they are all in, the radar has three of every four requests again. On every other tab nothing changes: the radar keeps eight of every nine.
+  - If you roll the wheel while on the Bags tab, sniping has every request, and the tab says the prices are paused for that.
+- **Farmed or mined items are never held back.** 3.49 held them when a vendor paid more than the auction house. They cost nothing, so there is no price they have to wait for: they are always priced just under the cheapest listing and can be posted. Where a vendor pays more, the row says so (`a vendor pays more: 95c each`) and the choice is yours.
+- **TODAY has a clock too**, next to the session's in the footer: the time of all of today's sessions, running while a session is on and kept across reloads and log-outs.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.52.0 (2026-11-23)
 
 - **A Gold tab: your gold over time, drawn like a stock chart.**
