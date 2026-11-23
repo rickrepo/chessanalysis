@@ -295,11 +295,9 @@ if SCEN == "armed" then
     UI:Render(); st = strip(AuctionMeshFrame.status._text or "")
     print("     " .. st:gsub("\n", "\n     "))
     check(st:find("Radar: a read every 0%.6%ds%.$") ~= nil and select(2, st:gsub("\n", "")) == 0, "the Trades tab shows it in one line: a read every 0.6xs")
-    local dt = {}
-    for _, ln in ipairs(UI:SessionLines(ns.Seller:Entries(), ns.Seller.short)) do dt[#dt + 1] = strip((ln.head or ln.l or "") .. (ln.r and ("  |  " .. ln.r) or "")) end
-    dt = table.concat(dt, "\n")
-    check(dt:find("Requests in the last minute  |  9%d radar, 0 alerts, 0 buying, 0 other") ~= nil and dt:find("Ready for a flip straight from the radar  |  12 of 12", 1, true) ~= nil,
-        "Details, Session has the rest: 9x reads and no other request in the last minute, 12 of 12 items ready")
+    local m = ns.Watch:LastMinute()
+    check((m.radar or 0) >= 90 and (m.radar or 0) <= 99 and (m.alert or 0) == 0 and (m.buy or 0) == 0 and (m.upkeep or 0) + (m.sell or 0) == 0,
+        "the last minute: 9x radar reads and no other request")
 
 elseif SCEN == "unarmed" then
     -- the panel open on the Trades tab, no input: 12 focus items want their listings read

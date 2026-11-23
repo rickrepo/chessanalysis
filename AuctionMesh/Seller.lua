@@ -1265,23 +1265,12 @@ end
 -- more than was marked lost, and nothing that is lost after the update:
 -- what you own apart from the addon's purchases is not taken for its own.
 local LOST_WHY = { ["no longer in your bags, mailbox or auctions"] = true, ["not found in bags or mailbox"] = true }
-function Seller:Recover()
-    local rec = AuctionMeshDB.recover
-    local J = ns.Journal
-    if not rec or not (J and J.list) then return 0 end
-    local now = GetServerTime()
-    if now - (rec.at or 0) > 48 * 3600 then AuctionMeshDB.recover = nil; return 0 end
-    if not rec.items then
-        -- the first look after the update: what is marked lost, per item
-        rec.items = {}
-        for _, t in ipairs(J.list) do
-            if (t.lost or 0) > 0 and LOST_WHY[t.lostWhy or ""] and rec.at - (t.at or 0) < 48 * 3600 then
-                rec.items[t.key] = (rec.items[t.key] or 0) + t.lost
-            end
-        end
-    end
-    local total = 0
-    for key, owed in pairs(rec.items) do
+-- Units the journal marks "not found" that are in your bags after all go back
+-- on the Bags tab with what they cost: per item never more than `items` says,
+-- and only what the bags hold beyond the record.
+local function adopt(self, items)
+    local J, now, total = ns.Journal, GetServerTime(), 0
+    for key, owed in pairs(items) do
         local f = flips()[key]
         local n = min(owed, (bagCount[key] or 0) - (f and f.units or 0))
         if n > 0 then
@@ -1307,17 +1296,64 @@ function Seller:Recover()
                 flips()[key] = { kind = kind or "FLIP", sell = plan or 0, units = n, cost = each or 0, unknownCost = (each == nil),
                                  at = now, proof = "found in your bags again" }
             end
-            rec.items[key] = owed - n
-            if rec.items[key] <= 0 then rec.items[key] = nil end
+            items[key] = owed - n
+            if items[key] <= 0 then items[key] = nil end
             total = total + n
             self.prices[key] = nil
-            ns.Log("RECOVER %s: %d unit(s) an older version dropped are in the bags: tracked again", tostring(key), n)
+            ns.Log("RECOVER %s: %d unit(s) marked not found are in the bags: tracked again", tostring(key), n)
             say(("|cff33ff66%s: %d that the addon had lost track of are in your bags. They are back on the Bags tab.|r"):format(nameOf(key), n))
         end
     end
+    return total
+end
+
+function Seller:Recover()
+    local rec = AuctionMeshDB.recover
+    local J = ns.Journal
+    if not rec or not (J and J.list) then return 0 end
+    local now = GetServerTime()
+    if now - (rec.at or 0) > 48 * 3600 then AuctionMeshDB.recover = nil; return 0 end
+    if not rec.items then
+        -- the first look after the update: what is marked lost, per item
+        rec.items = {}
+        for _, t in ipairs(J.list) do
+            if (t.lost or 0) > 0 and LOST_WHY[t.lostWhy or ""] and rec.at - (t.at or 0) < 48 * 3600 then
+                rec.items[t.key] = (rec.items[t.key] or 0) + t.lost
+            end
+        end
+    end
+    local total = adopt(self, rec.items)
     if not next(rec.items) then AuctionMeshDB.recover = nil end
     if total > 0 then self:Refresh() end
     return total
+end
+
+-- REFRESH (the button at the top of the panel). Everything the panel shows
+-- about what you hold is read again, on your click:
+--   * the bags are counted afresh (normally done when the game says they
+--     changed; if that was missed, the list was out of date until the next
+--     change)
+--   * the mailbox, if it is open
+--   * units of the last 48 hours that the addon gave up on as "not found" and
+--     that are in your bags after all are tracked again, with what they cost
+--     (never more than it had marked not found)
+--   * your own auctions are read again in the radar's next upkeep turn: that
+--     is the one request this costs, and it never goes ahead of a deal
+-- Returns the units picked up again.
+function Seller:Rescan()
+    self:ScanBags()
+    if mailOpen() and (GetInboxNumItems() or 0) > 0 then self:ScanMail() end
+    local J = ns.Journal
+    local owed, now = {}, GetServerTime()
+    for _, t in ipairs((J and J.list) or {}) do
+        if (t.lost or 0) > 0 and LOST_WHY[t.lostWhy or ""] and now - (t.at or 0) < 48 * 3600 then
+            owed[t.key] = (owed[t.key] or 0) + t.lost
+        end
+    end
+    local back = adopt(self, owed)
+    if ahOpen() and ns.Sniper then ns.Sniper.needOwned = true end
+    ns.Log("REFRESH by click: bags read again, %d unit(s) picked up again", back)
+    return back
 end
 
 -- Rebuilds missing Flip Bag entries from the last 3 days of purchases still in your bags.

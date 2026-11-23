@@ -73,6 +73,20 @@ function UI:Now()
 end
 
 -- Shows the latest message at the top of the window for 10 seconds.
+-- The Refresh button: what you hold is read again and everything is redrawn
+-- from scratch (lists back at their top, nothing kept from the last drawing).
+function UI:Refresh()
+    local Se = ns.Seller
+    local back = Se:Rescan()
+    self.focusCache, self.drawerLines, self.drawerSig, self.drawerStale = nil, nil, nil, nil
+    self.scroll, self.dscroll, self.fast = {}, 0, nil
+    local n = 0
+    for _, e in ipairs(Se:Entries()) do if e.action ~= "LISTED" then n = n + 1 end end
+    self:Notice(("Refreshed: bags read again. %d item%s to deal with (tab Bags).%s"):format(n, n == 1 and "" or "s",
+        back > 0 and (" %d unit%s the addon had lost track of %s back."):format(back, back == 1 and "" or "s", back == 1 and "is" or "are") or ""), true)
+    self:Render()
+end
+
 function UI:Notice(text, transient)
     self.notice = { text = text, till = GetTime() + 10 }
     if not transient and AuctionMeshDB then
@@ -109,13 +123,14 @@ local function fillBuy(r, d, short)
     r.state:SetText("")
     local each = d.units > 0 and d.profit / d.units or 0
     local unit = units > 0 and floor(total / units + 0.5) or 0
+    local shownProfit
     r.c[1]:SetText(("%d @ %s"):format(units, short(unit)))
     if d.kind == "VENDOR" then
         r.c[2]:SetText(short(d.sell))
         r.c[3]:SetText(GREEN .. pct(unit, d.sell) .. "|r")
         r.c[4]:SetText(GREEN .. "instant|r")
         r.detail:SetText(("%sSAFE|r  Buy %d for %s, vendor pays %s"):format(GREEN, units, short(total), short(d.sell * units)))
-        r.profit:SetText(GREEN .. "+" .. short(each * units) .. "|r")
+        shownProfit = each * units
     else
         local tr = ns.Store:Trend(d.key, GetServerTime(), 24) or d.trend
         r.c[2]:SetText(short(d.wall or d.sell) .. (tr and ((tr >= 0 and GREEN or RED) .. (" %+d%%|r"):format(floor(tr * 100 + 0.5))) or ""))
@@ -126,8 +141,13 @@ local function fillBuy(r, d, short)
         if d.eta then proof = proof .. (", sells in ~%d min"):format(math.max(1, floor(d.eta + 0.5))) end
         r.detail:SetText(("%sFLIP|r  Buy %d for %s, relist at %s %s(%s)|r"):format(
             GOLD, units, short(total), short(d.sell), GREY, proof))
-        r.profit:SetText(GREEN .. "+" .. short(d.profit) .. "|r")
+        shownProfit = d.profit
     end
+    -- the more it makes, the stronger the row: tint, name and profit figure
+    local heat, tier = UI.Heat(shownProfit)
+    r.profit:SetText(heat[4] .. "+" .. short(shownProfit) .. "|r")
+    if tier <= 2 then r.name:SetText(heat[4] .. S.nameOf(d.key) .. "|r") end
+    if heat[2] then r.heat:SetColorTexture(heat[2][1], heat[2][2], heat[2][3], heat[3]); r.heat:Show() end
     local b = S.buying
     if S:OneClick(d.key) then
         r.btn:SetText("BUY NOW"); r.btn:Enable()
@@ -298,7 +318,7 @@ local function buyStatus(n)
             cap.nextIn and (" Next pay-out in %s."):format(cap.nextIn >= 90 and (floor(cap.nextIn / 60 + 0.5) .. " min") or (floor(cap.nextIn) .. "s")) or "")
     end
     -- ONE LINE: the mode, and what the radar is doing. (How the last try
-    -- went, the last alert and the radar's figures are in Details, Session.)
+    -- went and the radar's figures are in the Snapshot.)
     if G:UserBusy() then
         lines[#lines + 1] = mode .. ORANGE .. "Paused for a moment (a click is in progress).|r"
     elseif sk then
@@ -395,8 +415,10 @@ end
 local function buildList(tab, deals, entries)
     local list = {}
     if tab == "BUY" then
-        section(list, "DEALS TO BUY NOW", CAPS.deal, deals)
-        if #deals == 0 then
+        local shown = UI.dealRows(deals)
+        list[#list + 1] = { head = ("DEALS TO BUY NOW (%d)"):format(#deals), caps = CAPS.deal }
+        for _, it in ipairs(shown) do list[#list + 1] = it end
+        if #shown == 0 then
             list[#list + 1] = { note = ahOpen() and "None right now. A sound plays when one appears." or "Open the auction house to look for deals." }
         end
     elseif tab == "SELL" then
@@ -495,203 +517,6 @@ function UI:RenderMoney(entries, short)
         fb == true and "come back when they sell, confirmed here" or fb == false and "do NOT come back on this realm; already taken off profits"
         or "should come back when they sell; the first sale will confirm it") or ""
     lg.note:SetText((#parts > 0 and ("Not counted: " .. table.concat(parts, "; ") .. ".") or "All amounts are after the 5% auction house cut.") .. endedNote .. feeText)
-end
-
--- The same figures as the MONEY section, as numbers.
-function UI.MoneyFigures(entries)
-    local Se = ns.Seller
-    entries = entries or Se:Entries()
-    local waiting, onway, _, soldKeys = Se:SalesMoney()
-    local listed, bought = 0, 0
-    local cut = 1 - ns.Deals.cfg.cut
-    for _, e in ipairs(entries) do
-        local _, _, net = Se:Numbers(e)
-        if e.action == "LISTED" then
-            if not (e.live == 0 and soldKeys[e.key]) then listed = listed + floor((e.listed.price or 0) * cut) * e.count end
-        elseif e.action ~= "HOLD" then
-            bought = bought + (net or 0) * e.count
-        end
-    end
-    local gold = GetMoney()
-    return { gold = gold, waiting = waiting, onway = onway, listed = listed, bought = bought, total = gold + waiting + onway + listed + bought }
-end
-
-local DRAWER_CHART_W = 376 -- the drawer's width less its margins
--- THE SESSION, DRAWN (Details, Session view: fixed at the top of the drawer,
--- the text scrolls under it).
---   * TRIES: one bar, green for bought, red for missed, orange for gone
---     before an input, with the percentages.
---   * GOLD: a column for every stretch of the session. Gold: what you hold.
---     The teal tick above it: what you are worth once everything has sold.
---     To the right of "now", paler: the next hour, with the sale gold that is
---     already certain (sold, waiting to be paid) arriving when it is due.
---     Nothing in the forecast is a guess: auctions that have not sold are in
---     the teal figure only.
---   * SPEED: a column for each of the last tries: seconds from the deal
---     showing to its end. Green: you bought it. Red: someone else had it
---     first (their purchase was in before yours got there). Orange: gone
---     with no input from you.
--- A gold sample is kept every 20 seconds (3 hours of them, across reloads).
-local CHART_COLS, CHART_NEXT, CHART_W, CHART_H = 84, 24, 3, 44
-local SPEED_COLS, SPEED_W, SPEED_H = 40, 8, 36
-local SESSION_ROWS = 12 -- drawer lines the graphics take
-function UI:SampleGold(force, entries)
-    local db = AuctionMeshDB
-    if not db then return end
-    local now = GetServerTime()
-    local h = db.goldHist or {}
-    db.goldHist = h
-    local last = h[#h]
-    if not force and last and now - last.t < 20 then return end
-    local ok, m = pcall(UI.MoneyFigures, entries)
-    if not ok or not m then return end
-    h[#h + 1] = { t = now, g = m.gold, w = m.total }
-    while #h > 540 or (h[1] and now - h[1].t > 3 * 3600) do table.remove(h, 1) end
-end
-
--- HOW FAST. The last tries (40 are kept, across reloads), each with its
--- timings in seconds from the moment the deal showed:
---   won:  you had it after `s`.
---   lost: someone else had it first. Their purchase reached the server before
---         yours did, so they took it within `s` (and, when the price was
---         still there for your price request, after `lo`).
---   gone: it left after `s` with no input from you.
-function UI.SpeedFigures()
-    local list = (AuctionMeshDB and AuctionMeshDB.outcomes) or {}
-    local out = { rows = {}, won = { n = 0, sum = 0 }, lost = { n = 0, sum = 0 }, gone = { n = 0, sum = 0 },
-                  parts = { n = 0, input = 0, lock = 0, price = 0, buy = 0 } }
-    for _, o in ipairs(list) do
-        local secs = o.k == "gone" and o.g or o.e
-        if secs and out[o.k] then
-            local row = { k = o.k, s = secs, t = o.t, key = o.key, i = o.i, h = o.h, q = o.q }
-            if o.k == "lost" and o.q and secs - ((o.i or 0) + o.q) > 0.05 then row.lo = (o.i or 0) + o.q end
-            out.rows[#out.rows + 1] = row
-            local b = out[o.k]
-            b.n, b.sum = b.n + 1, b.sum + secs
-            if not b.best or secs < b.best then b.best = secs end
-            if o.k == "won" and o.q then
-                -- where your time went: the input, the game's lock, the price answer, the purchase
-                local pt = out.parts
-                pt.n = pt.n + 1
-                pt.input = pt.input + (o.i or 0)
-                pt.lock = pt.lock + (o.h or 0)
-                pt.price = pt.price + math.max(0, o.q - (o.h or 0))
-                pt.buy = pt.buy + math.max(0, secs - (o.i or 0) - o.q)
-            end
-        end
-    end
-    return out
-end
-
--- What the Session view shows, as numbers (the drawing and the tests both use it).
-function UI:ChartData(entries)
-    local now = GetServerTime()
-    local h = (AuctionMeshDB and AuctionMeshDB.goldHist) or {}
-    -- this stretch of play: back to the last gap of over 30 minutes
-    local from = #h
-    while from > 1 and h[from].t - h[from - 1].t <= 1800 do from = from - 1 end
-    local t0 = h[from] and h[from].t or now
-    local span = math.max(60, now - t0)
-    local cols, hi = {}, 1
-    local j = from
-    local cur
-    for i = 1, CHART_COLS do
-        local tEnd = t0 + span * i / CHART_COLS
-        while h[j] and h[j].t <= tEnd do cur = h[j]; j = j + 1 end
-        if cur then
-            cols[i] = { g = cur.g, w = cur.w }
-            if cur.w > hi then hi = cur.w end
-            if cur.g > hi then hi = cur.g end
-        end
-    end
-    -- the next hour: what you hold now, plus the sale gold that is due by then
-    local m = UI.MoneyFigures(entries)
-    local pays = ns.Seller:PayOuts()
-    local nextCols, coming = {}, 0
-    for i = 1, CHART_NEXT do
-        local tEnd = 3600 * i / CHART_NEXT
-        local g = m.gold + m.waiting
-        for _, p in ipairs(pays) do if p.secs <= tEnd then g = g + p.amount end end
-        nextCols[i] = { g = g, w = m.total }
-        if g > hi then hi = g end
-    end
-    for _, p in ipairs(pays) do if p.secs <= 3600 then coming = coming + p.amount end end
-    if m.total > hi then hi = m.total end
-    local t = ns.Sniper.tally
-    local n = (t.won or 0) + (t.lost or 0) + (t.gone or 0)
-    return { cols = cols, next = nextCols, hi = hi, span = span, now = m, coming = coming + m.waiting, start = h[from],
-             tries = n, won = t.won or 0, lost = t.lost or 0, gone = t.gone or 0, speed = UI.SpeedFigures() }
-end
-
--- The figures behind the Session view, worked out once a second at most (at
--- once when a try has ended): the panel is redrawn often, and that stays cheap.
-function UI:SessionData(entries)
-    local t = ns.Sniper.tally
-    local n = (t.won or 0) + (t.lost or 0) + (t.gone or 0)
-    local now = GetTime()
-    if self.chartState and n == self.chartTries and now - (self.chartAt or 0) < 1 then return self.chartState end
-    self.chartAt, self.chartTries = now, n
-    self.chartState = self:ChartData(entries)
-    return self.chartState
-end
-
-function UI:RenderChart(show, short, entries)
-    local c = frame.chart
-    if not c then return end
-    c:SetShown(show)
-    if not show then return end
-    local d = self:SessionData(entries)
-    if c.drawn == d then return end
-    c.drawn = d
-    -- tries
-    local W = DRAWER_CHART_W
-    local function seg(tex, x, n)
-        local w = d.tries > 0 and floor(W * n / d.tries + 0.5) or 0
-        tex:ClearAllPoints(); tex:SetPoint("TOPLEFT", c.triesBar, "TOPLEFT", x, 0); tex:SetSize(math.max(w, 0.01), 8); tex:SetShown(w > 0)
-        return x + w
-    end
-    local x = seg(c.won, 0, d.won); x = seg(c.lost, x, d.lost); seg(c.gone, x, d.gone)
-    local function pct(n) return d.tries > 0 and floor(n * 100 / d.tries + 0.5) or 0 end
-    c.triesText:SetText(d.tries > 0 and ("%sTRIES|r   %s%d bought (%d%%)|r   %s%d missed (%d%%)|r   %s%d gone, no input (%d%%)|r"):format(
-        GREY, GREEN, d.won, pct(d.won), RED, d.lost, pct(d.lost), ORANGE, d.gone, pct(d.gone)) or (GREY .. "TRIES   none yet this session|r"))
-    -- gold
-    local function put(col, v, i, pale)
-        local hg = v and math.max(1, floor(CHART_H * v.g / d.hi + 0.5)) or 0
-        col.bar:SetHeight(math.max(hg, 0.01)); col.bar:SetShown(v ~= nil)
-        col.bar:SetColorTexture(1, 0.82, 0, pale and 0.35 or 0.9)
-        if v then
-            col.tick:ClearAllPoints()
-            col.tick:SetPoint("BOTTOMLEFT", c.plot, "BOTTOMLEFT", (i - 1) * CHART_W, math.min(CHART_H - 2, floor(CHART_H * v.w / d.hi + 0.5)))
-        end
-        col.tick:SetShown(v ~= nil)
-        col.tick:SetColorTexture(0.2, 0.85, 0.8, pale and 0.45 or 1)
-    end
-    for i = 1, CHART_COLS do put(c.col[i], d.cols[i], i, false) end
-    for i = 1, CHART_NEXT do put(c.col[CHART_COLS + i], d.next[i], CHART_COLS + i, true) end
-    c.top:SetText(GREY .. short(d.hi) .. "|r")
-    local mins = floor(d.span / 60 + 0.5)
-    c.axisL:SetText(GREY .. (mins >= 90 and ("%.1f h ago"):format(mins / 60) or (mins .. " min ago")) .. "|r")
-    c.axisN:SetText(GREY .. "now|r")
-    c.axisR:SetText(GREY .. "+1 h|r")
-    -- speed: the last tries, oldest on the left
-    local rows = d.speed.rows
-    local top = 2
-    for _, r in ipairs(rows) do if r.k ~= "gone" and r.s > top then top = r.s end end
-    top = math.min(top, 6)
-    local first = math.max(0, #rows - SPEED_COLS)
-    for i = 1, SPEED_COLS do
-        local r, bar = rows[first + i], c.speed[i]
-        if r then
-            bar:SetHeight(math.max(2, floor(SPEED_H * math.min(r.s, top) / top + 0.5)))
-            if r.k == "won" then bar:SetColorTexture(0.2, 0.9, 0.4, 1)
-            elseif r.k == "lost" then bar:SetColorTexture(0.9, 0.25, 0.25, 1)
-            else bar:SetColorTexture(1, 0.55, 0.2, 0.8) end
-        end
-        bar:SetShown(r ~= nil)
-    end
-    c.speedTop:SetText(GREY .. ("%.1fs"):format(top) .. "|r")
-    c.speedAxis:SetText(#rows > 0 and (GREY .. "oldest|r") or (GREY .. "no try with a measured time yet|r"))
-    c.speedNew:SetText(#rows > 0 and (GREY .. "newest|r") or "")
 end
 
 -- How long gold spent on a flip is out of reach: time to sell plus the hour
@@ -1018,7 +843,7 @@ function UI:RenderSnipe(short)
             local zone = UI.PaceZone(every)
             UI.paceState = { every = every, zone = zone, window = w }
             -- short: the figure and the verdict. The target is named only when
-            -- you are not on it. (The count of presses in time is in Details, Session.)
+            -- you are not on it. (The count of presses in time is kept for the session.)
             local ideal = ("  %s(optimal: every %d ms or faster)|r"):format(GREY, floor(w / 2 * 1000 + 0.5))
             if every then
                 local x = math.min(1, every / (2 * w)) * 240
@@ -1317,6 +1142,16 @@ function UI:Render()
     for i = 1, MAXROWS do
         local r, item = rows[i], (i <= vis) and list[i + off] or nil
         r.item, r.sect = nil, nil
+        r.heat:Hide()
+        do  -- the item just bought (green) or missed (red): its row is framed for the length of the flash
+            local c = item and item.key ~= nil and not item.action and tab == "BUY" and item.key == self.flashKey
+                and self.flashUntil and GetTime() < self.flashUntil and UI.FLASH_RGB[self.flashKind]
+            for n = 1, 4 do
+                if c then r.flash[n]:SetColorTexture(c[1], c[2], c[3], 1) end
+                r.flash[n]:SetShown(c and true or false)
+            end
+            if c then r.heat:SetColorTexture(c[1], c[2], c[3], 0.22); r.heat:Show() end
+        end
         r.sel:SetShown(item ~= nil and item.key ~= nil and item.key == self.sel and AuctionMeshDB.cfg.drawer == true)
         if not item then r:Hide() else
             local plain = item.head or item.note
@@ -1339,6 +1174,14 @@ function UI:Render()
                 for c = 1, 4 do r.c[c]:SetText("") end
                 r.state:SetText(""); r.profit:SetText(""); r.btn:Hide()
                 r.detail:SetText(item.m)
+                r.detail:Show()
+            elseif item.ghost then
+                -- a deal that is over: its row for the length of the flash, with what happened
+                r.icon:SetTexture(C_Item.GetItemIconByID(item.key) or 134400)
+                r.name:SetText(ns.Sniper.nameOf(item.key))
+                for c = 1, 4 do r.c[c]:SetText("") end
+                r.state:SetText(""); r.profit:SetText(""); r.btn:Hide()
+                r.detail:SetText((item.ghost == "won" and GREEN or RED) .. tostring(item.text or (item.ghost == "won" and "BOUGHT" or "MISSED")) .. "|r")
                 r.detail:Show()
             else
                 r.item = item
@@ -1501,7 +1344,8 @@ end
 -- THE WHOLE PANEL FLASHES: green around its edge for a purchase, red for a
 -- miss. One and a half seconds, then it is gone.
 local FLASH_RGB = { won = { 0.2, 1, 0.4 }, lost = { 1, 0.2, 0.2 } }
-function UI:Flash(kind)
+UI.FLASH_RGB = FLASH_RGB
+function UI:Flash(kind, key, text)
     local c = FLASH_RGB[kind]
     if not (frame and c) then return end
     local e = rawget(frame, "flashEdges")
@@ -1516,6 +1360,44 @@ function UI:Flash(kind)
     end
     for i = 1, 4 do e[i]:SetColorTexture(c[1], c[2], c[3], 1); e[i]:Show() end
     self.flashKind, self.flashUntil = kind, GetTime() + 1.5
+    -- THE ITEM'S OWN ROW says it too: under DEALS TO BUY NOW the row of the
+    -- item is framed in the same colour. A deal that is over has no row any
+    -- more, so for the length of the flash it keeps one, where it was, with
+    -- what happened written in it (see dealRows).
+    self.flashKey, self.flashRow = key, nil
+    if key then
+        local at = 1
+        for i, d in ipairs(self.lastDeals or {}) do if d.key == key then at = i end end
+        self.flashRow = { ghost = kind, key = key, at = at, text = text }
+    end
+end
+
+-- The rows under DEALS TO BUY NOW: the deals, and for the length of a flash
+-- the row of the deal that was just bought or missed, if it is no longer one.
+-- For the eye only: nothing is ever bought from this list (purchases go by
+-- the deals themselves).
+local function dealRows(deals)
+    local g = UI.flashRow
+    if not (g and UI.flashUntil and GetTime() < UI.flashUntil) then return deals end
+    for _, d in ipairs(deals) do if d.key == g.key then return deals end end
+    local out = {}
+    for i, d in ipairs(deals) do out[i] = d end
+    table.insert(out, math.min(g.at, #out + 1), g)
+    return out
+end
+UI.dealRows = dealRows
+
+-- DEAL ROWS ARE COLOURED BY PROFIT, in copper: the more a deal makes, the
+-- stronger its row. { from this profit, row tint, tint strength, text colour }
+UI.HEAT = {
+    { 10000, { 1.00, 0.80, 0.15 }, 0.32, "|cffffd633" }, -- 1g and more: gold
+    { 2500,  { 0.15, 0.95, 0.40 }, 0.26, "|cff40ff70" }, -- 25s and more: bright green
+    { 500,   { 0.15, 0.95, 0.40 }, 0.11, "|cff33d95c" }, -- 5s and more: green
+    { 0,     nil,                  0,    "|cff8fae96" }, -- less: plain, greyed green
+}
+function UI.Heat(profit)
+    for i, h in ipairs(UI.HEAT) do if (profit or 0) >= h[1] then return h, i end end
+    return UI.HEAT[#UI.HEAT], #UI.HEAT
 end
 
 -- flat button: dark fill, thin outline, soft teal glow on hover
@@ -1686,6 +1568,18 @@ function UI:Create()
         GameTooltip:Show()
     end)
     frame.snap:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- REFRESH: reads your bags (and the open mailbox) again and redraws everything
+    frame.refresh = button(frame, 58, "Refresh", function() UI:Refresh() end)
+    frame.refresh:SetHeight(18)
+    frame.refresh:SetPoint("RIGHT", frame.snap, "LEFT", -6, 0)
+    frame.refresh:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+        GameTooltip:AddLine("Refresh", 1, 1, 1)
+        GameTooltip:AddLine("For when the lists do not match what you hold. Counts your bags again (and the mailbox, if it is open), tracks again anything the addon had given up on as not found that is in your bags after all, and redraws the panel. Nothing is bought, posted or sold.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    frame.refresh:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- ENGINE BAR, top right on every tab: what the request engine is doing now
     local bar = CreateFrame("Frame", nil, frame)
@@ -2090,6 +1984,16 @@ function UI:Create()
         r.hl = r:CreateTexture(nil, "HIGHLIGHT")
         r.hl:SetAllPoints()
         r.hl:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.10)
+        -- a deal's row is tinted by its profit; the row of the item just bought or missed is tinted and framed
+        r.heat = r:CreateTexture(nil, "BACKGROUND", nil, 1)
+        r.heat:SetAllPoints()
+        r.heat:Hide()
+        r.flash = {}
+        for n = 1, 4 do r.flash[n] = r:CreateTexture(nil, "OVERLAY"); r.flash[n]:Hide() end
+        r.flash[1]:SetPoint("TOPLEFT"); r.flash[1]:SetPoint("TOPRIGHT"); r.flash[1]:SetHeight(2)
+        r.flash[2]:SetPoint("BOTTOMLEFT"); r.flash[2]:SetPoint("BOTTOMRIGHT"); r.flash[2]:SetHeight(2)
+        r.flash[3]:SetPoint("TOPLEFT"); r.flash[3]:SetPoint("BOTTOMLEFT"); r.flash[3]:SetWidth(2)
+        r.flash[4]:SetPoint("TOPRIGHT"); r.flash[4]:SetPoint("BOTTOMRIGHT"); r.flash[4]:SetWidth(2)
         -- teal edge on the row whose details are open in the drawer
         r.sel = r:CreateTexture(nil, "ARTWORK")
         r.sel:SetPoint("TOPLEFT", 0, 0); r.sel:SetPoint("BOTTOMLEFT", 0, 0); r.sel:SetWidth(2)
@@ -2161,7 +2065,6 @@ function UI:Create()
         if acc < 0.2 then return end
         acc = 0
         if UI.notice and GetTime() >= UI.notice.till then UI.notice = nil; UI.dirty = true end
-        UI:SampleGold() -- one gold sample every 20 seconds for the Session view (a time check on the others)
         do  -- the session clock in the footer: once a second, the footer's text only
             local sec = floor(GetTime())
             if UI.tab == "BUY" and ns.Sniper.session and sec ~= UI.clockSec and not UI.dirty then
@@ -2172,6 +2075,7 @@ function UI:Create()
         if UI.flashUntil and GetTime() >= UI.flashUntil then
             UI.flashUntil, UI.flashKind = nil, nil
             for _, t in ipairs(rawget(frame, "flashEdges") or {}) do t:Hide() end
+            if UI.flashKey then UI.flashKey, UI.flashRow, UI.dirty = nil, nil, true end -- the row's frame goes with it
         end
         local paused = ns.Gate:UserBusy()
         if paused ~= UI.wasPaused then UI.wasPaused = paused; UI.dirty = true end
@@ -2317,10 +2221,10 @@ function UI:FitHeader()
     if not frame then return end
     local bar, txt = frame.bar, frame.barText
     bar:ClearAllPoints()
-    bar:SetPoint("RIGHT", frame.snap, "LEFT", -10, 3)
+    bar:SetPoint("RIGHT", frame.refresh, "LEFT", -10, 3)
     local function num(v) return type(v) == "number" and v or nil end
     local left = num(frame.tabHist.GetRight and frame.tabHist:GetRight())
-    local right = num(frame.snap.GetLeft and frame.snap:GetLeft())
+    local right = num(frame.refresh.GetLeft and frame.refresh:GetLeft())
     local room = (left and right) and (right - left - 24) or BAR_W
     local w = math.max(0, math.min(BAR_W, floor(room)))
     self.barWidth = w
@@ -2437,156 +2341,127 @@ local function tradeLines(out, t, byKey, short)
     out[#out + 1] = { rule = true }
 end
 
--- DETAILS, SESSION: the figures under the charts.
-function UI:SessionLines(entries, short)
-    local S = ns.Sniper
-    local d = self:SessionData(entries)
-    local out = {}
-    local function secs(x) return ("%.2fs"):format(x) end
-    out[#out + 1] = { head = "GOLD THIS SESSION" }
-    out[#out + 1] = { l = "In hand", r = GOLD .. short(d.now.gold) .. "|r" }
-    out[#out + 1] = { l = "When all has sold (after the cut)", r = TEAL .. short(d.now.total) .. "|r" }
-    local up = d.now.total - (d.start and d.start.w or d.now.total)
-    out[#out + 1] = { l = "Since the start of the session", r = (up >= 0 and GREEN or RED) .. (up >= 0 and "+ " or "- ") .. short(math.abs(up)) .. "|r" }
-    out[#out + 1] = { l = "Sale gold already sold, due within the hour", r = d.coming > 0 and (ORANGE .. "+ " .. short(d.coming) .. "|r") or (GREY .. "none|r") }
-    -- how fast: yours against the buyer who was first
-    local sp = d.speed
-    out[#out + 1] = { head = "SPEED: FROM A DEAL SHOWING TO ITS PURCHASE" }
-    if #sp.rows == 0 then
-        out[#out + 1] = { l = GREY .. "Nothing measured yet: it fills in with your next tries.|r" }
-    else
-        local function line(label, b, word)
-            if b.n == 0 then return end
-            out[#out + 1] = { l = label, rw = 236, r = ("%d, %s%s on average, fastest %s"):format(b.n, word, secs(b.sum / b.n), secs(b.best)) }
-        end
-        line(GREEN .. "You bought|r", sp.won, "")
-        line(RED .. "Someone else was first|r", sp.lost, "within ")
-        line(ORANGE .. "Gone, no input|r", sp.gone, "after ")
-        local pt = sp.parts
-        if pt.n > 0 then
-            out[#out + 1] = { l = GREY .. ("Your purchases, on average: input %s, the game's lock %s,|r"):format(secs(pt.input / pt.n), secs(pt.lock / pt.n)) }
-            out[#out + 1] = { l = GREY .. ("price answer %s, purchase %s.|r"):format(secs(pt.price / pt.n), secs(pt.buy / pt.n)) }
-        end
-    end
-    do  -- your pressing
-        local t = S.tally
-        local n = (t.inTime or 0) + (t.late or 0)
-        local w = UI.PaceWindow()
-        out[#out + 1] = { l = "Presses in time this session", r = n > 0 and ("%d of %d"):format(t.inTime or 0, n) or (GREY .. "none yet|r") }
-        out[#out + 1] = { l = GREY .. ("Optimal: an input every %d ms or faster. Too slow: over %d ms.|r"):format(floor(w / 2 * 1000 + 0.5), floor(w * 1000 + 0.5)) }
-    end
-    if #sp.rows > 0 then
-        out[#out + 1] = { head = ("LAST TRIES, NEWEST FIRST (%d)"):format(#sp.rows) }
-        for i = #sp.rows, 1, -1 do
-            local r = sp.rows[i]
-            local what
-            if r.k == "won" then
-                what = GREEN .. "BOUGHT in " .. secs(r.s) .. "|r"
-            elseif r.k == "lost" then
-                what = RED .. (r.lo and ("TAKEN between %s and %s"):format(secs(r.lo), secs(r.s)) or ("TAKEN within " .. secs(r.s))) .. "|r"
-            else
-                what = ORANGE .. "GONE after " .. secs(r.s) .. "|r"
+-- DETAILS: WHAT TO FOCUS ON. Two lists and nothing else.
+--
+--   YOUR BIGGEST PURCHASES   the purchases that made (or stand to make) the
+--                            most, from the record of what you bought. Green
+--                            is profit that is in; orange is what it makes
+--                            if it sells at its listed (or planned) price.
+--   BIGGEST SPREADS          the items whose deals offered the most, from the
+--                            record of deals seen (the last 400). For each:
+--                            the profit offered in all, what you got of it,
+--                            and its best single deal, bought at -> sells at.
+--
+-- Both are plain sums over records already in memory: no request is sent, and
+-- they are worked out at most every 10 seconds and never on the fast path of
+-- a deal appearing.
+UI.FOCUS = { purchases = 8, spreads = 10, every = 10 }
+function UI:FocusData()
+    local c = self.focusCache
+    if c and GetTime() - c.at < UI.FOCUS.every then return c end
+    local J, Sc = ns.Journal, ns.Scout
+    local now = GetServerTime()
+    local cut = ns.Deals.cfg.cut
+    c = { at = GetTime(), buys = {}, items = {}, deals = 0, trades = 0 }
+    -- purchases: profit made, or expected at the listed / planned price
+    for _, t in ipairs(J.list or {}) do
+        local counted = t.qty - (t.lost or 0)
+        if t.cost and counted > 0 then
+            local left = J.left(t)
+            local p, open = J.realized(t) or 0, left > 0
+            if open then
+                local listed = math.min(t.listed or 0, left)
+                local function net(unit) return (t.kind == "VENDOR") and unit or floor(unit * (1 - cut)) end
+                p = p + net(t.price or t.plan or 0) * listed + net(t.plan or t.price or 0) * (left - listed) - t.cost * left
             end
-            out[#out + 1] = { l = GREY .. date("%H:%M:%S", r.t) .. "|r  " .. (r.key and S.nameOf(r.key) or "?"), rw = 190, r = what }
-            if r.k == "gone" then
-                out[#out + 1] = { l = GREY .. "   no input from you while it was up|r" }
-            else
-                out[#out + 1] = { l = GREY .. ("   you: input at %s%s%s|r"):format(secs(r.i or 0),
-                    r.h and (", held by the lock " .. secs(r.h)) or "",
-                    r.q and (", price back at " .. secs((r.i or 0) + r.q)) or ", no price came back") }
+            c.trades = c.trades + 1
+            c.buys[#c.buys + 1] = { key = t.key, name = t.name, qty = counted, cost = t.cost, profit = p, open = open, at = t.at }
+        end
+    end
+    table.sort(c.buys, function(a, b)
+        if a.profit ~= b.profit then return a.profit > b.profit end
+        return (a.at or 0) > (b.at or 0)
+    end)
+    while #c.buys > UI.FOCUS.purchases do c.buys[#c.buys] = nil end
+    -- spreads: every deal on record, by item
+    local by = {}
+    local log = (Sc.d and Sc.d.deals) or {}
+    for i = 1, #log do
+        local e = log[i]
+        local p = e.p or 0
+        if e.k and p > 0 and (e.u or 0) > 0 then
+            local it = by[e.k]
+            if not it then
+                it = { key = e.k, n = 0, offered = 0, got = 0, gotN = 0 }
+                by[e.k] = it
+                c.items[#c.items + 1] = it
             end
+            it.n, it.offered = it.n + 1, it.offered + p
+            if e.o == "bought" then
+                local share = (e.bu and e.u > 0) and math.min(1, e.bu / e.u) or 1
+                it.got, it.gotN = it.got + floor(p * share + 0.5), it.gotN + 1
+            end
+            if not it.best or p > (it.best.p or 0) then it.best = e end
+            c.deals = c.deals + 1
+            if not c.oldest or (e.t or now) < c.oldest then c.oldest = e.t end
         end
     end
-    do  -- the radar and its last alert (they were on the Trades tab)
-        local Sw, G, W = ns.Swarm, ns.Gate, ns.Watch
-        out[#out + 1] = { head = "RADAR" }
-        local m = W and W.LastMinute and W:LastMinute() or {}
-        out[#out + 1] = { l = "A read every", r = m.every and (("%.2fs"):format(m.every) .. (G.cycle and (GREY .. (" (limit %.2fs)|r"):format(G.cycle)) or "")) or (GREY .. "starting|r") }
-        if (m.n or 0) > 0 then
-            out[#out + 1] = { l = "Requests in the last minute", rw = 210,
-                r = ("%d radar, %d alerts, %d buying, %d other"):format(m.radar or 0, m.alert or 0, m.buy or 0, (m.upkeep or 0) + (m.sell or 0)) }
-        end
-        local ready, watched = S:ReadyCount()
-        if ns.Deals.cfg.flips and watched > 0 then
-            out[#out + 1] = { l = "Ready for a flip straight from the radar", r = ("%d of %d"):format(ready, watched) }
-        end
-        local l = S.lastAlert
-        if l and GetTime() - l.at < 600 then
-            out[#out + 1] = { l = GREY .. ("Last alert, %s ago: %s|r"):format(clock(GetTime() - l.at), S.nameOf(l.key)) }
-            local why = l.deal and "DEAL FOUND" or ((l.reason or "no deal"):gsub("%$(%d+)", function(c) return short(tonumber(c)) end))
-            for _, t in ipairs(wrap(why, 62)) do out[#out + 1] = { l = (l.deal and GREEN or GREY) .. "   " .. t .. "|r" } end
-        end
-    end
-    return out
-end
-
--- DETAILS, ITEMS: what the addon goes for, with two tick boxes on each item.
---   Always: on your own list (watched whatever the addon picks).
---   Ignore: never offered, flip or vendor deal.
--- The list keeps its order while you tick (it is put together again when the
--- view is opened, or after two minutes), so a row never jumps from under the mouse.
-function UI:ItemRows()
-    local c = self.itemsCache
-    if c and GetTime() - c.at < 120 then return c end
-    local S, Sc = ns.Sniper, ns.Scout
-    local cfg = AuctionMeshDB.cfg
-    local set, flist, ftext = S:FocusSet()
-    local prime = Sc:Prime(S:Budget(), S.VENDOR_SOLD)
-    local facts, seen = {}, {}
-    for _, f in ipairs(prime) do facts[f.key] = f end
-    c = { at = GetTime(), focused = set ~= nil, text = ftext, facts = facts, picks = {}, own = {}, ignored = {} }
-    local function add(list, key) if not seen[key] then seen[key] = true; list[#list + 1] = key end end
-    -- what you ignore is not gone for, whoever picked it: it has its own section
-    local ig = {}
-    for k in pairs(cfg.ignore or {}) do ig[#ig + 1] = k end
-    table.sort(ig, function(a, b) return S.nameOf(a) < S.nameOf(b) end)
-    for _, k in ipairs(ig) do add(c.ignored, k) end
-    if set then
-        for _, k in ipairs(flist) do add(c.picks, k) end
-    else
-        for i = 1, math.min(30, #prime) do add(c.picks, prime[i].key) end
-    end
-    for _, k in ipairs(cfg.focusItems or {}) do add(c.own, k) end
-    self.itemsCache = c
+    table.sort(c.items, function(a, b)
+        if a.offered ~= b.offered then return a.offered > b.offered end
+        return a.key < b.key
+    end)
+    while #c.items > UI.FOCUS.spreads do c.items[#c.items] = nil end
+    c.hours = c.oldest and math.max(1, math.ceil((now - c.oldest) / 3600)) or 0
+    self.focusCache = c
     return c
 end
 
-function UI:ItemLines(short)
+function UI:FocusLines(short)
     local S = ns.Sniper
-    local c = self:ItemRows()
+    local c = self:FocusData()
     local out = {}
-    local function rows(list)
-        for _, k in ipairs(list) do
-            local f = c.facts[k]
-            out[#out + 1] = { item = k, l = S.nameOf(k), rw = 110, r = f and (GREY .. ("%d sell/h  %s|r"):format(floor(f.rate + 0.5), short(f.market))) or "" }
-        end
-    end
-    local mode = AuctionMeshDB.cfg.focusMode or "off"
-    out[#out + 1] = { head = (c.focused and "ITEMS THE ADDON GOES FOR (%d)" or "MOST ACTIVE ITEMS (%d)"):format(#c.picks) }
-    local text = c.focused and c.text
-        or mode == "off" and "Laser focus is off (Setup tab): every material is watched. These have the most gold moving."
-        or c.text
-    for _, l in ipairs(wrap(text or "", 62)) do out[#out + 1] = { l = GREY .. l .. "|r" } end
-    out[#out + 1] = { l = GREY .. "Always  Ignore|r", rw = 110, r = GREY .. "sells, price|r" }
-    if #c.picks == 0 then out[#out + 1] = { l = GREY .. "None yet: selling speed takes some minutes of watching to measure.|r" } end
-    rows(c.picks)
-    if #c.own > 0 then
-        out[#out + 1] = { head = ("YOUR OWN LIST, NOT AMONG THE ABOVE (%d)"):format(#c.own) }
-        rows(c.own)
-    end
-    if #c.ignored > 0 then
-        out[#out + 1] = { head = ("IGNORED (%d)"):format(#c.ignored) }
-        rows(c.ignored)
+    out[#out + 1] = { head = "YOUR BIGGEST PURCHASES" }
+    if #c.buys == 0 then out[#out + 1] = { l = GREY .. "Nothing bought yet.|r" } end
+    for _, b in ipairs(c.buys) do
+        out[#out + 1] = {
+            l = ("%s x%d"):format(tostring(b.name or S.nameOf(b.key)), b.qty) .. GREY .. "  at " .. short(b.cost) .. "|r",
+            r = ((b.profit < 0 and RED) or (b.open and ORANGE) or GREEN) .. signed(b.profit, short) .. "|r" .. GREY .. (b.open and "  if sold" or "  made") .. "|r",
+            rw = 150,
+        }
     end
     out[#out + 1] = { rule = true }
-    for _, l in ipairs(wrap("Always: on your own list, watched whatever the addon picks" .. (mode == "off" and " (it counts once laser focus is on)" or "")
-        .. ". Ignore: never offered. To add another item, click it on the left, then 'Add to my focus list'.", 62)) do
-        out[#out + 1] = { l = GREY .. l .. "|r" }
+    out[#out + 1] = { head = "BIGGEST SPREADS" }
+    if #c.items == 0 then
+        out[#out + 1] = { l = GREY .. "No deal seen yet. They are recorded as the radar finds them.|r" }
+    else
+        out[#out + 1] = { l = GREY .. ("From the last %d deals seen, %d hour%s.|r"):format(c.deals, c.hours, c.hours == 1 and "" or "s") }
+        out[#out + 1] = { l = GREY .. "Focus  Ignore|r" }
+    end
+    for _, it in ipairs(c.items) do
+        out[#out + 1] = { item = it.key, l = WHITE .. S.nameOf(it.key) .. "|r", rw = 120, r = GREY .. "offered|r " .. short(it.offered) }
+        local e = it.best
+        local each = floor((e.c or 0) / e.u + 0.5)
+        local pct = (each > 0 and e.s) and floor((e.s - each) / each * 100 + 0.5) or nil
+        out[#out + 1] = {
+            l = GREY .. ("best: %d at %s, sells %s%s|r"):format(e.u, short(each), short(e.s or 0), pct and (" (+%d%%)"):format(pct) or ""),
+            r = (it.got > 0 and (GREEN .. "got " .. short(it.got) .. "|r") or (GREY .. "got nothing|r")) .. GREY .. (", %d of %d|r"):format(it.gotN, it.n),
+            rw = 130,
+        }
+    end
+    -- what you ignore is never offered, so it would never show above: it is
+    -- listed here, so that a tick can bring it back
+    local ig = {}
+    for k in pairs(AuctionMeshDB.cfg.ignore or {}) do ig[#ig + 1] = k end
+    if #ig > 0 then
+        table.sort(ig, function(a, b) return S.nameOf(a) < S.nameOf(b) end)
+        out[#out + 1] = { rule = true }
+        out[#out + 1] = { head = ("IGNORED, NEVER OFFERED (%d)"):format(#ig) }
+        for _, k in ipairs(ig) do out[#out + 1] = { item = k, l = S.nameOf(k) } end
     end
     return out
 end
 
--- A tick box in the Items view was clicked.
+-- A tick box next to an item was clicked.
 function UI:ItemTick(key, which)
     local S, Sc = ns.Sniper, ns.Scout
     local cfg = AuctionMeshDB.cfg
@@ -2619,47 +2494,8 @@ function UI:DrawerLines(entries)
         table.insert(byKey[e.key], e)
     end
     local key = self.sel
-    local view = self.dview or "trades"
-    if not key and view == "session" then return self:SessionLines(entries, short) end
-    if not key and view == "items" then return self:ItemLines(short) end
-    if not key and view == "market" then
-        -- what the price history and the volume measurements say
-        -- where the money moves: the prime items, with the reason each one is prime
-        local set, flist, ftext = S:FocusSet()
-        local prime = ns.Scout:Prime(S:Budget(), S.VENDOR_SOLD)
-        out[#out + 1] = { head = ("PRIME ITEMS: FAST SELLERS WITH GOLD MOVING (%d)"):format(#prime) }
-        for _, l in ipairs(wrap(ftext, 62)) do out[#out + 1] = { l = GREY .. l .. "|r" } end
-        if #prime == 0 then
-            for _, l in ipairs(wrap("None yet. An item is prime once it has been watched for 10 minutes and is measured to sell 30 or more an hour.", 62)) do
-                out[#out + 1] = { l = GREY .. l .. "|r" }
-            end
-        end
-        for i = 1, math.min(12, #prime) do
-            local f = prime[i]
-            out[#out + 1] = { l = ((set and set[f.key]) and TEAL .. "> |r" or "") .. S.nameOf(f.key), r = short(f.market), prime = f.key }
-            out[#out + 1] = { l = GREY .. "   " .. ns.Scout:Why(f, short) .. "|r" }
-        end
-        local moves = ns.Do.Trends(12)
-        out[#out + 1] = { head = "BIGGEST PRICE MOVES, 24 HOURS" }
-        if #moves == 0 then out[#out + 1] = { l = GREY .. "Not yet: the price history needs a few hours of readings.|r" } end
-        for _, m in ipairs(moves) do
-            out[#out + 1] = { l = S.nameOf(m.key), r = (m.tr >= 0 and GREEN or RED) .. ("%+d%%|r"):format(floor(m.tr * 100 + 0.5)) .. "  " .. short(m.price) }
-        end
-        local fast = {}
-        for k in pairs(St.vs) do
-            local rate = St:Rate(k, 100)
-            if rate and rate >= 1 then fast[#fast + 1] = { key = k, rate = rate } end
-        end
-        table.sort(fast, function(a, b) return a.rate > b.rate end)
-        out[#out + 1] = { head = "WHAT SELLS FASTEST, MEASURED" }
-        if #fast == 0 then out[#out + 1] = { l = GREY .. "Not yet: volume is measured by watching listings over time.|r" } end
-        for i = 1, math.min(12, #fast) do
-            local f = fast[i]
-            out[#out + 1] = { l = S.nameOf(f.key), r = ("%d an hour"):format(floor(f.rate + 0.5)) .. (St.p[f.key] and ("  " .. short(St.p[f.key])) or "") }
-        end
-        return out
-    end
-    if key then
+    if not key then return self:FocusLines(short) end
+    do
         -- ONE ITEM: the market as last read, then your trades in it
         local now = GetServerTime()
         out[#out + 1] = { l = WHITE .. S.nameOf(key) .. "|r", big = true }
@@ -2694,60 +2530,6 @@ function UI:DrawerLines(entries)
         for _, t in ipairs(trades) do tradeLines(out, t, byKey, short) end
         return out
     end
-    -- THE LEDGER: one line per purchase. What was bought and at what price on
-    -- the left; on the right what became of it: the profit if it sold, or how
-    -- much you are down while it has not. Nothing else. (Click an item on the
-    -- left of the panel for the full story of one item.)
-    local trades = J:Trades()
-    local _, _, _, soldKeys = Se:SalesMoney()
-    local cut = ns.Deals.cfg.cut
-    local spent, back, coming, out_, waiting = 0, 0, 0, 0, 0
-    local rows = {}
-    for _, t in ipairs(trades) do
-        local left, done, lost = J.left(t), (t.sold or 0) + (t.vend or 0), t.lost or 0
-        local l = ("%s x%d"):format(tostring(t.name), t.qty) .. (t.cost and (GREY .. "  at " .. short(t.cost) .. "|r") or "")
-        local r
-        if not t.cost then
-            r = GREY .. "price paid not known|r"
-        else
-            local counted = t.qty - lost
-            spent = spent + t.cost * counted
-            back = back + (t.got or 0) - (t.feeLost or 0)
-            local listed = math.min(t.listed or 0, left)
-            if left <= 0 and done > 0 then
-                local p = J.realized(t) or 0
-                r = (p >= 0 and GREEN or RED) .. "SOLD  " .. signed(p, short) .. "|r"
-            elseif left <= 0 then
-                r = GREY .. "not found, not counted|r"
-            elseif listed > 0 and soldKeys[t.key] then
-                -- sold on the auction house, the gold is still on its way
-                local net = floor((t.price or 0) * (1 - cut)) * listed
-                local p = (t.got or 0) + net - t.cost * counted - (t.feeLost or 0)
-                coming = coming + net
-                r = ORANGE .. "SOLD, gold coming  " .. signed(p, short) .. "|r"
-            else
-                local down = t.cost * left
-                out_, waiting = out_ + down, waiting + 1
-                r = RED .. (done > 0 and ("%d NOT SOLD"):format(left) or "NOT SOLD") .. "  down " .. short(down) .. "|r"
-            end
-        end
-        rows[#rows + 1] = { l = l, r = r, ledger = true, trade = t }
-    end
-    local now = back - spent
-    out[#out + 1] = { head = "LEDGER" }
-    out[#out + 1] = { l = "Paid for everything bought", r = "- " .. short(spent) }
-    out[#out + 1] = { l = "Came back from what sold", r = GREEN .. "+ " .. short(back) .. "|r" }
-    if coming > 0 then out[#out + 1] = { l = "Sold, gold on its way", r = ORANGE .. "+ " .. short(coming) .. "|r" } end
-    out[#out + 1] = { rule = true }
-    out[#out + 1] = { l = WHITE .. (now + coming >= 0 and "You are up" or "You are down") .. "|r",
-        r = (now + coming >= 0 and GREEN or RED) .. short(math.abs(now + coming)) .. "|r" }
-    if waiting > 0 then
-        out[#out + 1] = { l = GREY .. ("%d purchase%s not sold yet: %s still to come back|r"):format(waiting, waiting == 1 and "" or "s", short(out_)) }
-    end
-    out[#out + 1] = { head = ("WHAT YOU BOUGHT, NEWEST FIRST (%d)"):format(#rows) }
-    if #rows == 0 then out[#out + 1] = { l = GREY .. "Nothing yet. Buy a deal on the Trades tab.|r" } end
-    for _, r in ipairs(rows) do out[#out + 1] = r end
-    return out
 end
 
 function UI:CreateDrawer()
@@ -2760,16 +2542,14 @@ function UI:CreateDrawer()
     d.art:SetAllPoints()
     d.art:SetColorTexture(0.045, 0.05, 0.06, 0.97)
     outline(d, LINE)
-    -- four views: this session (tries, gold, speed), the items the addon goes
-    -- for, the ledger of what you bought, and the market
-    d.views = {}
-    local prev
-    for _, v in ipairs({ { "session", "Session" }, { "items", "Items" }, { "trades", "Ledger" }, { "market", "Market" } }) do
-        local b = button(d, 56, v[2], function() UI.sel, UI.dview, UI.dscroll, UI.itemsCache = nil, v[1], 0, nil; UI:Render() end)
-        if prev then b:SetPoint("LEFT", prev, "RIGHT", 6, 0) else b:SetPoint("TOPLEFT", 12, -8) end
-        d.views[v[1]] = b
-        prev = b
-    end
+    -- one view (what to focus on); with an item picked on the left, that item,
+    -- and a button back
+    d.title = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    d.title:SetPoint("TOPLEFT", 12, -12)
+    d.title:SetText("WHAT TO FOCUS ON")
+    d.back = button(d, 126, "< What to focus on", function() UI.sel, UI.dscroll = nil, 0; UI:Render() end)
+    d.back:SetPoint("TOPLEFT", 12, -8)
+    d.back:Hide()
     d.hint = d:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     d.hint:SetPoint("BOTTOMLEFT", 12, 10)
     d.hint:SetPoint("BOTTOMRIGHT", -12, 10)
@@ -2786,7 +2566,7 @@ function UI:CreateDrawer()
         local rule = d:CreateTexture(nil, "ARTWORK")
         rule:SetPoint("TOPLEFT", 12, y - 7); rule:SetPoint("TOPRIGHT", -12, y - 7); rule:SetHeight(1)
         rule:SetColorTexture(LINE[1], LINE[2], LINE[3], 0.6)
-        -- two tick boxes, used by the Items view only
+        -- two tick boxes, shown on an item's line: focus on it, or ignore it
         local function box(x, which)
             local b = CreateFrame("Button", nil, d)
             b:SetSize(12, 12); b:SetPoint("TOPLEFT", x, y - 1)
@@ -2802,64 +2582,6 @@ function UI:CreateDrawer()
             return b
         end
         d.lines[i] = { label = l, value = v, rule = rule, y = y, always = box(23, "always"), ignore = box(62, "ignore") }
-    end
-    -- THE SESSION VIEW'S GRAPHICS: fixed at the top, the lines scroll under them
-    do
-        local c = CreateFrame("Frame", nil, d)
-        c:SetPoint("TOPLEFT", 12, -38); c:SetSize(DRAWER_CHART_W, SESSION_ROWS * DLINE_H)
-        local function small(x, y2, anchor, rel, relPoint)
-            local f = c:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-            f:SetPoint(anchor or "TOPLEFT", rel or c, relPoint or "TOPLEFT", x, y2)
-            f:SetJustifyH("LEFT"); f:SetWordWrap(false)
-            return f
-        end
-        -- tries
-        c.triesText = c:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        c.triesText:SetPoint("TOPLEFT", 0, 0); c.triesText:SetJustifyH("LEFT"); c.triesText:SetWordWrap(false)
-        c.triesBar = CreateFrame("Frame", nil, c)
-        c.triesBar:SetPoint("TOPLEFT", 0, -14); c.triesBar:SetSize(DRAWER_CHART_W, 8)
-        local bg = c.triesBar:CreateTexture(nil, "BACKGROUND")
-        bg:SetAllPoints(); bg:SetColorTexture(1, 1, 1, 0.06)
-        c.won, c.lost, c.gone = c.triesBar:CreateTexture(nil, "ARTWORK"), c.triesBar:CreateTexture(nil, "ARTWORK"), c.triesBar:CreateTexture(nil, "ARTWORK")
-        c.won:SetColorTexture(0.2, 0.9, 0.4, 1); c.lost:SetColorTexture(0.9, 0.25, 0.25, 1); c.gone:SetColorTexture(1, 0.55, 0.2, 1)
-        -- gold
-        small(0, -28):SetText(GREY .. "GOLD   columns: in hand   " .. TEAL .. "line: when all has sold|r" .. GREY .. "   pale: the next hour|r")
-        c.plot = CreateFrame("Frame", nil, c)
-        c.plot:SetPoint("TOPLEFT", 0, -42); c.plot:SetSize((CHART_COLS + CHART_NEXT) * CHART_W, CHART_H)
-        local pbg = c.plot:CreateTexture(nil, "BACKGROUND")
-        pbg:SetAllPoints(); pbg:SetColorTexture(1, 1, 1, 0.04)
-        c.col = {}
-        for i = 1, CHART_COLS + CHART_NEXT do
-            local bar = c.plot:CreateTexture(nil, "ARTWORK")
-            bar:SetPoint("BOTTOMLEFT", (i - 1) * CHART_W, 0); bar:SetSize(CHART_W, 1)
-            local tick = c.plot:CreateTexture(nil, "OVERLAY")
-            tick:SetSize(CHART_W, 2)
-            c.col[i] = { bar = bar, tick = tick }
-        end
-        local nowLine = c.plot:CreateTexture(nil, "OVERLAY")
-        nowLine:SetPoint("BOTTOMLEFT", CHART_COLS * CHART_W, 0); nowLine:SetSize(1, CHART_H); nowLine:SetColorTexture(1, 1, 1, 0.5)
-        c.top = small(6, 0, "TOPLEFT", c.plot, "TOPRIGHT")
-        c.axisL = small(0, -3, "TOPLEFT", c.plot, "BOTTOMLEFT")
-        c.axisN = small(CHART_COLS * CHART_W, -3, "TOP", c.plot, "BOTTOMLEFT")
-        c.axisR = small(0, -3, "TOPRIGHT", c.plot, "BOTTOMRIGHT")
-        -- speed
-        small(0, -106):SetText(GREY .. "SPEED|r   " .. GREEN .. "you bought|r   " .. RED .. "someone else first|r   " .. ORANGE .. "gone, no input|r")
-        c.speedPlot = CreateFrame("Frame", nil, c)
-        c.speedPlot:SetPoint("TOPLEFT", 0, -120); c.speedPlot:SetSize(SPEED_COLS * SPEED_W, SPEED_H)
-        local sbg = c.speedPlot:CreateTexture(nil, "BACKGROUND")
-        sbg:SetAllPoints(); sbg:SetColorTexture(1, 1, 1, 0.04)
-        c.speed = {}
-        for i = 1, SPEED_COLS do
-            local bar = c.speedPlot:CreateTexture(nil, "ARTWORK")
-            bar:SetPoint("BOTTOMLEFT", (i - 1) * SPEED_W, 0); bar:SetSize(SPEED_W - 2, 1)
-            bar:Hide()
-            c.speed[i] = bar
-        end
-        c.speedTop = small(6, 0, "TOPLEFT", c.speedPlot, "TOPRIGHT")
-        c.speedAxis = small(0, -3, "TOPLEFT", c.speedPlot, "BOTTOMLEFT")
-        c.speedNew = small(0, -3, "TOPRIGHT", c.speedPlot, "BOTTOMRIGHT")
-        c:Hide()
-        frame.chart = c
     end
     -- shown for one item: put it on, or take it off, your own focus list
     d.focus = button(d, 126, "", function()
@@ -2921,7 +2643,7 @@ function UI:CreateDrawer()
     h:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Details")
-        GameTooltip:AddLine("This session in charts, the items the addon goes for,\nthe ledger of what you bought, and the market.", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("What to focus on: your biggest purchases\nand the items with the biggest spreads.", 0.8, 0.8, 0.8)
         GameTooltip:Show()
     end)
     h:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -2969,19 +2691,17 @@ function UI:RenderDrawer(entries)
     -- A deal has just appeared (UI:Now): nothing in here is needed to buy it.
     -- What is on the drawer stays, and it is brought up to date by the next
     -- ordinary redraw.
-    local sig = tostring(self.sel) .. ":" .. (self.dview or "trades")
+    local sig = tostring(self.sel)
     if self.fast and self.drawerLines and self.drawerSig == sig then self.drawerStale = true; return end
     self.drawerStale, self.drawerSig = nil, sig
-    local session = not self.sel and self.dview == "session"
-    self:RenderChart(session, ns.Seller.short, entries)
     local lines = self:DrawerLines(entries)
     self.drawerLines = lines
     local h = frame:GetHeight()
     local vis = type(h) == "number" and h > 0 and math.max(6, math.min(DLINES, floor((h - 38 - 28) / DLINE_H))) or 28
-    local skip = session and SESSION_ROWS or 0 -- the graphics' rows: the lines start under them
-    local off = math.max(0, math.min(self.dscroll or 0, #lines - (vis - skip)))
+    local off = math.max(0, math.min(self.dscroll or 0, #lines - vis))
     self.dscroll = off
-    for name, b in pairs(d.views) do outline(b, (not self.sel and (self.dview or "trades") == name) and ACCENT or LINE) end
+    d.title:SetShown(self.sel == nil)
+    d.back:SetShown(self.sel ~= nil)
     do
         local tracked = false
         if self.sel then for _, e in ipairs(entries) do if e.key == self.sel then tracked = true end end end
@@ -2998,7 +2718,7 @@ function UI:RenderDrawer(entries)
     if self.sel then d.focus:SetText(ns.Scout:InList(self.sel) and "Remove from my focus" or "Add to my focus list") end
     local cfg = AuctionMeshDB.cfg
     for i = 1, DLINES do
-        local w, ln = d.lines[i], (i > skip and i <= vis) and lines[i - skip + off] or nil
+        local w, ln = d.lines[i], i <= vis and lines[i + off] or nil
         local item = ln and ln.item
         if (w.indent or false) ~= (item ~= nil) then
             -- an item's line starts to the right of its two tick boxes
@@ -3015,15 +2735,14 @@ function UI:RenderDrawer(entries)
             w.label:SetText(""); w.value:SetText(""); w.rule:Hide()
         else
             w.rule:SetShown(ln.rule == true)
-            local rw = ln.rw or (ln.wide and 70 or ln.ledger and 170 or 130)
+            local rw = ln.rw or 130
             w.label:SetWidth((ln.r and (DRAWER_W - 24 - rw) or (DRAWER_W - 24)) - (item and 80 or 0))
             w.label:SetText(ln.head and (GREY .. ln.head .. "|r") or ln.l or "")
             w.value:SetText(ln.r or "")
         end
     end
-    local shown = vis - skip
-    d.hint:SetText(#lines > shown and ("lines %d-%d of %d (mouse wheel). Click an item on the left for its details."):format(off + 1, math.min(#lines, off + shown), #lines)
-        or "Click an item on the left for its details.")
+    local more = #lines > vis and ("lines %d-%d of %d (mouse wheel). "):format(off + 1, math.min(#lines, off + vis), #lines) or ""
+    d.hint:SetText(more .. (self.sel and "" or "Click an item on the left for its details."))
 end
 
 function UI:Open(tab)
@@ -3095,7 +2814,6 @@ function UI:IsShown() return frame and frame:IsShown() end
 
 function UI:Init()
     -- a gold sample every 20 seconds for the session chart, panel open or not
-    if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(20, function() UI:SampleGold() end) end
     local f = CreateFrame("Frame")
     for _, e in ipairs({ "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "MERCHANT_CLOSED", "MAIL_CLOSED", "PLAYER_MONEY" }) do
         f:RegisterEvent(e)

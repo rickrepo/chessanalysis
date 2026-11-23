@@ -6,6 +6,19 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.47.0 (2026-11-23)
+
+- **Details is redone: one view, "What to focus on", with two lists and nothing else.**
+  - **Your biggest purchases** (the 8 that made the most): what each cost and what it made (green, "made") or makes if it sells at its listed or planned price (orange, "if sold").
+  - **Biggest spreads** (the 10 items whose deals offered the most, from the last 400 deals seen): per item the profit its deals offered in all, its best single deal (how many, bought at, sells at, the percentage) and what you got of it ("got 2s50c, 1 of 2"). Each item has two tick boxes: **Focus** (on your own focus list) and **Ignore** (never offered). Ignored items are listed at the bottom so a tick brings them back.
+  - Gone: the Session view with its three charts and its figures, the Items view, the Ledger and the Market view. The gold sample the charts took every 20 seconds is gone with them, and its stored history is deleted. The timings of your tries are still in the Snapshot.
+  - Clicking an item on the left still shows that one item (market, your trades, advice, stake-out); a button at the top goes back.
+  - It costs no request, is worked out at most every 10 seconds, and is not touched at all while a deal is appearing.
+- **A Refresh button at the top of the panel** (next to Snapshot), for when the lists do not match what you hold. It counts your bags again (and the mailbox, if it is open), tracks again anything bought in the last 48 hours that the addon had given up on as "not found" and that is in your bags after all (with what it cost, and never more than it had marked not found: what you hold apart from the addon's purchases is left alone), asks for your own auctions again in the radar's next upkeep turn, and redraws every list from its top. Nothing is bought, posted or sold by it.
+- **The item you went for is framed in its own row**, under DEALS TO BUY NOW: green when you bought it, red when someone was faster, for the same second and a half as the panel's edge. A deal that is over keeps its row for that long, in its place, with what happened written in it (it has no button and is not counted as a deal).
+- **Deal rows are coloured by profit**, in four steps: 1g and more (the row tinted gold, name and profit in gold), 25s and more (bright green), 5s and more (a lighter green), less (no tint, the profit greyed). They were already listed most profit first within each kind.
+- Not confirmed in game: all of the above is new drawing and has only run in the offline tests. The cause of the lists missing items from your bags has not been seen in a log; if Refresh does not bring an item back, a Snapshot taken right then will show why.
+
 ## 3.46.0 (2026-11-23)
 
 - **The mode is at the top left of the panel**, where the name used to be, on every tab: a coloured badge that reads `VENDOR + FLIPS`, `VENDOR ONLY`, `VENDOR ONLY: GOLD LOW` or `STAKE-OUT: Runecloth`. **A click changes it**: between vendor + flips and vendor only, or, during a stake-out, it ends the stake-out. No trip to the Setup tab. (The status line under the snipe box no longer starts with the mode; the tabs moved right to make room.)

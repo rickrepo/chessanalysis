@@ -1701,7 +1701,7 @@ function Sniper:Result(kind, key, text, lasted)
     self.tally[kind] = (self.tally[kind] or 0) + 1
     if self.session and self.session[kind] then self.session[kind] = self.session[kind] + 1 end
     local rec
-    do  -- kept for the snapshot and the Session view: the last outcomes, how fast the input came and what it was
+    do  -- kept for the snapshot: the last outcomes, how fast the input came and what it was
         local list = AuctionMeshDB.outcomes or {}
         AuctionMeshDB.outcomes = list
         local r = self.react
@@ -1714,7 +1714,7 @@ function Sniper:Result(kind, key, text, lasted)
         if mine then self.react = nil end
     end
     ns.Log("RESULT %s: %s", kind, text)
-    do  -- how this try went, in time (Details, Session)
+    do  -- how this try went, in time (kept with the outcome, for the snapshot)
         local ti = self.tryInfo
         if ti and ti.key == key and kind ~= "gone" then
             -- the same, kept with the outcome. All in seconds: i = the deal
@@ -1744,7 +1744,7 @@ function Sniper:Result(kind, key, text, lasted)
         local c = FLASH[kind] or FLASH.gone
         pcall(UIErrorsFrame.AddMessage, UIErrorsFrame, "AuctionMesh: " .. text, c[1], c[2], c[3])
     end
-    if ns.UI and ns.UI.Flash then ns.UI:Flash(kind) end
+    if ns.UI and ns.UI.Flash then ns.UI:Flash(kind, key, text) end
     ns.Gate.holdUntil = nil
     if ns.UI and ns.UI.Now then ns.UI:Now() else dirty() end
 end

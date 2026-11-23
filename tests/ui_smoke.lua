@@ -160,15 +160,15 @@ LeaveChannelByName = function(name) leftChannel = name end
 fire("ADDON_LOADED", "AuctionMesh")
 fire("PLAYER_LOGIN")
 local UI, S, Se = ns.UI, ns.Sniper, ns.Seller
--- what a view of the Details drawer says, as plain text (the drawer is left as it was)
-local function drawerText(view)
-    local was, wasView, wasSel = AuctionMeshDB.cfg.drawer, UI.dview, UI.sel
-    UI.sel, UI.dview, UI.chartAt, UI.itemsCache = nil, view, nil, nil
+-- what the Details drawer says with no item picked, as plain text (the drawer is left as it was)
+local function drawerText()
+    local was, wasSel = AuctionMeshDB.cfg.drawer, UI.sel
+    UI.sel, UI.focusCache = nil, nil
     UI:ToggleDrawer(true)
     local t = {}
     for _, ln in ipairs(UI.drawerLines or {}) do t[#t + 1] = strip((ln.head or ln.l or "") .. (ln.r and ("  |  " .. ln.r) or "")) end
     local lines = UI.drawerLines
-    UI.dview, UI.sel = wasView, wasSel
+    UI.sel = wasSel
     UI:ToggleDrawer(was == true)
     return table.concat(t, "\n"), lines
 end
@@ -213,7 +213,7 @@ check(W == nil, "no window until it is needed")
 do
     local c = AuctionMeshDB.cfg
     advance(11)
-    check(leftChannel == "GoldCrew7" and c.channel == nil and c.password == nil and c.route == nil and c.share == nil and c.v == 14,
+    check(leftChannel == "GoldCrew7" and c.channel == nil and c.password == nil and c.route == nil and c.share == nil and c.v == 15,
         "an install that had joined a sharing channel leaves it once, and the channel settings are forgotten")
     check(#sentAddon == 0, "and nothing was sent while doing so")
 end
@@ -489,8 +489,9 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
         check(has("^YOUR TRADES IN THIS ITEM %\(1%\)") and has("^Bought at 20c each | %- 1s20c") and has("^On the auction house: 6 at 77c each | %+ 4s38c") and has("^Profit if this sells | %+ 3s18c"),
             "one item: the trade with what was paid, where it is now and the profit if it sells")
         check(has("^WAIT  No cheaper listing"), "one item: the recommendation, marked WAIT")
-        AuctionMeshDrawer.views.trades._scripts.OnClick(AuctionMeshDrawer.views.trades)
-        check(UI.sel == nil, "'Trades' goes back to the full list")
+        check(AuctionMeshDrawer.back._shown and not AuctionMeshDrawer.title._shown, "one item: a button back to the overview is shown in place of the title")
+        AuctionMeshDrawer.back._scripts.OnClick(AuctionMeshDrawer.back)
+        check(UI.sel == nil and AuctionMeshDrawer.title._shown and not AuctionMeshDrawer.back._shown, "the button goes back to 'what to focus on'")
         UI:ToggleDrawer(false)
     end
     -- a sale the game is still holding back, read from the mailbox invoice
@@ -966,16 +967,14 @@ check(seen["Bought:"] and seen["Collected from mailbox:"] and seen["Posted"] and
 for i = 1, math.min(4, #hist) do print("     " .. strip(hist[i].m)) end
 UI.tab = "BUY"
 UI:ToggleDrawer(true)
-check(AuctionMeshDrawer.views.activity == nil and AuctionMeshDrawer.views.trades._text == "Ledger", "the drawer has two views, Ledger and Market (the long activity list is gone)")
-AuctionMeshDrawer.views.market._scripts.OnClick(AuctionMeshDrawer.views.market)
 do
     local hs = {}
     for _, l in ipairs(UI.drawerLines) do if l.head then hs[#hs + 1] = l.head end end
-    check(hs[1]:find("^PRIME ITEMS") and hs[2] == "BIGGEST PRICE MOVES, 24 HOURS" and hs[3] == "WHAT SELLS FASTEST, MEASURED",
-        "the drawer's Market view shows prime items, price moves and what sells fastest")
+    check(rawget(AuctionMeshDrawer, "views") == nil and #hs == 2 and hs[1] == "YOUR BIGGEST PURCHASES" and hs[2] == "BIGGEST SPREADS",
+        "the drawer has one view with two lists: your biggest purchases and the biggest spreads (no session, items, ledger or market views)")
 end
 for _, l in ipairs(UI.drawerLines) do print("     " .. strip((l.head or l.l or "")) .. (l.r and ("  |  " .. strip(l.r)) or "")) end
-UI.dview = "trades"; UI:ToggleDrawer(false)
+UI:ToggleDrawer(false)
 
 print("setup: a control for everything, no commands")
 do
@@ -1136,19 +1135,14 @@ check(st:find("Next check", 1, true) == nil and select(2, st:gsub("\n", "")) == 
     "the Trades tab's status is one line: the mode and what the radar is doing")
 check(st:find("Peacebloom", 1, true) == nil, "a routine look at an item is not reported on the Trades tab")
 check(st:find("Radar: a read every %d+%.%d%ds%.$") ~= nil and st:find("MODE", 1, true) == nil, "it gives the measured time between radar reads (the mode itself is the badge at the top left)")
-do
-    local dt = drawerText("session")
-    check(dt:find("RADAR\nA read every  |  %d+%.%d%ds") ~= nil and dt:find("Requests in the last minute  |  %d+ radar, %d+ alerts, %d+ buying, %d+ other") ~= nil,
-        "what the last minute's requests went to is in Details, Session")
-end
 -- the answer to something the radar asked about is shown
 S.lastEval = nil; S.searching = { key = 2447, at = GetTime(), src = "market" }
 S:Evaluate(2447, { { price = 21, qty = 500 }, { price = 78, qty = 100 }, { price = 80, qty = 300 } }, true)
 UI.notice = nil; UI:Render()
 st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
-check(st:find("Last alert", 1, true) == nil and drawerText("session"):find("Last alert, %d+s ago: Peacebloom\n   500 cheap units is too many to clear") ~= nil,
-    "the last answer to a radar alert, with why it was not a deal, is in Details, Session (not on the Trades tab)")
+check(st:find("Last alert", 1, true) == nil and drawerText():find("Last alert", 1, true) == nil and S.lastAlert and S.lastAlert.key == 2447,
+    "the last answer to a radar alert is kept, and is neither on the Trades tab nor in Details")
 UI.wheelSeen = GetTime(); UI:Render()
 st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
@@ -1244,27 +1238,99 @@ do
     local function has(lines, pat) for _, l in ipairs(lines) do if strip((l.head or l.l or "") .. " | " .. (l.r or "")):find(pat) then return true end end return false end
     UI.tab = "BUY"; UI.sel = nil; UI:ToggleDrawer(true)
     check(AuctionMeshDrawer:IsShown() and AuctionMeshDB.cfg.drawer == true, "the handle on the right edge opens the drawer")
+    -- WHAT TO FOCUS ON: two lists and nothing else
+    local Sc = ns.Scout
+    local logWas, igWas, listWas = Sc.d.deals, AuctionMeshDB.cfg.ignore, AuctionMeshDB.cfg.focusItems
+    local now = GetServerTime()
+    Sc.d.deals = {
+        { t = now - 3600, k = 2589, kind = "FLIP", u = 60, c = 1200, s = 80, p = 3000, o = "failed" },
+        { t = now - 1800, k = 2589, kind = "FLIP", u = 10, c = 200, s = 80, p = 500, o = "bought", bu = 5, bc = 100 },
+        { t = now - 600, k = 2770, kind = "VENDOR", u = 12, c = 36, s = 5, p = 24, o = "bought", bu = 12, bc = 36 },
+        { t = now - 300, k = 765, kind = "FLIP", u = 4, c = 40, s = 9, p = 0, o = "gone" }, -- nothing in it: not listed
+    }
+    AuctionMeshDB.cfg.ignore, AuctionMeshDB.cfg.focusItems = nil, {}
+    local t = J:Bought(7777, "Test Ore", "FLIP", 5, 40, 80)
+    UI.focusCache = nil; UI:Render()
     local lines = UI.drawerLines
     dump(lines)
-    check(has(lines, "^LEDGER") and has(lines, "^Paid for everything bought | %- ") and has(lines, "^Came back from what sold | %+ ") and (has(lines, "^You are up | ") or has(lines, "^You are down | ")),
-        "the drawer is a ledger: paid, came back, and whether you are up or down")
-    check(has(lines, "^Copper Ore x12  at 3c | SOLD  %+ 24c$"), "one line per purchase: 12 Copper Ore at 3c, sold, + 24c")
-    check(has(lines, "^Linen Cloth x6  at 20c | SOLD  %+ 3s19c$"), "an auction sale shows the profit really made (from the invoice): + 3s19c")
-    do  -- something bought and not sold shows as money you are down
-        local t = J:Bought(7777, "Test Ore", "FLIP", 5, 40, 80)
+    do
+        local hs = {}
+        for _, l in ipairs(lines) do if l.head then hs[#hs + 1] = l.head end end
+        check(#hs == 2 and hs[1] == "YOUR BIGGEST PURCHASES" and hs[2] == "BIGGEST SPREADS" and AuctionMeshDrawer.title._text == "WHAT TO FOCUS ON",
+            "Details is one view, 'What to focus on': your biggest purchases, then the biggest spreads")
+        check(not has(lines, "^LEDGER") and not has(lines, "^RADAR") and not has(lines, "^SPEED") and not has(lines, "^GOLD THIS SESSION") and not has(lines, "^PRIME ITEMS")
+            and rawget(AuctionMeshFrame, "chart") == nil and UI.SampleGold == nil,
+            "the ledger, the session charts and figures, the item list and the market lists are gone (and so is the gold sampling the charts needed)")
+    end
+    do  -- purchases, biggest profit first; green = made, orange = if it sells
+        local at = {}
+        for i, l in ipairs(lines) do
+            local text = strip((l.l or "") .. " | " .. (l.r or ""))
+            if text:find("^Linen Cloth x6  at 20c | %+ 3s19c  made$") then at.linen = i end
+            if text:find("^Test Ore x5  at 40c | %+ 1s80c  if sold$") then at.ore = i end
+            if text:find("^Copper Ore x12  at 3c | %+ 24c  made$") then at.copper = i end
+        end
+        check(at.linen and at.ore and at.copper and at.linen < at.ore and at.ore < at.copper,
+            "purchases, biggest first: what each cost and what it made, or makes if it sells at its planned price (5 x 76c - 2s00c)")
+        local n = 0
+        for i = 1, 12 do J:Bought(8000 + i, "Filler " .. i, "FLIP", 1, 10, 20 + i) end
+        UI.focusCache = nil; UI:Render()
+        for _, l in ipairs(UI.drawerLines) do if l.l and strip(l.l):find(" x%d+  at ") then n = n + 1 end end
+        check(n == UI.FOCUS.purchases and not has(UI.drawerLines, "^Filler 1 x1"), "only the 8 biggest purchases are listed")
+        for i = #J.list, 1, -1 do if (J.list[i].key or 0) > 8000 then table.remove(J.list, i) end end
+        UI.focusCache = nil; UI:Render()
+        lines = UI.drawerLines
+    end
+    do  -- spreads, by item: what its deals offered, what you got, and its best deal
+        local at = {}
+        for i, l in ipairs(lines) do
+            local text = strip((l.l or "") .. " | " .. (l.r or ""))
+            if l.item == 2589 and text:find("^Linen Cloth | offered 35s00c$") then at.linen = i end
+            if text:find("^best: 60 at 20c, sells 80c %(%+300%%%) | got 2s50c, 1 of 2$") then at.best = i end
+            if l.item == 2770 and text:find("^Copper Ore | offered 24c$") then at.copper = i end
+            if text:find("^best: 12 at 3c, sells 5c %(%+67%%%) | got 24c, 1 of 1$") then at.cbest = i end
+        end
+        check(at.linen and at.best == at.linen + 1 and at.copper and at.cbest == at.copper + 1 and at.linen < at.copper,
+            "spreads, most profit offered first: per item the profit its deals offered, its best deal (bought at, sells at) and what you got of it")
+        check(has(lines, "^From the last 3 deals seen, 1 hour%.") and not has(lines, "Peacebloom"),
+            "it says how many deals it is drawn from; a deal with nothing in it is not counted")
+        -- the tick boxes on an item's line
+        local w
+        for i = 1, #AuctionMeshDrawer.lines do
+            local x = AuctionMeshDrawer.lines[i]
+            if x.always._shown and x.always.key == 2589 then w = x end
+        end
+        check(w ~= nil and not w.always.tick._shown and not w.ignore.tick._shown, "each item has two tick boxes: Focus and Ignore, both empty at first")
+        w.always._scripts.OnClick(w.always)
+        check(Sc:InList(2589) and w.always.tick._shown, "Focus puts the item on your own focus list")
+        w.ignore._scripts.OnClick(w.ignore)
+        check(AuctionMeshDB.cfg.ignore[2589] == true and not Sc:InList(2589) and has(UI.drawerLines, "^IGNORED, NEVER OFFERED %(1%)"),
+            "Ignore: the item is never offered, comes off the focus list, and is listed under IGNORED so a tick can bring it back")
+        w.ignore._scripts.OnClick(w.ignore)
+        check(AuctionMeshDB.cfg.ignore[2589] == nil and not has(UI.drawerLines, "^IGNORED"), "ticking Ignore again brings it back")
+    end
+    do  -- cheap: worked out at most every 10 seconds, and not at all while a deal is appearing
+        local calls, real = 0, UI.FocusData
+        local built, realLines = 0, UI.FocusLines
+        UI.FocusLines = function(...) built = built + 1; return realLines(...) end
+        UI.focusCache = nil
+        for _ = 1, 5 do UI:Render() end
+        local c1 = UI.focusCache
+        check(c1 ~= nil and built == 5, "the lists are drawn on every ordinary redraw")
         UI:Render()
-        check(has(UI.drawerLines, "^Test Ore x5  at 40c | NOT SOLD  down 2s00c$") and has(UI.drawerLines, "2 purchases not sold yet: 3s20c still to come back"),
-            "a purchase that has not sold says NOT SOLD and how much you are down")
-        -- sold on the auction house, gold not paid out yet
-        t.listed, t.price = 5, 80
-        S.ownSoldQty = { [7777] = 5 }
-        UI:Render()
-        check(has(UI.drawerLines, "^Test Ore x5  at 40c | SOLD, gold coming  %+ 1s80c$") and has(UI.drawerLines, "^Sold, gold on its way | %+ 3s80c$"),
-            "once it sells and the gold is on its way it says so, with the profit that is coming (5 x 76c - 2s00c)")
-        S.ownSoldQty = {}
-        for i = #J.list, 1, -1 do if J.list[i] == t then table.remove(J.list, i) end end
+        check(UI.focusCache == c1, "the figures behind them are worked out once, then kept for 10 seconds")
+        advance(11); UI:Render()
+        check(UI.focusCache ~= c1, "after 10 seconds they are worked out again")
+        built = 0
+        UI.fast = true; UI:RenderDrawer(Se:Entries()); UI.fast = nil
+        check(built == 0 and UI.drawerStale == true, "while a deal is appearing nothing in the drawer is rebuilt (it catches up on the next ordinary redraw)")
+        UI.FocusLines = realLines
         UI:Render()
     end
+    for i = #J.list, 1, -1 do if J.list[i] == t then table.remove(J.list, i) end end
+    Sc.d.deals, AuctionMeshDB.cfg.ignore, AuctionMeshDB.cfg.focusItems = logWas, igWas, listWas
+    Sc:Changed()
+    UI.focusCache = nil; UI:Render()
     -- the full story of one item is still there when you click the item
     UI.sel = 2589; UI:Render()
     check(has(UI.drawerLines, "Sold 6 at 77c each, after the cut | %+ 4s39c") and has(UI.drawerLines, "Profit made | %+ 3s19c"),
@@ -1453,12 +1519,25 @@ do
         local lt = S.lastTry
         check(lt and lt.key == 2770 and lt.kind == "won" and lt.quote and lt.total and lt.total >= lt.quote, "how the try went in time is kept: when the price was back, when it was over")
         UI.tab = "BUY"; UI.notice = nil; UI:Render()
-        local dt = drawerText("session")
-        for l in dt:gmatch("[^\n]+") do if l:find("Copper Ore", 1, true) or l:find("you:", 1, true) then print("     " .. l) end end
-        check(strip(AuctionMeshFrame.status._text):find("Last try", 1, true) == nil
-            and dt:find("%d%d:%d%d:%d%d  Copper Ore  |  BOUGHT in %d+%.%d%ds\n   you: input at %d+%.%d%ds.-, price back at %d+%.%d%ds"),
-            "how the try went in time is in Details, Session (not on the Trades tab): bought in so many seconds, with your input and the price answer")
+        local o = AuctionMeshDB.outcomes[#AuctionMeshDB.outcomes]
+        check(strip(AuctionMeshFrame.status._text):find("Last try", 1, true) == nil and o and o.k == "won" and o.key == 2770 and o.i and o.q and o.e,
+            "how the try went in time is not on the Trades tab; it is kept with the outcome (input, price answer, end) for the Snapshot")
+        -- and the item's own row, under DEALS TO BUY NOW: it stays for the flash, framed green, with what happened
+        local function flashRows()
+            local out = {}
+            for i = 1, #frames do
+                local f = frames[i]
+                if rawget(f, "detail") and f._shown and rawget(f, "flash") and f.flash[1]._shown then out[#out + 1] = f end
+            end
+            return out
+        end
+        local fr = flashRows()
+        check(S.verified[2770] == nil and #fr == 1 and strip(fr[1].name._text) == "Copper Ore" and strip(fr[1].detail._text):find("^GOT IT  12 x Copper Ore for 36c")
+            and fr[1].heat._shown and rawget(fr[1], "item") == nil and not fr[1].btn._shown,
+            "the row of the item just bought stays where it was, framed and tinted green, saying GOT IT (it has no button: nothing can be bought from it)")
+        check(table.concat(headsText(), "\n"):find("DEALS TO BUY NOW (0)", 1, true) ~= nil, "it is not counted as a deal")
         advance(2)
+        check(#flashRows() == 0 and UI.flashKey == nil and UI.flashRow == nil, "the row and its frame go when the flash ends")
         check(UI.flashKind == nil and not e[1]._shown, "the flash is gone after a second and a half")
     end
     check(strip(btn.result._text) == "" and strip(AuctionMeshFrame.footer._text):find("^SESSION "), "the count is in the footer now, not under the button")
@@ -1637,165 +1716,6 @@ do
         LIST[2589], LIST[2770] = nil, nil
         for _, k in ipairs({ 2592, 4306 }) do ns.Journal:Dropped(k, nil, "test") end
         reset(); gold = 900; S.feesCache, S.poor = nil, {}
-    end
-
-    -- DETAILS, SESSION: tries in percent, gold over the session with the next hour's sale gold, and how fast
-    do
-        reset(); gold = 900; S.verified = {}
-        local histWas, salesWas, payWas, outWas = AuctionMeshDB.goldHist, AuctionMeshDB.sales, S.ownSoldPay, AuctionMeshDB.outcomes
-        local t = GetServerTime()
-        -- an hour of play: 5s in hand rising to 9s, worth 12s rising to 20s
-        AuctionMeshDB.goldHist = {}
-        for i = 0, 60 do AuctionMeshDB.goldHist[#AuctionMeshDB.goldHist + 1] = { t = t - 3600 + i * 60, g = 500 + math.floor(400 * i / 60), w = 1200 + math.floor(800 * i / 60) } end
-        S.ownSoldPay = nil
-        AuctionMeshDB.sales = { waiting = 0, pending = { { amount = 300, at = t + 600 }, { amount = 500, at = t + 2400 }, { amount = 900, at = t + 7200 } } }
-        S.tally.won, S.tally.lost, S.tally.gone = 24, 68, 8
-        -- three tries with their timings: one bought, one lost at the price request, one refused at the purchase; one gone with no input
-        AuctionMeshDB.outcomes = {
-            { t = t - 300, k = "won", key = 2770, i = 0.05, h = 0.44, q = 0.70, e = 1.21, m = "GOT IT" },
-            { t = t - 200, k = "lost", key = 2770, i = 0.10, h = 0.40, q = 0.85, e = 0.95, m = "MISSED" },
-            { t = t - 100, k = "lost", key = 2770, i = 0.05, q = 0.75, e = 1.30, m = "MISSED" },
-            { t = t - 50, k = "gone", key = 2770, g = 3.2, m = "GONE" },
-            { t = t - 20, k = "lost", key = 2770, m = "MISSED (kept by an older version: no timings)" },
-        }
-        local c = AuctionMeshFrame.chart
-        do
-            local calls, realData = 0, UI.ChartData
-            UI.ChartData = function(...) calls = calls + 1; return realData(...) end
-            UI.tab = "BUY"; UI.notice = nil; UI.chartAt = nil; UI:Render()
-            check(c and calls == 0 and not AuctionMeshDrawer._shown, "the Trades tab has no chart: with the drawer shut nothing of it is drawn or worked out")
-            UI.ChartData = realData
-        end
-        local text = drawerText("session")
-        local d = UI.chartState
-        for l in text:gmatch("[^\n]+") do print("     | " .. l) end
-        check(strip(c.triesText._text) == "TRIES   24 bought (24%)   68 missed (68%)   8 gone, no input (8%)", "TRIES: bought, missed and gone, with their percentages")
-        check(d.cols[1] and d.cols[1].g <= 520 and d.cols[#d.cols].g >= 880 and d.cols[#d.cols].w >= 1900, "GOLD: a column for each stretch of the session, from 5s in hand at the start to 9s now, and what it is all worth above it")
-        check(d.next[1].g == 900 and d.next[5].g == 1200 and d.next[24].g == 1700, "FORECAST: the next hour, with sale gold that is already sold arriving when it is due (3s after 10 minutes, 5s more after 40)")
-        check(d.coming == 800, "only what is due within the hour is counted (the 9s due in two hours is not)")
-        check(text:find("GOLD THIS SESSION\nIn hand  |  9s00c\nWhen all has sold (after the cut)  |  26s00c\nSince the start of the session  |  + 14s00c\nSale gold already sold, due within the hour  |  + 8s00c", 1, true),
-            "the figures are under the chart: in hand, worth when sold, the change since the start, the sale gold due")
-        -- how fast: yours against whoever was first
-        local sp = d.speed
-        check(#sp.rows == 4 and sp.won.n == 1 and sp.lost.n == 2 and sp.gone.n == 1, "SPEED: every try that was timed has a column (an old record with no timings has none)")
-        check(text:find("You bought  |  1, 1.21s on average, fastest 1.21s", 1, true) and text:find("Someone else was first  |  2, within 1.12s on average, fastest 0.95s", 1, true)
-            and text:find("Gone, no input  |  1, after 3.20s on average", 1, true), "your purchases against the buyer who was first: how many, the average and the fastest")
-        check(text:find("Your purchases, on average: input 0.05s, the game's lock 0.44s,\nprice answer 0.26s, purchase 0.46s.", 1, true), "where the time of your purchases goes: input, lock, price answer, purchase")
-        check(text:find("Copper Ore  |  TAKEN within 0.95s\n   you: input at 0.10s, held by the lock 0.40s, price back at 0.95s", 1, true),
-            "a miss at the price request: the other buyer had it within 0.95s, next to your own timings")
-        check(text:find("Copper Ore  |  TAKEN between 0.80s and 1.30s", 1, true), "a refused purchase: it was still there for your price request (0.80s) and gone for your purchase (1.30s)")
-        check(text:find("Copper Ore  |  GONE after 3.20s\n   no input from you while it was up", 1, true) and text:find("Copper Ore  |  BOUGHT in 1.21s", 1, true), "gone with no input, and bought, each with its time")
-        check(text:find("LAST TRIES, NEWEST FIRST (4)", 1, true) and text:find("GONE after.-TAKEN between.-TAKEN within.-BOUGHT in") ~= nil, "newest first")
-        -- a real try is kept with its timings
-        do
-            local n0 = #AuctionMeshDB.outcomes
-            S.tryInfo = { key = 2770, t0 = GetTime() - 0.9, input = 0.1, held = 0.4, quote = 0.7 }; S:Result("lost", 2770, "MISSED  test")
-            local o = AuctionMeshDB.outcomes[#AuctionMeshDB.outcomes]
-            check(#AuctionMeshDB.outcomes == n0 + 1 and o.k == "lost" and o.key == 2770 and math.abs(o.e - 1.0) < 0.01 and o.i == 0.1 and o.h == 0.4 and o.q == 0.7,
-                "a try that ends is kept with its timings: input, lock, price answer, and the deal showing to the end")
-            S:Result("gone", 2770, "GONE  test", 2.5)
-            check(AuctionMeshDB.outcomes[#AuctionMeshDB.outcomes].g == 2.5, "a deal that left with no input is kept with how long it was up")
-            S.tally.won, S.tally.lost, S.tally.gone, S.tally.inTime, S.tally.late = 24, 68, 8, nil, nil
-            S.result, S.lastTry, UI.flashUntil = nil, nil, nil
-        end
-        -- the graphics take the top of the drawer; the lines start under them
-        UI.sel, UI.dview, UI.chartAt = nil, "session", nil
-        UI:ToggleDrawer(true)
-        local dl = AuctionMeshDrawer.lines
-        check(c._shown and strip(dl[1].label._text) == "" and strip(dl[12].label._text) == "" and strip(dl[13].label._text) == "GOLD THIS SESSION", "the charts are fixed at the top of the drawer and the text starts under them")
-        -- cheap: worked out once a second at most, at once when a try has ended, and not at all when a deal appears
-        local calls, realData = 0, UI.ChartData
-        UI.ChartData = function(...) calls = calls + 1; return realData(...) end
-        UI:Render(); UI:Render(); UI:Render()
-        check(calls == 0, "redrawing the panel does not work the charts out again within the second")
-        S.tally.won = 25; UI:Render()
-        check(calls == 1 and strip(c.triesText._text):find("25 bought", 1, true), "a try that has ended shows at once")
-        local built, realLines = 0, UI.DrawerLines
-        UI.DrawerLines = function(...) built = built + 1; return realLines(...) end
-        S.tally.won = 26; UI:Now()
-        check(built == 0 and calls == 1 and UI.dirty == true, "a deal appearing (the fast redraw) leaves the drawer alone: nothing in it is rebuilt on that path")
-        advance(0.5)
-        check(built >= 1 and strip(c.triesText._text):find("26 bought", 1, true), "it is brought up to date by the next ordinary redraw, a fifth of a second later")
-        UI.DrawerLines = realLines
-        S.tally.won = 24
-        UI.ChartData = realData
-        -- a sample is taken as the session goes on, drawer open or not
-        UI:ToggleDrawer(false)
-        local n0 = #AuctionMeshDB.goldHist
-        advance(45)
-        check(#AuctionMeshDB.goldHist >= n0 + 2 and AuctionMeshDB.goldHist[#AuctionMeshDB.goldHist].g == 900, "a gold sample is kept every 20 seconds")
-        -- the other views do not show the charts
-        UI.dview = "trades"; UI:ToggleDrawer(true)
-        check(not c._shown and strip(dl[1].label._text) ~= "", "the Ledger view has no charts, and its lines start at the top")
-        UI:ToggleDrawer(false)
-        AuctionMeshDB.goldHist, AuctionMeshDB.sales, S.ownSoldPay, AuctionMeshDB.outcomes = histWas, salesWas, payWas, outWas
-        S.tally.won, S.tally.lost, S.tally.gone = 0, 0, 0
-        UI.chartAt = nil
-        reset()
-    end
-
-    -- DETAILS, ITEMS: what the addon goes for, with a tick box for Always and one for Ignore
-    do
-        reset(); gold = 900
-        local cfg0 = AuctionMeshDB.cfg
-        local itemsWas, ignoreWas, modeWas = cfg0.focusItems, cfg0.ignore, cfg0.focusMode
-        local realPrime = ns.Scout.Prime
-        ns.Scout.Prime = function() return { { key = 2770, rate = 120, market = 9, score = 3 }, { key = 2589, rate = 45, market = 80, score = 2 } } end
-        ITEMS[2770] = ITEMS[2770] or { "Copper Ore", 5 }
-        ITEMS[2589] = ITEMS[2589] or { "Linen Cloth", 1 }
-        ITEMS[2592] = ITEMS[2592] or { "Wool Cloth", 3 }
-        cfg0.focusItems, cfg0.ignore, cfg0.focusMode = { 2592 }, nil, "off"; ns.Scout:Changed()
-        local text, lines = drawerText("items")
-        for l in text:gmatch("[^\n]+") do print("     | " .. l) end
-        check(text:find("MOST ACTIVE ITEMS (2)", 1, true) and text:find("Copper Ore  |  120 sell/h  9c", 1, true) and text:find("YOUR OWN LIST, NOT AMONG THE ABOVE (1)\nWool Cloth", 1, true),
-            "the Items view lists what the addon goes for, best first, then your own list")
-        check(text:find("Laser focus is off (Setup tab): every material is watched.", 1, true) and text:gsub("\n", " "):find("(it counts once laser focus is on)", 1, true), "with focus off it says so, and that Always counts once focus is on")
-        -- the tick boxes
-        UI.sel, UI.dview, UI.itemsCache = nil, "items", nil
-        UI:ToggleDrawer(true)
-        local dl = AuctionMeshDrawer.lines
-        local function rowOf(key) for i = 1, #dl do if dl[i].always._shown and dl[i].always.key == key then return dl[i] end end end
-        local ore, wool = rowOf(2770), rowOf(2592)
-        check(ore and wool and not ore.always.tick._shown and not ore.ignore.tick._shown and wool.always.tick._shown, "each item has two boxes; Always is ticked for what is on your own list")
-        check(not dl[1].always._shown, "a heading has no boxes")
-        -- Ignore: never offered, and a deal on screen for it goes without counting as a miss
-        S.verified[2770] = { key = 2770, kind = "VENDOR", units = 1, cost = 3, sell = 5, profit = 20, deposit = 0, buys = {}, counts = {}, commodity = true, at = GetTime(), from = "me" }
-        S.dealSeen[2770] = GetTime()
-        local gone0 = S.tally.gone
-        ore.ignore._scripts.OnClick(ore.ignore)
-        check(cfg0.ignore[2770] == true and S:Ignored(2770) and S.verified[2770] == nil and S.tally.gone == gone0, "a tick on Ignore: the item is never offered, and its deal on screen goes without counting as a miss")
-        check(rowOf(2770) == ore and ore.ignore.tick._shown, "the row stays where it is (it does not jump from under the mouse), now ticked")
-        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
-        S.priority = 2770; advance(1)
-        check(S.verified[2770] == nil, "a cheap listing of an ignored item is not offered")
-        ore.ignore._scripts.OnClick(ore.ignore)
-        check(not S:Ignored(2770) and not ore.ignore.tick._shown, "a second click takes it off the ignore list")
-        S.checkedAt = {}; S.priority = 2770; advance(1)
-        check(S.verified[2770] ~= nil, "and it is offered again")
-        S.verified[2770] = nil; S.dealSeen[2770] = nil; LIST[2770] = nil
-        -- Always: on your own list; ticking one clears the other
-        ore.always._scripts.OnClick(ore.always)
-        check(ns.Scout:InList(2770) and ore.always.tick._shown, "a tick on Always puts the item on your own list")
-        ore.ignore._scripts.OnClick(ore.ignore)
-        check(S:Ignored(2770) and not ns.Scout:InList(2770) and not ore.always.tick._shown, "Ignore takes it off your own list: an item is one or the other")
-        ore.always._scripts.OnClick(ore.always)
-        check(ns.Scout:InList(2770) and not S:Ignored(2770), "and Always takes it off the ignore list")
-        wool.always._scripts.OnClick(wool.always)
-        check(not ns.Scout:InList(2592), "a click on a ticked Always takes the item off your own list")
-        -- opened again, the list is put together afresh: ignored items have their own section
-        cfg0.ignore[2589] = true
-        text = drawerText("items")
-        check(text:find("MOST ACTIVE ITEMS (1)", 1, true) and text:find("IGNORED (1)\nLinen Cloth", 1, true) and not text:find("Wool Cloth", 1, true),
-            "opened again: an ignored item is under IGNORED and no longer among the picks, and what is on no list any more is gone")
-        -- with focus on, the list is the focus set
-        cfg0.focusMode = "list"; ns.Scout:Changed()
-        text = drawerText("items")
-        check(text:find("ITEMS THE ADDON GOES FOR (1)", 1, true) and text:find("Focused on your list: 1 item.", 1, true), "with laser focus on your own list, the items are that list")
-        UI:ToggleDrawer(false); UI.dview = "trades"
-        ns.Scout.Prime = realPrime
-        cfg0.focusItems, cfg0.ignore, cfg0.focusMode = itemsWas, ignoreWas, modeWas; ns.Scout:Changed()
-        UI.itemsCache = nil
-        reset()
     end
 
     -- THE FOOTER: SESSION (with its clock) | TODAY | THE YEAR
@@ -2557,8 +2477,7 @@ do
         S.tryInfo = { key = 2770, t0 = GetTime(), input = 1.4 }; S:Result("lost", 2770, "MISSED  test")
         check(S.lastTry.late == true and S.tally.late == 1, "an input 1.4 seconds after the deal, sent with the lock already open: LATE")
         UI.tab = "BUY"; UI.notice = nil; UI:Render()
-        check(drawerText("session"):find("Presses in time this session  |  1 of 2\nOptimal: an input every 245 ms or faster. Too slow: over 490 ms.", 1, true),
-            "Details, Session keeps the count (1 of 2 presses in time) and the two limits")
+        check(S.tally.inTime == 1 and S.tally.late == 1, "the session keeps the count: 1 of 2 presses in time")
         S.tally.won, S.tally.lost, S.tally.gone, S.tally.inTime, S.tally.late = 0, 0, 0, nil, nil
         S.result, S.lastTry, UI.flashUntil = nil, nil, nil
     end
@@ -3216,21 +3135,116 @@ do
         LIST[2838] = nil; S.verified[2838] = nil; cfg.autoConfirm = false
     end
 
+    -- DEAL ROWS: coloured by profit, and the one you went for is framed red when it is missed
+    do
+        reset(); gold = 90000; S.verified = {}
+        local function deal(key, profit) return { key = key, kind = "FLIP", units = 10, cost = 100, sell = 50, profit = profit, deposit = 0, buys = {}, counts = {}, commodity = true, at = GetTime(), born = GetTime(), from = "me" } end
+        ITEMS[2770] = ITEMS[2770] or { "Copper Ore", 5 }
+        ITEMS[2589] = ITEMS[2589] or { "Linen Cloth", 1 }
+        ITEMS[2592] = ITEMS[2592] or { "Wool Cloth", 3 }
+        ITEMS[4306] = ITEMS[4306] or { "Silk Cloth", 3 }
+        S.verified[2770], S.verified[2589], S.verified[2592], S.verified[4306] = deal(2770, 12000), deal(2589, 3000), deal(2592, 600), deal(4306, 120)
+        UI.tab = "BUY"; UI.notice = nil; UI.flashUntil, UI.flashKey, UI.flashRow = nil, nil, nil; UI:Render()
+        local by = {}
+        for i = 1, #frames do
+            local f = frames[i]
+            if rawget(f, "detail") and f._shown and rawget(f, "item") and not f.item.action then by[f.item.key] = f end
+        end
+        local _, t1 = UI.Heat(12000); local _, t2 = UI.Heat(3000); local _, t3 = UI.Heat(600); local _, t4 = UI.Heat(120)
+        check(t1 == 1 and t2 == 2 and t3 == 3 and t4 == 4, "four steps by profit: 1g and more, 25s and more, 5s and more, less")
+        check(by[2770] and by[2770].heat._shown and by[2770].profit._text:find("|cffffd633", 1, true) and by[2770].name._text:find("|cffffd633", 1, true),
+            "a deal that makes 1g or more: its row is tinted gold, with its name and profit in gold")
+        check(by[2589].heat._shown and by[2589].profit._text:find("|cff40ff70", 1, true) and by[2589].name._text:find("|cff40ff70", 1, true),
+            "25s or more: tinted bright green, name and profit in bright green")
+        check(by[2592].heat._shown and by[2592].profit._text:find("|cff33d95c", 1, true) and not by[2592].name._text:find("|c", 1, true),
+            "5s or more: a lighter green tint, the name left plain")
+        check(not by[4306].heat._shown and by[4306].profit._text:find("|cff8fae96", 1, true), "less than 5s: no tint, the profit greyed")
+        local rt = rowsText()
+        check(rt[1]:find("^Copper Ore") and rt[2]:find("^Linen Cloth") and rt[3]:find("^Wool Cloth") and rt[4]:find("^Silk Cloth"), "and they are listed most profit first")
+        -- missed: its row turns red where it was (second), the others stay
+        S.verified[2589] = nil
+        S:Result("lost", 2589, "MISSED  Linen Cloth: someone was faster. Nothing spent.")
+        UI:Render()
+        local red, order = nil, {}
+        for i = 1, #frames do
+            local f = frames[i]
+            if rawget(f, "detail") and f._shown and rawget(f, "flash") and f.icon and strip(f.name._text or "") ~= "" and (rawget(f, "item") or f.flash[1]._shown) then
+                order[#order + 1] = strip(f.name._text)
+                if f.flash[1]._shown then red = f end
+            end
+        end
+        check(red ~= nil and strip(red.name._text) == "Linen Cloth" and strip(red.detail._text):find("^MISSED  Linen Cloth") and red.detail._text:find("|cffff", 1, true)
+            and order[1] == "Copper Ore" and order[2] == "Linen Cloth" and order[3] == "Wool Cloth",
+            "a missed deal: its row stays in its place for the flash, framed red, saying MISSED")
+        check(by[2770].flash[1]._shown == false or by[2770] == red, "only that row is framed")
+        -- a deal that is still there after a purchase of part of it keeps its real row, framed green
+        S:Result("won", 2770, "GOT IT  5 x Copper Ore")
+        UI:Render()
+        check(by[2770].flash[1]._shown and rawget(by[2770], "item") ~= nil and by[2770].btn._shown, "a deal bought in part: its own row is framed green, and it can still be bought")
+        advance(2)
+        S.verified = {}; S.result, S.lastTry = nil, nil
+        S.tally.won, S.tally.lost = 0, 0
+        reset(); gold = 900
+    end
+
+    -- THE REFRESH BUTTON: the bags are read again, and what was given up on as not found is tracked again
+    do
+        reset(); gold = 900
+        local J = ns.Journal
+        ITEMS[9191] = { "Refresh Cloth", 3 } -- an item with no history in this run
+        local b = AuctionMeshFrame.refresh
+        check(b ~= nil and b._text == "Refresh", "there is a Refresh button at the top of the panel, on every tab")
+        -- 8 Refresh Cloth are in the bags; the addon's record says nothing is held (the game's bag event was missed)
+        local t = J:Bought(9191, "Refresh Cloth", "FLIP", 8, 30, 90)
+        t.lost, t.lostWhy = 8, "not found in bags or mailbox"
+        local flipWas = AuctionMeshDB.flips[9191]
+        AuctionMeshDB.flips[9191] = nil
+        -- (put in the bags with no word from the game that they changed: that is the missed event)
+        local slotOf, slotWas = { [9191] = 14, [4306] = 15 }, { bags[14], bags[15] }
+        local function setBag(id, n) bags[slotOf[id]] = n > 0 and { itemID = id, stackCount = n } or nil end
+        setBag(9191, 8)
+        UI.tab = "SELL"; UI.scroll = { SELL = 7 }; UI:Render()
+        local function held() for _, e in ipairs(Se:Entries()) do if e.key == 9191 and e.action ~= "LISTED" then return e end end end
+        check(held() == nil, "before: 8 Refresh Cloth in the bags that the lists do not show")
+        b._scripts.OnClick(b)
+        local e = held()
+        check(e ~= nil and e.count == 8 and AuctionMeshDB.flips[9191].cost == 30 and t.lost == 0,
+            "Refresh: they are back on the Bags tab, 8 of them at the 30c each they cost")
+        check(UI.scroll.SELL == 0 and strip(AuctionMeshFrame.status._text):find("^Refreshed: bags read again%. %d+ items? to deal with %(tab Bags%)%. 8 units the addon had lost track of are back%."),
+            "the lists start from their top again and the panel says what the refresh found")
+        -- pressed again: nothing more is taken (never more than was marked not found)
+        setBag(9191, 20)
+        b._scripts.OnClick(b)
+        check(held().count == 8, "more of the same item in the bags is yours, not the addon's: a second Refresh takes nothing more")
+        -- something of yours the addon never bought is left alone
+        setBag(4306, 5)
+        local was = AuctionMeshDB.flips[4306]
+        AuctionMeshDB.flips[4306] = nil
+        b._scripts.OnClick(b)
+        check(AuctionMeshDB.flips[4306] == nil, "what you hold that the addon never bought is not picked up")
+        AuctionMeshDB.flips[4306] = was
+        bags[14], bags[15] = slotWas[1], slotWas[2]; Se:ScanBags()
+        AuctionMeshDB.flips[9191] = flipWas; ITEMS[9191] = nil
+        for i = #J.list, 1, -1 do if J.list[i] == t then table.remove(J.list, i) end end
+        UI.tab = "BUY"; UI.notice = nil
+        reset()
+    end
+
     -- THE HEADER BAR FITS THE SPACE IT HAS
     do
         local f = AuctionMeshFrame
-        local realR, realL = rawget(f.tabHist, "GetRight"), rawget(f.snap, "GetLeft")
+        local realR, realL = rawget(f.tabHist, "GetRight"), rawget(f.refresh, "GetLeft")
         rawset(f.tabHist, "GetRight", function() return 300 end)
-        rawset(f.snap, "GetLeft", function() return 640 end)
+        rawset(f.refresh, "GetLeft", function() return 640 end)
         UI:FitHeader()
-        check(UI.barWidth == 230 and f.bar._shown ~= false, "wide panel: the engine bar is its full width, between the tabs and the Snapshot button")
-        rawset(f.snap, "GetLeft", function() return 440 end)
+        check(UI.barWidth == 230 and f.bar._shown ~= false, "wide panel: the engine bar is its full width, between the tabs and the Refresh button")
+        rawset(f.refresh, "GetLeft", function() return 440 end)
         UI:FitHeader()
         check(UI.barWidth == 116, "narrower panel: the bar and its text shrink to the room there is (116)")
-        rawset(f.snap, "GetLeft", function() return 350 end)
+        rawset(f.refresh, "GetLeft", function() return 350 end)
         UI:FitHeader()
         check(UI.barWidth < 60 and f.bar._shown == false and f.barText._shown == false, "no room at all: the bar is hidden instead of being drawn over the buttons")
-        rawset(f.tabHist, "GetRight", realR); rawset(f.snap, "GetLeft", realL)
+        rawset(f.tabHist, "GetRight", realR); rawset(f.refresh, "GetLeft", realL)
         UI:FitHeader()
     end
 

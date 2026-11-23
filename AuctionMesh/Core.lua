@@ -199,7 +199,9 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             local back = ns.Auto:OldRaises(db.cfg.minProfit)
             if back then db.cfg.minProfit = back end
         end
-        db.cfg.v = 14
+        -- (3.47: the Details charts are gone, and with them the gold samples they kept)
+        db.goldHist = nil
+        db.cfg.v = 15
         Deals.cfg.minProfit = db.cfg.minProfit
         Swarm.scope = db.cfg.scope
         Swarm:SetFocus(db.cfg.focus)
