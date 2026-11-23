@@ -3938,10 +3938,40 @@ do
     -- 7 and 30 days
     gd.views.d7._scripts.OnClick(gd.views.d7)
     st = UI.goldState
-    check(st.view == "d7" and #st.line.days >= 6 and strip(gd.head._text):find("^BIGGEST CHANGES, LAST 7 DAYS"), "'7 days' shows the week, a divider for each day")
-    check(st.line.cols[1].none == true and st.line.cols[C.cols].v == 8500 and not gd.cols[1].fill._shown, "where there is no record yet the chart is empty")
+    check(st.view == "d7" and st.line.short == true and #st.line.days >= 4 and #st.line.days <= 5 and st.line.cols[1].v == 10000 and gd.cols[1].fill._shown,
+        "'7 days' with five days on record: the chart begins where the record begins, with no empty stretch")
+    check(strip(gd.chg._text):find("since %a%a%a %d%d %a%a%a, %d%d:%d%d %(recording began then%)$") and strip(gd.head._text):find("^BIGGEST CHANGES, SINCE "),
+        "and it says since when, in place of '7 days'")
     gd.views.d30._scripts.OnClick(gd.views.d30)
-    check(UI.goldState.view == "d30" and #UI.goldState.line.days >= 29, "'30 days' shows the month")
+    check(UI.goldState.view == "d30" and UI.goldState.line.short == true, "'30 days' the same")
+    -- the first evening with the addon: 25 minutes on record (a real screenshot showed two empty days and a sliver)
+    do
+        local keep = G.d
+        G.d = { h = {}, d = {}, ev = {} }
+        G.d.d[1] = { id = day(now - 1500), t = now - 1500, tc = now - 1500, o = 104800, h = 104800, l = 104800, c = 104800 }
+        G.d.ev = {
+            { t = now - 1200, t2 = now - 1190, d = -17282, g = 87518, n = 3, why = { "Bought 22 x Crisp Spider Meat" } },
+            { t = now - 600, t2 = now - 590, d = 19250, g = 106768, n = 4, why = { "Sold 22 x Crisp Spider Meat to a vendor" } },
+            { t = now - 60, t2 = now - 50, d = -66873, g = 39895, n = 6, why = { "Bought 48 x Deviate Fish" } },
+        }
+        gold = 39895; G.last = gold
+        gd.views.d2._scripts.OnClick(gd.views.d2)
+        local s2 = UI.goldState
+        local shown2, ticks2 = 0, {}
+        for i = 1, C.cols do if gd.cols[i].fill._shown then shown2 = shown2 + 1 end end
+        for i = 1, C.ticks do if strip(gd.ticks[i]._text or "") ~= "" then ticks2[#ticks2 + 1] = strip(gd.ticks[i]._text) end end
+        print("     " .. strip(gd.chg._text) .. "   marks: " .. table.concat(ticks2, " "))
+        check(s2.line.short == true and math.abs(s2.line.span - 1501) <= 1 and shown2 == C.cols,
+            "25 minutes on record, '2 days' picked: those 25 minutes fill the whole chart")
+        check(#ticks2 >= 4 and ticks2[1]:find("^%d%d:%d%d$") and strip(gd.chg._text):find("since %d%d:%d%d %(recording began then%)$"),
+            "the times along the bottom are a few minutes apart, and the change is 'since' the time recording began")
+        local xs = {}
+        for i = 1, 3 do xs[i] = UI.goldState.swings[i].col end
+        check(xs[1] > 120 and xs[2] > 70 and xs[2] < 100 and xs[3] > 20 and xs[3] < 40, "the marks are spread along the line where each change happened, not piled at the edge")
+        G.d = keep
+        gold = 8500; G.last = 8500
+        gd.views.d30._scripts.OnClick(gd.views.d30)
+    end
     -- gold changing while the tab is open is drawn at once
     gold = 9500; fire("PLAYER_MONEY")
     check(UI.dirty == true and G.d.ev[#G.d.ev].d == 1000, "gold changes while the tab is open: recorded, and the chart is redrawn")

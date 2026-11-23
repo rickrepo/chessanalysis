@@ -6,6 +6,12 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.56.0 (2026-11-23)
+
+- **The Gold chart begins where your record begins.** A real screenshot showed why it looked wrong: with 25 minutes on record and "2 days" picked, the chart was two days of empty space with everything squeezed into the last sliver. Now, when there is less on record than the range asked for, the chart shows what there is across its whole width (never less than ten minutes), the times along the bottom are spaced to fit (every 5 minutes, 15 minutes, hour and so on), the marks sit along the line where each change happened, and the change at the top reads `since 23:40 (recording began then)` in place of `2 days`. Once two days are on record, "2 days" is two days.
+- Confirmed in game from that screenshot: the four tabs and Refresh fit in the header, the Gold tab draws, and purchases and vendor sales are recorded with what they were.
+- Not confirmed in game: the corrected chart itself.
+
 ## 3.55.0 (2026-11-23)
 
 - **The reagent bag.** The bags were read as numbers 0 to 5, with 5 taken to be the reagent bag (it is on the retail client). The reagent bag's number is now asked of the game itself, and every bag the game names is read. Whether the old assumption was wrong on this client has not been seen in a log.

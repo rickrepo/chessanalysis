@@ -53,11 +53,10 @@ check(#d.d == 2 and d.d[2].o == 11000 and d.d[2].c == 15000, "three days later: 
 local L = G:Line("d7", 168) -- one column an hour
 check(#L.cols == 168 and L.cols[168].v == 15000 and L.last == 15000, "the 7-day line ends at the amount now")
 check(L.lo == 8800 and L.hi == 15000 and L.first == 10000, "its range: least 88s, most 1g50s; it begins at the first amount on record")
-local firstKnown
-for i = 1, 168 do if not L.cols[i].none then firstKnown = i; break end end
-check(firstKnown > 1 and L.cols[firstKnown - 1].none == true and L.cols[1].none == true, "before the first record the line is empty")
+check(L.short == true and L.cols[1].none ~= true and L.first == 10000 and L.span < 7 * 86400 and L.span > 3 * 86400,
+    "with less than 7 days on record the chart begins where the record begins: no empty stretch, and it says so")
 check(L.cols[167].v == 11000 and L.cols[168].lo == 11000 and L.cols[168].hi == 15000, "it stays where it was for three days, then steps up in the last column (which spans 1g10s to 1g50s)")
-check(#L.days >= 6 and #L.days <= 7 and L.days[1].col > 1, "it says where each day begins")
+check(#L.days >= 3 and #L.days <= 4 and L.days[1].col > 1, "it says where each day begins")
 local L2 = G:Line("d2", 48)
 check(L2.first == 11000 and L2.cols[1].v == 11000 and L2.cols[48].v == 15000 and not L2.cols[1].none, "the 2-day line begins at what the gold was two days ago (carried from before the range)")
 
@@ -72,6 +71,21 @@ local c, base = G:Today()
 check(c == 4000 and base == 11000, "today: + 40s on the 1g10s the day began with")
 local c7 = G:Change(7 * 86400)
 check(c7 == 5000, "seven days: + 50s against the first amount on record (there is no record from seven days ago)")
+
+-- a record of a few minutes: the chart is those minutes, never less than ten
+do
+    local db2, was = {}, { T = T, gold = gold, d = G.d, last = G.last }
+    gold = 10000
+    G:Attach(db2, "New-Realm")
+    T = T + 120; gold = 9000; G:OnMoney()
+    T = T + 60; gold = 9500; G:OnMoney()
+    local Ls = G:Line("d2", 60)
+    check(Ls.short == true and Ls.span == 600 and Ls.cols[60].v == 9500 and Ls.first == 10000,
+        "three minutes on record, asked for 2 days: the chart is the last ten minutes, beginning at the first amount")
+    local ss = G:Swings("d2", 6, 60, Ls.from)
+    check(#ss == 2 and ss[1].d == -1000 and ss[1].col == 54 and ss[2].col == 60, "and its swings sit where they happened on that short chart (one a minute ago, one now)")
+    T, gold, G.d, G.last = was.T, was.gold, was.d, was.last
+end
 
 print("limits")
 for i = 1, 400 do

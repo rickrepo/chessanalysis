@@ -913,13 +913,16 @@ function UI:RenderGold(short)
     local L = G:Line(view, C.cols)
     local first, last = L.first or now, L.last or now
     local chg = last - first
+    -- less on record than the range asked for: the chart shows what there is, and says since when
+    local rangeName = L.short and ("since " .. date((L.span > 20 * 3600) and "%a %d %b, %H:%M" or "%H:%M", L.from) .. " (recording began then)")
+        or (G.LINES[view] or G.LINES.d2).name
     local up = chg >= 0
     local RGB = up and { 0.20, 0.90, 0.40 } or { 1.00, 0.25, 0.20 }
     local function signed(c) return ((c >= 0) and (GREEN .. "+ ") or (RED .. "- ")) .. short(math.abs(c)) .. "|r" end
     -- the amount now, and the change over the range with its percentage
     gd.big:SetText("|cffffffff" .. short(now) .. "|r")
     gd.chg:SetText((up and GREEN or RED) .. (up and "+ " or "- ") .. short(math.abs(chg))
-        .. ((first > 0) and ("  [%+.2f%%]"):format(chg / first * 100) or "") .. "|r" .. GREY .. "  " .. (G.LINES[view] or G.LINES.d2).name .. "|r")
+        .. ((first > 0) and ("  [%+.2f%%]"):format(chg / first * 100) or "") .. "|r" .. GREY .. "  " .. rangeName .. "|r")
     do  -- under it, in one line: what you are worth once everything has sold
         local m = self.moneyNow
         if m then
@@ -1009,20 +1012,28 @@ function UI:RenderGold(short)
             end
         end
     end
-    do  -- times of day, on the 2-day view
+    do  -- times along the bottom, spaced for the length of what is drawn
         local k = 0
-        if view == "d2" then
-            local t = math.ceil(L.from / 3600) * 3600
+        local span = L.span
+        if span <= 60 * 3600 then
+            -- the widest spacing that still gives about six marks
+            local step = 6 * 3600
+            for _, st in ipairs({ 300, 900, 1800, 3600, 3 * 3600 }) do if span / st <= 8 then step = st; break end end
+            local unit = math.min(step, 3600)
+            local t = math.ceil(L.from / unit) * unit
             while t < L.to and k < C.ticks do
-                local h = tonumber(date("%H", t)) or 0
-                if h % 6 == 0 and h ~= 0 then
+                local h, mi = tonumber(date("%H", t)) or 0, tonumber(date("%M", t)) or 0
+                local on
+                if step >= 3600 then on = mi == 0 and h % (step / 3600) == 0 and not (h == 0 and #L.days > 0)
+                else on = (mi * 60) % step == 0 end
+                if on then
                     k = k + 1
                     local lab = gd.ticks[k]
                     lab:ClearAllPoints()
-                    lab:SetPoint("TOP", gd.plot, "BOTTOMLEFT", (t - L.from) / L.span * C.w, -4)
-                    lab:SetText(h == 12 and "12P" or (h < 12 and (h .. "A") or ((h - 12) .. "P")))
+                    lab:SetPoint("TOP", gd.plot, "BOTTOMLEFT", (t - L.from) / span * C.w, -4)
+                    lab:SetText(step >= 6 * 3600 and (h == 12 and "12P" or (h < 12 and (h .. "A") or ((h - 12) .. "P"))) or date("%H:%M", t))
                 end
-                t = t + 3600
+                t = t + unit
             end
         end
         for i = k + 1, C.ticks do gd.ticks[i]:SetText("") end
@@ -1041,7 +1052,7 @@ function UI:RenderGold(short)
         gd.stem:SetSize(1, 24)
     end
     -- what moved the gold most, on the line and listed under the chart
-    local swings = G:Swings(view, C.lines, C.cols)
+    local swings = G:Swings(view, C.lines, C.cols, L.from)
     local used = {}
     for i = 1, C.marks do
         local m, e = gd.marks[i], swings[i]
@@ -1063,7 +1074,7 @@ function UI:RenderGold(short)
     do  -- the mouse on the chart: the amount at that time
         local per = C.cols / C.hover
         local byStrip = {}
-        for _, e in ipairs(G:Swings(view, 60, C.cols)) do
+        for _, e in ipairs(G:Swings(view, 60, C.cols, L.from)) do
             local sidx = math.ceil(e.col / per)
             byStrip[sidx] = byStrip[sidx] or {}
             table.insert(byStrip[sidx], e)
@@ -1083,7 +1094,7 @@ function UI:RenderGold(short)
             gd.hover[i].tip = tip
         end
     end
-    gd.head:SetText(GREY .. "BIGGEST CHANGES, LAST " .. (G.LINES[view] or G.LINES.d2).name:upper() .. "   (the squares on the line: mouse over one)|r")
+    gd.head:SetText(GREY .. "BIGGEST CHANGES, " .. (L.short and rangeName:gsub(" %(recording began then%)", ""):upper() or ("LAST " .. rangeName:upper())) .. "   (the squares on the line: mouse over one)|r")
     for i = 1, C.lines do
         local w, e = gd.lines[i], swings[i]
         if e then

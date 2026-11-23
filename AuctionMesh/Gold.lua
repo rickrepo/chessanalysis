@@ -137,9 +137,15 @@ end
 -- and after each swing, and the open and close of every hour and day. The
 -- line is that list, read at `cols` evenly spaced times.
 --
+-- THE CHART BEGINS WHERE THE RECORD BEGINS. Asked for 2 days with half an
+-- hour on record, it shows that half hour across its whole width (a real
+-- screenshot: two days of empty chart with everything in the last sliver).
+-- `short` says so, and from / span are what is really drawn.
+--
 -- Returns { cols = { { t, v, lo, hi } or { t, none = true } ... }, lo, hi,
---           first, last (the amounts at the two ends), from, to, span,
+--           first, last (the amounts at the two ends), from, to, span, short,
 --           days = { { col, t } ... } (where each day begins) }
+Gold.MIN_SPAN = 600 -- never less than ten minutes across
 Gold.LINES = { d2 = { span = 2 * 86400, name = "2 days" }, d7 = { span = 7 * 86400, name = "7 days" }, d30 = { span = 30 * 86400, name = "30 days" } }
 function Gold:Line(view, cols)
     local v = self.LINES[view] or self.LINES.d2
@@ -156,14 +162,20 @@ function Gold:Line(view, cols)
         if a[1] ~= b[1] then return a[1] < b[1] end
         return a[3] < b[3]
     end)
-    local res = { cols = {}, view = view, from = from, to = now, span = v.span, days = {} }
+    -- the record's first moment: the range does not begin before it
+    local span, short = v.span, false
+    if pts[1] and pts[1][1] > from then
+        from = min(pts[1][1], now - self.MIN_SPAN)
+        span, short = now - from, true
+    end
+    local res = { cols = {}, view = view, from = from, to = now, span = span, short = short, days = {} }
     local at, cur = 1, nil
     while pts[at] and pts[at][1] <= from do cur = pts[at][2]; at = at + 1 end -- what it was when the range begins
     -- the amount the range began with: what it was at its start, or the first amount on record after it
     res.first = cur or (pts[at] and pts[at][2]) or nil
     local lastDay
     for i = 1, cols do
-        local t = from + v.span * i / cols
+        local t = from + span * i / cols
         local lo, hi = cur, cur
         while pts[at] and pts[at][1] <= t do
             cur = pts[at][2]
@@ -190,15 +202,16 @@ end
 
 -- The biggest swings in the same range, largest first, at most n. Each is
 -- { t, d, g, why, more, n } with col = the column of the line it sits on.
-function Gold:Swings(view, n, cols)
+function Gold:Swings(view, n, cols, from)
     local v = self.LINES[view] or self.LINES.d2
     local d = self.d or { ev = {} }
     local now = self.now()
-    local from = now - v.span
+    from = from or (now - v.span) -- (the chart passes where it really begins)
+    local span = max(1, now - from)
     local out = {}
     for _, e in ipairs(d.ev) do
-        if e.t > from and e.t <= now then
-            local col = max(1, min(cols or 1, math.ceil(((e.t2 or e.t) - from) / v.span * (cols or 1))))
+        if e.t >= from and e.t <= now then
+            local col = max(1, min(cols or 1, math.ceil(((e.t2 or e.t) - from) / span * (cols or 1))))
             out[#out + 1] = { t = e.t, d = e.d, g = e.g, why = e.why, more = e.more, n = e.n, col = col }
         end
     end
