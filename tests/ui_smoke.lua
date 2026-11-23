@@ -3838,6 +3838,88 @@ do
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
 end
 
+print("the Gold tab: your gold over time, as a stock chart")
+do
+    local G = ns.Gold
+    check(G ~= nil and G.d ~= nil and AuctionMeshDB.gold["Tester-Realm"] == G.d and #G.d.d >= 1, "the gold of the character that logged in has been recorded since login")
+    check(UI.HeaderRoom(720, true, true) >= 12 and UI.HeaderRoom(794, false, true) >= 12, ("five tabs still leave room at the top right (%d px on the floating panel)"):format(UI.HeaderRoom(720, true, true)))
+    do  -- what this run did was recorded with its causes
+        local seen = {}
+        for _, e in ipairs(G.d.ev) do
+            for _, w in ipairs(e.why or {}) do
+                if w:find("^Bought %d+ x ") and e.d < 0 then seen.bought = w end
+                if w:find(" to a vendor$") and e.d > 0 then seen.vendor = w end
+                if w:find("%(auction%)$") and e.d > 0 then seen.sold = w end
+                if w:find("^Posting fee: ") and e.d < 0 then seen.fee = w end
+            end
+        end
+        print("     " .. tostring(seen.bought) .. " | " .. tostring(seen.vendor) .. " | " .. tostring(seen.sold) .. " | " .. tostring(seen.fee))
+        check(seen.bought ~= nil and seen.vendor ~= nil, "the purchases and vendor sales of this run are among the swings, each with what it was")
+    end
+    -- a known history: five days, one big sale, one big purchase
+    local was = G.d
+    local now = GetServerTime()
+    local day = G.dayId
+    G.d = { h = {}, d = {}, ev = {} }
+    local amounts = { { 4, 10000, 10000, 9000, 12000 }, { 3, 12000, 12000, 12000, 16000 }, { 1, 16000, 16000, 11000, 11000 }, { 0, 11000, 11500, 11000, 11500 } }
+    for _, a in ipairs(amounts) do
+        local t = now - a[1] * 86400
+        G.d.d[#G.d.d + 1] = { id = day(t), t = t, o = a[2], h = math.max(a[2], a[3], a[5]), l = a[4], c = a[5] }
+    end
+    G.d.ev = {
+        { t = now - 3 * 86400, t2 = now - 3 * 86400, d = 4000, g = 16000, n = 2, why = { "Sold 40 x Thick Leather (auction)" } },
+        { t = now - 1 * 86400, t2 = now - 1 * 86400, d = -5000, g = 11000, n = 1, why = { "Bought 60 x Runecloth" } },
+        { t = now - 4 * 86400, t2 = now - 4 * 86400, d = -1000, g = 9000, n = 1 },
+        { t = now - 600, t2 = now - 600, d = 500, g = 11500, n = 1, why = { "Sold 12 x Copper Ore to a vendor" } },
+    }
+    G.d.h[1] = { id = math.floor((now - 600) / 3600), t = now - 600, o = 11000, h = 11500, l = 11000, c = 11500 }
+    local goldWas = gold
+    gold = 11500; G.last = 11500
+    UI:Open("BUY")
+    local tab = AuctionMeshFrame.tabGold
+    check(tab ~= nil and tab._text == "Gold", "there is a Gold tab")
+    tab._scripts.OnClick(tab)
+    local gd = AuctionMeshFrame.gold
+    check(UI.tab == "GOLD" and gd._shown and #rowsText() == 0, "it opens the chart, with no list rows under it")
+    local st = UI.goldState
+    check(st and st.view == "days" and st.n == 30, "it starts on the last 30 days, one candle a day")
+    check(strip(gd.big._text) == "1g15s" and strip(gd.today._text) == "today + 5s00c (+4.5%)", "at the top: the gold now, and today's change (+ 5s on the 1g10s the day began with)")
+    local c30, c27, c29, c1 = gd.candles[30], gd.candles[27], gd.candles[29], gd.candles[1]
+    check(c30.body._shown and c30.wick._shown and c27.body._shown and not c1.body._shown and not c1.hit._shown, "days with a record have a candle; days before the first record have none")
+    check(c30.hit.tip[2] and strip(c30.hit.tip[2]) == "Began at 1g10s, ended at 1g15s: + 5s00c (+4.5%)" and strip(c30.hit.tip[3]) == "Most 1g15s, least 1g10s",
+        "the mouse over a day gives it in figures: began, ended, most, least")
+    check(strip(c29.hit.tip[2]):find("^Began at 1g60s, ended at 1g10s: %- 50s00c") and strip(c29.hit.tip[4]):find("%- 50s00c  Bought 60 x Runecloth$"),
+        "and what moved it that day: the purchase of 60 Runecloth")
+    local c28 = gd.candles[28]
+    check(strip(c28.hit.tip[2]) == "No change: 1g60s" and c28.body._shown and not c28.wick._shown, "a day with no change is a flat mark at the amount it stayed at")
+    -- the marks
+    local shown = 0
+    for _, m in ipairs(gd.marks) do if m._shown then shown = shown + 1 end end
+    check(shown == 4 and strip(gd.marks[1].tip[2]) == "- 50s00c" and gd.marks[1].tip[3] == "Bought 60 x Runecloth" and strip(gd.marks[1].tip[4]) == "Gold after it: 1g10s",
+        "the biggest changes are marked on the chart; the mouse over the biggest says: - 50s, Bought 60 x Runecloth, and the gold after it")
+    check(strip(gd.marks[2].tip[2]) == "+ 40s00c" and gd.marks[2].tip[3] == "Sold 40 x Thick Leather (auction)", "the next: + 40s, the Thick Leather sale")
+    check(gd.marks[3].tip[3] == "gold went out: not through the addon", "a change the addon did not cause says so")
+    -- the list under the chart
+    check(strip(gd.head._text) == "BIGGEST CHANGES, LAST 30 DAYS" and strip(gd.lines[1].label._text):find("Bought 60 x Runecloth$") and strip(gd.lines[1].value._text) == "- 50s00c"
+        and strip(gd.lines[2].value._text) == "+ 40s00c" and strip(gd.lines[5].label._text) == "",
+        "the same changes are listed under the chart, largest first")
+    check(strip(gd.grid[1]._text) ~= "" and strip(gd.grid[3]._text) ~= "" and strip(gd.xr._text) == "today", "the scale is labelled: least, middle, most; and the days along the bottom")
+    -- by the hour
+    gd.views.hours._scripts.OnClick(gd.views.hours)
+    st = UI.goldState
+    check(st.view == "hours" and st.n == 24 and strip(gd.head._text) == "BIGGEST CHANGES, LAST 24 HOURS" and strip(gd.xr._text) == "now", "'24 hours' shows one candle an hour")
+    check(gd.candles[24].body._shown and not gd.candles[25].body._shown and strip(gd.lines[1].value._text) == "+ 5s00c" and strip(gd.lines[1].label._text):find("Sold 12 x Copper Ore to a vendor$"),
+        "with the changes of the last day only")
+    -- gold changing while the tab is open is drawn at once
+    gold = 12500; fire("PLAYER_MONEY")
+    check(UI.dirty == true and G.d.ev[#G.d.ev].d == 1000, "gold changes while the tab is open: recorded, and the chart is redrawn")
+    UI:Render()
+    check(strip(gd.big._text) == "1g25s", "(the new amount is shown)")
+    gd.views.days._scripts.OnClick(gd.views.days)
+    G.d = was; gold = goldWas; G.last = gold
+    UI.tab = "BUY"; UI.goldView = nil; UI:Render()
+end
+
 -- nothing in the whole run raised an error inside the redraw or an input (they are caught, so they must be looked for)
 for _, e in ipairs(ns.errList or {}) do print("  ERROR caught " .. e.n .. " x in " .. e.name .. ": " .. e.msg) end
 check(#(ns.errList or {}) == 0, "no error was caught in a redraw or an input during the whole run")

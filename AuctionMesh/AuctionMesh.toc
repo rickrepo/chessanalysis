@@ -3,7 +3,7 @@
 ## AllowLoadGameType: forever, standard
 ## Notes: Auction house sniper and flipper: a fast price radar, a snipe box, and a ledger of what you bought and sold.
 ## Author: AuctionMesh
-## Version: 3.51.0
+## Version: 3.52.0
 ## SavedVariables: AuctionMeshDB
 ## IconTexture: Interface\Icons\INV_Misc_Coin_02
 ## AddonCompartmentFunc: AuctionMesh_OnAddonCompartmentClick
@@ -23,5 +23,6 @@ Auto.lua
 Picks.lua
 Sniper.lua
 Seller.lua
+Gold.lua
 UI.lua
 Core.lua

@@ -2142,6 +2142,7 @@ function Sniper:OnPurchase(ok, why)
         if b.item and b.vendor and b.vendor > 0 then d = setmetatable({ sell = b.vendor }, { __index = b.deal }) end
         recordFlip(d, b.units, spent, why)
         if ns.Scout then ns.Scout:Bought(b.key, b.units, spent) end
+        if ns.Gold then ns.Gold:Cause(("Bought %d x %s"):format(b.units, nameOf(b.key)), -1) end -- (for the Gold tab's swings)
         if self.dealSeen then self.dealSeen[b.key] = nil end
         if self.streak then self.streak[b.key] = 0 end
         if b.stake then

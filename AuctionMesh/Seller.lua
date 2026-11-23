@@ -283,6 +283,7 @@ function Seller:SellVendor(onlyKey)
                 local f = flips()[key]
                 local unit = f and Seller.VendorOf(key, f) or 0
                 earned = earned + unit * gone
+                if ns.Gold then ns.Gold:Cause(("Sold %d x %s to a vendor"):format(gone, nameOf(key)), 1) end
                 if f and not f.unknownCost then Seller.Realize((unit - (f.cost or 0)) * gone) end
                 if ns.Journal then ns.Journal:Vendored(key, gone, unit) end
                 Seller.ForgetUnits(key, gone)
@@ -324,6 +325,7 @@ function Seller:CheckSoldByHand(before)
                 if ns.Journal then ns.Journal:Vendored(key, n, unit) end
                 Seller.ForgetUnits(key, n)
                 say(("Sold to the vendor by hand: %d x %s at %s each."):format(n, nameOf(key), money(unit)))
+                if ns.Gold then ns.Gold:Cause(("Sold %d x %s to a vendor"):format(n, nameOf(key)), 1) end
             end
         end
     end
@@ -445,6 +447,8 @@ function Seller:RecordSale(i)
             tostring(itemName), tostring(bid), tostring(feeBack), tostring(cut), tostring(count))
     end
     if kind ~= "seller" or not itemName or not bid or bid <= 0 then return end
+    -- (for the Gold tab's swings: what this gold is)
+    if ns.Gold then ns.Gold:Cause(("Sold %s%s (auction)"):format((count and count > 1) and (count .. " x ") or "", tostring(itemName)), 1) end
     local key = AuctionMeshDB.names and AuctionMeshDB.names[itemName]
     if not key then return end
     count = (count and count > 0) and count or 1
@@ -1135,6 +1139,7 @@ function Seller:Post(key)
                      deposit = deposit, why = p.why, at = GetTime() }
     self.activity = { text = ("Posting %d x %s at %s each: sent, waiting for the auction house to confirm..."):format(qty, nameOf(key), Seller.short(p.price)), at = GetTime() }
     self.quietUntil = GetTime() + 2
+    if ns.Gold then ns.Gold:Cause(("Posting fee: %d x %s"):format(qty, nameOf(key)), -1) end
     local ok
     if p.commodity then
         ok = pcall(AH.PostCommodity, loc, DURATION, qty, p.price)

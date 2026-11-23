@@ -6,6 +6,20 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.52.0 (2026-11-23)
+
+- **A Gold tab: your gold over time, drawn like a stock chart.**
+  - **One candle per day (the last 30 days) or per hour (the last 24 hours)**, with two buttons to switch. The thick part of a candle runs from what your gold was when the day began to what it was at its end: green if it ended higher, red if lower. The thin line reaches the most and the least it was in between. A day with no change is a flat grey mark.
+  - **At the top:** your gold now, today's change, and the change over 7 and 30 days, each with its percentage.
+  - **The biggest changes are marked on the chart** with a square: green above the candle for gold coming in, red under it for gold going out. **Mouse over a square** and it says when, how much, what it was (`Bought 60 x Runecloth`, `Sold 40 x Thick Leather (auction)`, `Sold 12 x Copper Ore to a vendor`, `Posting fee: ...`) and the gold after it. A change the addon did not cause (the game's own screens, a trade, a repair) says `not through the addon`.
+  - **Mouse over a candle** for that day or hour in figures: began, ended, most, least, and what moved it.
+  - **The same changes are listed under the chart**, largest first.
+  - Changes in the same direction within 10 seconds count as one (a mailbox being emptied is one change, with its sales named).
+- **How it is recorded:** each time the game says your gold changed, the hour, the day and the list of changes are updated. Kept per character, for 120 days (72 hours by the hour, the 300 largest recent changes). No request is sent and nothing runs on a timer.
+- **It starts from this version:** there is no history from before, so the chart fills in from the first login with 3.52.
+- The header has five tabs now. They are as wide as their labels need, and on the floating panel the button reads `Dock` in less room, so nothing overlaps (a test holds the gap).
+- Not confirmed in game: only run in the offline tests. In particular the look of the chart has not been seen on a real screen.
+
 ## 3.51.0 (2026-11-23)
 
 - **Bank alt, corrected: it is the one character the addon is for.** 3.48 to 3.50 had this the wrong way round (they switched the addon off at the auction house on the bank alt, which is why posting sat on "pricing" there). Now:

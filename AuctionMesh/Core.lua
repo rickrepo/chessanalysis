@@ -145,6 +145,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
                 ns.charKey = name .. "-" .. tostring(realm)
                 db.chars = db.chars or {}
                 db.chars[ns.charKey] = { name = name, realm = tostring(realm), seen = GetServerTime() }
+                if ns.Gold then ns.Gold:Attach(db, ns.charKey) end -- this character's gold, over time (the Gold tab)
             end
         end
         db.realms[realm] = db.realms[realm] or {}

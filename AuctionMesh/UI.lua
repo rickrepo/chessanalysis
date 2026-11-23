@@ -919,6 +919,130 @@ end
 -- Setup tab: every control shows its current value; then what the engine has learned.
 -- THE PICKS TAB. One sentence that says what to do with your inputs right now,
 -- the figures behind it, and one button per item.
+-- THE GOLD TAB, DRAWN (see where its widgets are made, and Gold.lua).
+UI.GOLD = { w = 600, h = 170, slots = 30, marks = 6, lines = 7 }
+function UI:RenderGold(short)
+    local gd, G = frame.gold, ns.Gold
+    local view = self.goldView or "days"
+    for name, b in pairs(gd.views) do UI.outline(b, name == view and ACCENT or LINE) end
+    local function signed(c) return ((c >= 0) and (GREEN .. "+ ") or (RED .. "- ")) .. short(math.abs(c)) .. "|r" end
+    local function pctOf(c, base) return (base and base > 0) and (" (%+.1f%%)"):format(c / base * 100) or "" end
+    local now = GetMoney()
+    gd.big:SetText(GOLD .. short(now) .. "|r")
+    do
+        local t, base = G:Today()
+        gd.today:SetText(t and (GREY .. "today|r " .. signed(t) .. GREY .. pctOf(t, base) .. "|r") or "")
+        local parts = {}
+        for _, w in ipairs({ { 7, "7 days" }, { 30, "30 days" } }) do
+            local c, b = G:Change(w[1] * 86400)
+            if c then parts[#parts + 1] = GREY .. w[2] .. "|r " .. signed(c) .. GREY .. pctOf(c, b) .. "|r" end
+        end
+        parts[#parts + 1] = GREY .. "Gold on this character, recorded each time it changes.|r"
+        gd.sum:SetText(table.concat(parts, "     "))
+    end
+    local s = G:Series(view)
+    local n = #s.slots
+    local PW, PH = UI.GOLD.w, UI.GOLD.h
+    local slotW = floor(PW / n)
+    local lo, hi = s.lo or now, s.hi or now
+    do  -- room above and below, and a flat line is drawn in the middle
+        local span = hi - lo
+        if span <= 0 then span = math.max(2, floor(hi * 0.02)) end
+        lo, hi = lo - span * 0.08, hi + span * 0.08
+        if lo < 0 then lo = 0 end
+    end
+    local function y(v) return floor((v - lo) / (hi - lo) * (PH - 1) + 0.5) end
+    local dayFmt, hourFmt = "%a %d %b", "%a %H:00"
+    local function label(sl) return date(view == "hours" and hourFmt or dayFmt, sl.t) end
+    -- what moved the gold most, and where on the chart
+    local swings = G:Swings(view, UI.GOLD.lines)
+    local bySlot = {}
+    for _, e in ipairs(G:Swings(view, 60)) do
+        bySlot[e.slot] = bySlot[e.slot] or {}
+        table.insert(bySlot[e.slot], e)
+    end
+    for i = 1, UI.GOLD.slots do
+        local c, sl = gd.candles[i], s.slots[i]
+        if not sl or sl.none then
+            c.wick:Hide(); c.body:Hide(); c.hit:Hide(); c.hit.tip = nil
+        else
+            local x = (i - 1) * slotW
+            local bw = math.max(3, slotW - 6)
+            local up, down = sl.c > sl.o, sl.c < sl.o
+            local r, g, b = 0.55, 0.55, 0.55
+            if up then r, g, b = 0.2, 0.9, 0.4 elseif down then r, g, b = 0.95, 0.25, 0.25 end
+            local y0, y1 = y(math.min(sl.o, sl.c)), y(math.max(sl.o, sl.c))
+            c.body:ClearAllPoints()
+            c.body:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", x + floor((slotW - bw) / 2), y0)
+            c.body:SetSize(bw, math.max(sl.flat and 1 or 2, y1 - y0))
+            c.body:SetColorTexture(r, g, b, sl.flat and 0.6 or 1)
+            c.body:Show()
+            local w0, w1 = y(sl.l), y(sl.h)
+            c.wick:ClearAllPoints()
+            c.wick:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", x + floor(slotW / 2), w0)
+            c.wick:SetSize(1, math.max(1, w1 - w0))
+            c.wick:SetColorTexture(r, g, b, 1)
+            c.wick:SetShown(not sl.flat)
+            c.hit:ClearAllPoints()
+            c.hit:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", x, 0)
+            c.hit:SetSize(slotW, PH)
+            c.hit:Show()
+            local tip = { label(sl) }
+            if sl.flat then
+                tip[#tip + 1] = "No change: " .. short(sl.c)
+            else
+                tip[#tip + 1] = ("Began at %s, ended at %s: %s%s"):format(short(sl.o), short(sl.c), signed(sl.c - sl.o), pctOf(sl.c - sl.o, sl.o))
+                tip[#tip + 1] = ("Most %s, least %s"):format(short(sl.h), short(sl.l))
+            end
+            for k, e in ipairs(bySlot[i] or {}) do
+                if k > 4 then break end
+                tip[#tip + 1] = date("%H:%M", e.t) .. "  " .. signed(e.d) .. "  " .. G.Why(e)
+            end
+            c.hit.tip = tip
+        end
+    end
+    -- marks: green above the candle for gold in, red under it for gold out
+    local used = {}
+    for i = 1, UI.GOLD.marks do
+        local m, e = gd.marks[i], swings[i]
+        local sl = e and s.slots[e.slot]
+        if not (e and sl and not sl.none) then
+            m:Hide(); m.tip = nil
+        else
+            local key = e.slot .. (e.d > 0 and "u" or "d")
+            local nth = used[key] or 0
+            used[key] = nth + 1
+            local x = (e.slot - 1) * slotW + floor(slotW / 2) - 5
+            local yy = (e.d > 0) and (y(sl.h) + 4 + nth * 12) or (y(sl.l) - 15 - nth * 12)
+            yy = math.max(1, math.min(PH - 12, yy))
+            m:ClearAllPoints()
+            m:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", x, yy)
+            if e.d > 0 then m.tex:SetColorTexture(0.2, 1, 0.4, 1) else m.tex:SetColorTexture(1, 0.2, 0.2, 1) end
+            m.tip = { date("%a %d %b, %H:%M", e.t), signed(e.d), G.Why(e), GREY .. "Gold after it: " .. short(e.g) .. "|r" }
+            m:Show()
+        end
+    end
+    gd.grid[1]:SetText(short(floor(lo + 0.5)))
+    gd.grid[2]:SetText(short(floor((lo + hi) / 2 + 0.5)))
+    gd.grid[3]:SetText(short(floor(hi + 0.5)))
+    gd.xl:SetText(label(s.slots[1]))
+    gd.xm:SetText(label(s.slots[floor((n + 1) / 2)]))
+    gd.xr:SetText(view == "hours" and "now" or "today")
+    gd.key:SetText(GREEN .. "green|r" .. GREY .. ": ended higher than it began   |r" .. RED .. "red|r" .. GREY .. ": ended lower   thin line: the most and the least   squares: the biggest changes (mouse over one)|r")
+    gd.head:SetText(GREY .. (view == "hours" and "BIGGEST CHANGES, LAST 24 HOURS" or "BIGGEST CHANGES, LAST 30 DAYS") .. "|r")
+    for i = 1, UI.GOLD.lines do
+        local w, e = gd.lines[i], swings[i]
+        if e then
+            w.label:SetText(GREY .. date("%a %d %b %H:%M", e.t) .. "|r   " .. G.Why(e))
+            w.value:SetText(signed(e.d))
+        else
+            w.label:SetText((i == 1) and (GREY .. "Nothing recorded yet in this range. It fills in as your gold changes.|r") or "")
+            w.value:SetText("")
+        end
+    end
+    self.goldState = { view = view, n = n, lo = lo, hi = hi, swings = swings, series = s }
+end
+
 function UI:RenderPicks(short)
     local pk, S, P = frame.picks, ns.Sniper, ns.Picks
     local r, waiting = P:Get()
@@ -1133,6 +1257,7 @@ function UI:Render()
     if tab == "BUY" then self:RenderMoney(entries, short) end
     if tab == "HISTORY" then self:RenderSetup() end
     if tab == "PICKS" then self:RenderPicks(short) end
+    if tab == "GOLD" then self:RenderGold(short) end
 
     local todo = 0
     for _, e in ipairs(entries) do if e.action ~= "LISTED" then todo = todo + 1 end end
@@ -1142,6 +1267,7 @@ function UI:Render()
     UI.selectTab(frame.tabSell, tab == "SELL")
     UI.selectTab(frame.tabHist, tab == "HISTORY")
     UI.selectTab(frame.tabPick, tab == "PICKS")
+    UI.selectTab(frame.tabGold, tab == "GOLD")
     do  -- "Picks (1)" when a stake-out is worth a try and none is set
         local P = ns.Picks
         local r = P and P.result
@@ -1259,7 +1385,7 @@ function UI:Render()
             parts[#parts + 1] = ("Holding: paid %s  >  expect back %s  =  %s%s%s|r"):format(short(invested), short(back),
                 profit >= 0 and GREEN or RED, profit >= 0 and "+ " or "- ", short(math.abs(profit)))
         end
-    else
+    elseif tab ~= "GOLD" then
         parts[#parts + 1] = GREY .. ns.Learn:Summary() .. "|r"
     end
     if #list > vis then
@@ -1494,18 +1620,21 @@ end
 -- the floating one (WIDTH), with Dock shown: the sizes below leave a gap
 -- there, and UI.HeaderRoom works it out so the test can hold it to that.
 -- (In 3.47 Refresh was added without this sum, and lay over the Setup tab.)
-local HDR = { tabX = 178, tabW = 72, tabGap = 4, tabs = 4, close = 34, edge = 12, pop = 56, snap = 68, refresh = 56, gap = 4 }
+-- (3.52: a fifth tab, Gold. The tabs are as wide as their labels need, and on
+-- the floating panel the button reads "Dock", which needs less than "Pop out".)
+local HDR = { tabX = 178, tabW = { 76, 64, 58, 46, 50 }, tabGap = 4, close = 34, edge = 12, pop = 56, dock = 44, snap = 68, refresh = 56, gap = 4 }
 UI.HDR = HDR
 -- pixels between the last tab and the leftmost button on the right
 function UI.HeaderRoom(width, floating, withDock)
-    local tabsRight = HDR.tabX + HDR.tabs * HDR.tabW + (HDR.tabs - 1) * HDR.tabGap
+    local tabsRight = HDR.tabX + (#HDR.tabW - 1) * HDR.tabGap
+    for _, w in ipairs(HDR.tabW) do tabsRight = tabsRight + w end
     local x = width - (floating and HDR.close or HDR.edge)
-    if withDock then x = x - HDR.pop - HDR.gap end
+    if withDock then x = x - (floating and HDR.dock or HDR.pop) - HDR.gap end
     x = x - HDR.snap - HDR.gap - HDR.refresh
     return x - tabsRight
 end
-local function makeTab(parent, text, onClick)
-    return button(parent, HDR.tabW, text, onClick)
+local function makeTab(parent, n, text, onClick)
+    return button(parent, HDR.tabW[n], text, onClick)
 end
 -- the selected tab gets the teal outline (the game's own tab under the auction house keeps the game's style)
 local function selectTab(t, on)
@@ -1619,13 +1748,15 @@ function UI:Create()
     frame.mode:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- tabs (positioned in Place(): to the right of the mode badge)
-    frame.tabBuy = makeTab(frame, "Trades", function() UI:StopKeyCapture(); UI.tab = "BUY"; UI:Render() end)
-    frame.tabSell = makeTab(frame, "Bags", function() UI:StopKeyCapture(); UI.tab = "SELL"; UI:Render() end)
-    frame.tabPick = makeTab(frame, "Picks", function() UI:StopKeyCapture(); UI.tab = "PICKS"; UI:Render() end)
-    frame.tabHist = makeTab(frame, "Setup", function() UI.tab = "HISTORY"; UI:Render() end)
+    frame.tabBuy = makeTab(frame, 1, "Trades", function() UI:StopKeyCapture(); UI.tab = "BUY"; UI:Render() end)
+    frame.tabSell = makeTab(frame, 2, "Bags", function() UI:StopKeyCapture(); UI.tab = "SELL"; UI:Render() end)
+    frame.tabPick = makeTab(frame, 3, "Picks", function() UI:StopKeyCapture(); UI.tab = "PICKS"; UI:Render() end)
+    frame.tabGold = makeTab(frame, 4, "Gold", function() UI:StopKeyCapture(); UI.tab = "GOLD"; UI:Render() end)
+    frame.tabHist = makeTab(frame, 5, "Setup", function() UI.tab = "HISTORY"; UI:Render() end)
     frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", HDR.tabGap, 0)
     frame.tabPick:SetPoint("LEFT", frame.tabSell, "RIGHT", HDR.tabGap, 0)
-    frame.tabHist:SetPoint("LEFT", frame.tabPick, "RIGHT", HDR.tabGap, 0)
+    frame.tabGold:SetPoint("LEFT", frame.tabPick, "RIGHT", HDR.tabGap, 0)
+    frame.tabHist:SetPoint("LEFT", frame.tabGold, "RIGHT", HDR.tabGap, 0)
 
     -- POP OUT / DOCK. Inside the auction house the panel is part of that window
     -- and cannot be dragged on its own; this button turns it into a separate
@@ -1996,6 +2127,108 @@ function UI:Create()
     sp:Hide()
     frame.setup = sp
 
+    -- THE GOLD TAB: your gold over time, drawn the way a stock chart is.
+    -- One candle per hour (the last 24 hours) or per day (the last 30 days):
+    -- the thick part runs from what the gold was when the hour or day began
+    -- to what it was at its end (green: it went up; red: it went down); the
+    -- thin line reaches the most and the least it was in between. The biggest
+    -- single changes are marked on the chart, and the mouse over a mark says
+    -- what it was. Recorded by Gold.lua; nothing here sends a request.
+    do
+        local gd = CreateFrame("Frame", nil, frame)
+        gd:SetPoint("TOPLEFT", 14, -40); gd:SetPoint("TOPRIGHT", -14, -40)
+        gd:SetHeight(430)
+        gd.big = gd:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        gd.big:SetPoint("TOPLEFT", 0, -2); gd.big:SetJustifyH("LEFT")
+        gd.today = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        gd.today:SetPoint("LEFT", gd.big, "RIGHT", 14, 0); gd.today:SetJustifyH("LEFT")
+        gd.sum = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        gd.sum:SetPoint("TOPLEFT", 0, -28); gd.sum:SetPoint("TOPRIGHT", 0, -28)
+        gd.sum:SetJustifyH("LEFT"); gd.sum:SetWordWrap(false)
+        gd.views = {}
+        gd.views.days = button(gd, 76, "30 days", function() UI.goldView = "days"; UI:Render() end)
+        gd.views.days:SetPoint("TOPRIGHT", 0, 0)
+        gd.views.hours = button(gd, 76, "24 hours", function() UI.goldView = "hours"; UI:Render() end)
+        gd.views.hours:SetPoint("RIGHT", gd.views.days, "LEFT", -6, 0)
+        -- the plot
+        local PW, PH, N = UI.GOLD.w, UI.GOLD.h, UI.GOLD.slots
+        local plot = CreateFrame("Frame", nil, gd)
+        plot:SetPoint("TOPLEFT", 0, -52); plot:SetSize(PW, PH)
+        local bg = plot:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(); bg:SetColorTexture(1, 1, 1, 0.03)
+        outline(plot, LINE)
+        gd.plot = plot
+        gd.grid = {}
+        for i = 1, 3 do
+            local ln = plot:CreateTexture(nil, "BORDER")
+            ln:SetPoint("BOTTOMLEFT", 0, floor((i - 1) * (PH - 1) / 2)); ln:SetSize(PW, 1)
+            ln:SetColorTexture(1, 1, 1, 0.07)
+            local lab = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            lab:SetPoint("LEFT", ln, "RIGHT", 6, 0); lab:SetJustifyH("LEFT")
+            gd.grid[i] = lab
+        end
+        gd.xl = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        gd.xl:SetPoint("TOPLEFT", plot, "BOTTOMLEFT", 0, -3)
+        gd.xm = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        gd.xm:SetPoint("TOP", plot, "BOTTOM", 0, -3)
+        gd.xr = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        gd.xr:SetPoint("TOPRIGHT", plot, "BOTTOMRIGHT", 0, -3)
+        local function tipOf(self)
+            if not self.tip then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            for i, l in ipairs(self.tip) do
+                if i == 1 then GameTooltip:AddLine(l, 1, 1, 1) else GameTooltip:AddLine(l, 0.85, 0.85, 0.85, true) end
+            end
+            GameTooltip:Show()
+        end
+        local function tipOff() GameTooltip:Hide() end
+        gd.candles = {}
+        for i = 1, N do
+            local c = {}
+            c.wick = plot:CreateTexture(nil, "ARTWORK")
+            c.body = plot:CreateTexture(nil, "OVERLAY")
+            -- the whole column answers the mouse: the day (or hour) in figures
+            c.hit = CreateFrame("Frame", nil, plot)
+            c.hit:EnableMouse(true)
+            c.hit:SetScript("OnEnter", tipOf); c.hit:SetScript("OnLeave", tipOff)
+            gd.candles[i] = c
+        end
+        -- the biggest changes, marked: the mouse over a mark says what it was
+        gd.marks = {}
+        for i = 1, UI.GOLD.marks do
+            local m = CreateFrame("Button", nil, plot)
+            m:SetSize(11, 11)
+            m.tex = m:CreateTexture(nil, "OVERLAY")
+            m.tex:SetAllPoints()
+            outline(m, { 0, 0, 0 })
+            m:SetScript("OnEnter", tipOf); m:SetScript("OnLeave", tipOff)
+            do  -- above the columns, so that the mouse reaches the mark and not the column behind it
+                local lv = plot.GetFrameLevel and plot:GetFrameLevel()
+                if type(lv) == "number" and m.SetFrameLevel then m:SetFrameLevel(lv + 5) end
+            end
+            m:Hide()
+            gd.marks[i] = m
+        end
+        gd.key = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        gd.key:SetPoint("TOPLEFT", plot, "BOTTOMLEFT", 0, -20); gd.key:SetJustifyH("LEFT")
+        -- the same swings as a list, largest first
+        gd.head = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        gd.head:SetPoint("TOPLEFT", plot, "BOTTOMLEFT", 0, -42)
+        gd.lines = {}
+        for i = 1, UI.GOLD.lines do
+            local y = -58 - (i - 1) * 15
+            local l = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            l:SetPoint("TOPLEFT", plot, "BOTTOMLEFT", 0, y)
+            l:SetWidth(PW - 100); l:SetJustifyH("LEFT"); l:SetWordWrap(false)
+            local v = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            v:SetPoint("TOPRIGHT", plot, "BOTTOMRIGHT", 0, y)
+            v:SetJustifyH("RIGHT"); v:SetWordWrap(false)
+            gd.lines[i] = { label = l, value = v }
+        end
+        gd:Hide()
+        frame.gold = gd
+    end
+
     -- THE PICKS TAB: which item, if any, is worth a stake-out. Everything on
     -- it is worked out from deals the radar has already seen (see Picks.lua):
     -- it sends nothing to the auction house and waits while you are sniping.
@@ -2190,6 +2423,7 @@ local LAYOUT = {
     SELL = { next = -40, status = -58, statusH = 38, top = 104 },
     HISTORY = { status = -55, statusH = 14, top = 480 },
     PICKS = { status = -55, statusH = 14, top = 480 },
+    GOLD = { status = -55, statusH = 14, top = 480 },
 }
 function UI:Layout()
     local tab = self.tab
@@ -2200,6 +2434,7 @@ function UI:Layout()
     frame.ledger:SetShown(tab == "BUY")
     frame.setup:SetShown(tab == "HISTORY")
     frame.picks:SetShown(tab == "PICKS")
+    frame.gold:SetShown(tab == "GOLD")
     frame.next:SetShown(L.next ~= nil)
     if L.next then
         frame.next:ClearAllPoints()
@@ -2277,6 +2512,7 @@ function UI:Place()
         frame.closeBtn:Hide()
         frame.tabBuy:SetPoint("TOPLEFT", HDR.tabX, -8)
         frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -HDR.edge, -6)
+        frame.pop:SetWidth(HDR.pop)
         frame.pop:SetText("Pop out"); frame.pop:Show()
     else
         frame:SetParent(UIParent)
@@ -2288,6 +2524,7 @@ function UI:Place()
         frame.tabBuy:SetPoint("TOPLEFT", HDR.tabX, -8)
         -- "Dock" only makes sense while the auction house is open
         frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -HDR.close, -6)
+        frame.pop:SetWidth(HDR.dock)
         frame.pop:SetText("Dock"); frame.pop:SetShown(ahOpen() and true or false)
         -- with no Dock button the Snapshot button takes its place
         frame.snap:ClearAllPoints()
