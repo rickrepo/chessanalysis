@@ -101,7 +101,7 @@ Tuner:Wasted("unsent"); Tuner:Wasted("timeout"); Tuner:Wasted("timeout")
 check(d.unsent == 1 and d.timeout == 2, "requests never sent and never answered are counted")
 check(math.abs(Tuner:Timeout() - d.hours[20].cycle * 4) < 0.001, "a lost answer is given up after 4x the measured cost (not a fixed 3s)")
 
-print("what the Setup tab shows")
+print("what the More tab shows")
 for _, l in ipairs(Tuner:Lines()) do print("     " .. l[1] .. ": " .. l[2]) end
 check(#Tuner:Lines() == 7, "seven plain lines")
 

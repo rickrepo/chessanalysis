@@ -323,7 +323,7 @@ end
 
 function Swarm:Start(quiet)
     if ns.Dormant and ns.Dormant() then
-        if ns.Print and not quiet then ns.Print("The addon is switched off on this character: it is set to work on your bank alt only (Setup tab to change).") end
+        if ns.Print and not quiet then ns.Print("The addon is switched off on this character: it is set to work on your bank alt only (More tab to change).") end
         return
     end
     if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then

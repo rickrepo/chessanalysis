@@ -220,7 +220,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             db.cfg.buyMode = nil
             if db.cfg.buyBlocked then db.cfg.buyBlocked.hold = nil end
             C_Timer.After(8, function()
-                say("Buying by holding a key down has been removed: the game refuses a held key as an input, and each refusal froze the deal for four seconds. Buy with: the mouse wheel (Setup tab to change).")
+                say("Buying by holding a key down has been removed: the game refuses a held key as an input, and each refusal froze the deal for four seconds. Buy with: the mouse wheel (More tab to change).")
             end)
         end
         -- 13: units an older version dropped from the record are looked for in your bags (see Seller:Recover)
@@ -299,7 +299,7 @@ end)
 
 ---------------------------------------------------------------- slash
 
--- ACTIONS. Everything a player can change is a control on the Setup tab; the
+-- ACTIONS. Everything a player can change is a control on the More tab; the
 -- controls and the (optional) slash command call the same functions here.
 local Do = {}
 ns.Do = Do
@@ -495,7 +495,7 @@ end
 ---------------------------------------------------------------- settings code
 -- One line that holds every setting that decides what is shown as a deal.
 -- The Snapshot carries it, Claude sends back a changed one, and pasting that
--- into the box on the Setup tab applies it. 
+-- into the box on the More tab applies it. 
 --   AMS1:min=100;margin=25;flips=1;scope=mats;focus=prime;list=2589,2592;
 --        tied=50;spend=35;small=15;wheel=1;tune=1;itemmin=4306:200;ignore=2287
 -- Changes only (an import need not carry everything):
@@ -750,7 +750,7 @@ SlashCmdList.AUCTIONMESH = function(input)
         local g, s2, cp = rest:match("(%d+)g"), rest:match("(%d+)s"), rest:match("(%d+)c")
         local v = (tonumber(g) or 0) * 10000 + (tonumber(s2) or 0) * 100 + (tonumber(cp) or 0)
         if v == 0 then v = tonumber(rest) or 0 end
-        if v > 0 then UI:SetMinProfit(v) else say("Minimum profit per deal: " .. money(cfg.minProfit) .. ". Change it on the Setup tab.") end
+        if v > 0 then UI:SetMinProfit(v) else say("Minimum profit per deal: " .. money(cfg.minProfit) .. ". Change it on the More tab.") end
     elseif cmd == "dock" then
         Do.Dock(rest ~= "off")
     elseif cmd == "scope" then
@@ -781,9 +781,6 @@ SlashCmdList.AUCTIONMESH = function(input)
         if rest == "off" or rest == "on" then Do.Tuning(rest == "on")
         elseif rest == "reset" then Do.Forget()
         else say(ns.Learn:Summary()) end
-    elseif cmd == "details" then
-        if not ns.UI:IsShown() then ns.UI:Open() end
-        ns.UI:ToggleDrawer()
     elseif cmd == "limits" then
         -- what has been measured on this client, this session
         local G, M = ns.Gate, ns.measure and ns.measure.last
@@ -805,6 +802,6 @@ SlashCmdList.AUCTIONMESH = function(input)
                 Swarm.active and "ON" or "off", fresh, total, Swarm.stats.units, Swarm.stats.queries))
         end
     else
-        say("Everything is on the panel's Setup tab; no commands are needed. /amesh opens and closes the panel.")
+        say("Everything is on the panel's More tab; no commands are needed. /amesh opens and closes the panel.")
     end
 end

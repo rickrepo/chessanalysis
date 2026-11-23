@@ -49,22 +49,25 @@ check(#d.h == 2 and d.h[2].o == 10900 and d.h[2].c == 11000 and d.h[1].c == 1090
 -- three days on: a day with no change in between
 T = T + 3 * 86400; gold = 15000; G:OnMoney()
 check(#d.d == 2 and d.d[2].o == 11000 and d.d[2].c == 15000, "three days later: a new day record, opened at the last amount")
-local s = G:Series("days")
-check(#s.slots == 30 and s.slots[30].c == 15000 and s.slots[30].o == 11000 and not s.slots[30].flat, "the 30-day series ends with today's candle")
-check(s.slots[29].flat and s.slots[29].c == 11000 and s.slots[28].flat and s.slots[27].c == 11000 and not s.slots[27].flat,
-    "days with no change are flat at the last amount; the day it all happened is a real candle")
-check(s.slots[26].none == true and s.slots[1].none == true, "days before the first record are empty")
-check(s.lo == 8800 and s.hi == 15000 and s.first == 10000 and s.last == 15000, "its range: least 88s, most 1g50s")
-local h = G:Series("hours")
-check(#h.slots == 24 and h.slots[24].c == 15000 and h.slots[23].flat and h.slots[1].flat and h.slots[1].c == 11000,
-    "the 24-hour series carries the last amount through the hours with no change")
+-- the line: the amount at evenly spaced times over the range
+local L = G:Line("d7", 168) -- one column an hour
+check(#L.cols == 168 and L.cols[168].v == 15000 and L.last == 15000, "the 7-day line ends at the amount now")
+check(L.lo == 8800 and L.hi == 15000 and L.first == 10000, "its range: least 88s, most 1g50s; it begins at the first amount on record")
+local firstKnown
+for i = 1, 168 do if not L.cols[i].none then firstKnown = i; break end end
+check(firstKnown > 1 and L.cols[firstKnown - 1].none == true and L.cols[1].none == true, "before the first record the line is empty")
+check(L.cols[167].v == 11000 and L.cols[168].lo == 11000 and L.cols[168].hi == 15000, "it stays where it was for three days, then steps up in the last column (which spans 1g10s to 1g50s)")
+check(#L.days >= 6 and #L.days <= 7 and L.days[1].col > 1, "it says where each day begins")
+local L2 = G:Line("d2", 48)
+check(L2.first == 11000 and L2.cols[1].v == 11000 and L2.cols[48].v == 15000 and not L2.cols[1].none, "the 2-day line begins at what the gold was two days ago (carried from before the range)")
 
 print("swings")
-local sw = G:Swings("days", 6)
-check(#sw == 5 and sw[1].d == 4000 and sw[2].d == 2400 and sw[3].d == -1200 and sw[1].slot == 30 and sw[2].slot == 27,
-    "the biggest swings of the 30 days, largest first, each with the candle it belongs to")
-local hs = G:Swings("hours", 6)
-check(#hs == 1 and hs[1].d == 4000 and hs[1].slot == 24, "the 24-hour view has only the swing of the last day")
+local sw = G:Swings("d7", 6, 168)
+check(#sw == 5 and sw[1].d == 4000 and sw[2].d == 2400 and sw[3].d == -1200 and sw[1].col == 168 and sw[2].col < 168,
+    "the biggest swings of the 7 days, largest first, each with its place on the line")
+local hs = G:Swings("d2", 6, 48)
+check(#hs == 1 and hs[1].d == 4000 and hs[1].col == 48, "the 2-day view has only the swing of the last two days")
+check(G.AxisStep(8800, 15000, 4) == 2000 and G.AxisStep(0, 90, 4) == 50 and G.AxisStep(1000000, 1400000, 4) == 100000, "the value axis steps in round amounts: 1, 2 or 5 times a power of ten")
 local c, base = G:Today()
 check(c == 4000 and base == 11000, "today: + 40s on the 1g10s the day began with")
 local c7 = G:Change(7 * 86400)

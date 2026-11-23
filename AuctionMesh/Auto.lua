@@ -1,7 +1,7 @@
 -- AuctionMesh Auto: settings that adjust themselves from what really happens.
 --
 -- Fixed, bounded rules fed by counts the addon already keeps. Every change is
--- written down with its reason (Setup tab, Snapshot), and the Auto-adjust
+-- written down with its reason (More tab, Snapshot), and the Auto-adjust
 -- switch freezes all of it. A setting you change yourself (or import) is left
 -- alone for 30 minutes.
 --

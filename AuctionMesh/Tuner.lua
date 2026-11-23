@@ -24,7 +24,7 @@
 --      counted, and the time waited for a lost answer follows the measured pace.
 --
 -- This is measurement and calibration with fixed, bounded rules. Everything it
--- has learned is shown on the Setup tab and by /amesh limits.
+-- has learned is shown on the More tab and by /amesh limits.
 --
 -- Wire: L <requests measured> <pace step> <radar share %> <ms per kind x4>
 local _, ns = ...
@@ -301,7 +301,7 @@ function Tuner:State(paused)
         text = ("Tuned: %.1f requests a second, %d%% in use"):format(1 / cycle, floor(use * 100 + 0.5)) }
 end
 
--- Plain "label, value" lines for the Setup tab and /amesh limits.
+-- Plain "label, value" lines for the More tab and /amesh limits.
 function Tuner:Lines()
     local d, c = self.d, self.cfg
     local out = {}

@@ -16,7 +16,7 @@
 -- everything has sold), then deals verified against live listings with the
 -- exact quantity and total you will pay. Bags tab: everything you bought and
 -- the one thing to do with it, then your own auctions (sold, undercut with a
--- Cancel button, ended, listed). Setup tab: settings, what the request engine
+-- Cancel button, ended, listed). More tab: settings, what the request engine
 -- has learned, recent activity. A bar at the top shows what the engine is doing.
 -- Rendering is throttled (5x per second, only while shown and only if changed).
 local _, ns = ...
@@ -27,7 +27,7 @@ ns.UI = UI
 
 local floor, min = math.floor, math.min
 local ROWS, ROW_H, WIDTH = 10, 22, 720
-local FLOAT_H, BAR_W = 520, 230 -- floating window height; width of the engine bar
+local FLOAT_H = 520 -- floating window height
 local MAXROWS = 24 -- rows that exist; how many are shown depends on the panel's height
 local ACCENT = { 0.30, 0.86, 0.76 }  -- teal: selected tab, primary action
 local LINE = { 0.34, 0.36, 0.40 }    -- grey outline
@@ -61,12 +61,9 @@ function UI:Dirty() self.dirty = true end
 -- redraw runs at most 5 times a second, which is too slow for sniping.
 function UI:Now()
     if frame and frame:IsShown() then
-        -- the drawer (Details) is not rebuilt on this path: it follows on the
-        -- next ordinary redraw, a fifth of a second later at most
         self.fast = true
         self:Render()
         self.fast = nil
-        if self.drawerStale then self.dirty = true end
     else
         self.dirty = true
     end
@@ -78,8 +75,7 @@ end
 function UI:Refresh()
     local Se = ns.Seller
     local back = Se:Rescan()
-    self.focusCache, self.drawerLines, self.drawerSig, self.drawerStale = nil, nil, nil, nil
-    self.scroll, self.dscroll, self.fast = {}, 0, nil
+    self.scroll, self.fast = {}, nil
     local n = 0
     for _, e in ipairs(Se:Entries()) do if e.action ~= "LISTED" then n = n + 1 end end
     self:Notice(("Refreshed: bags read again. %d item%s to deal with (tab Bags).%s"):format(n, n == 1 and "" or "s",
@@ -207,6 +203,7 @@ local function fillSell(r, e, short)
     -- why the last press of Post did nothing, right next to the button
     local why = (e.action == "AH" and Se:NoteFor(e.key)) or (e.action == "LISTED" and Se:NoteFor(e.key, "cancel"))
     if why then text = ORANGE .. why .. "|r" end
+    if e.noPrice then text, button = ORANGE .. "No price to go by|r", nil end
     r.state:SetText(text)
     local paid, sell, _, profit, live = Se:Numbers(e)
     r.c[1]:SetText(tostring(e.count))
@@ -223,7 +220,8 @@ local function fillSell(r, e, short)
     local paidText = paid and short(paid) or (ORANGE .. "unknown|r")
     if e.farm and e.action ~= "HOLD" then
         local vm = e.action ~= "LISTED" and Se.vendorMore and Se.vendorMore[e.key]
-        r.detail:SetText(("Farmed or mined: cost nothing  >  Sell %s%s  >  %s+%s|r each, all profit%s"):format(short(sell),
+        if e.noPrice then r.c[4]:SetText(ORANGE .. "NO PRICE|r"); r.profit:SetText("") end
+        r.detail:SetText(e.noPrice and (ORANGE .. "Farmed or mined: " .. e.noPrice .. "|r") or ("Farmed or mined: cost nothing  >  Sell %s%s  >  %s+%s|r each, all profit%s"):format(short(sell),
             (not live and e.action ~= "LISTED") and (GREY .. " (about)|r") or "", GREEN, short(profit or 0),
             vm and (ORANGE .. ("   (a vendor pays more: %s each)|r"):format(short(vm))) or ""))
     elseif e.action == "HOLD" then
@@ -529,6 +527,13 @@ function UI:RenderMoney(entries, short)
     lg.rows[5].value:SetText(plus(bought, ORANGE))
     lg.total.label:SetText("Total when it has all sold")
     lg.total.value:SetText(short(gold + waiting + onway + listed + bought))
+    self.moneyNow = { gold = gold, waiting = waiting, onway = onway, listed = listed, bought = bought, total = gold + waiting + onway + listed + bought }
+    do  -- the one line on the Trades tab
+        local coming = waiting + onway + listed + bought
+        frame.money.text:SetText(("%sGOLD|r %s%s|r%s    %s= %s when everything has sold|r    %s(mouse here for the breakdown)|r"):format(
+            GREY, GOLD, short(gold), coming > 0 and (GREY .. "    + " .. short(coming) .. " still to come (sold, listed, in your bags)|r") or "",
+            WHITE_C, short(gold + coming), GREY))
+    end
     local parts = {}
     if held > 0 then parts[#parts + 1] = ("%d held item%s that cost %s (tab Bags)"):format(held, held == 1 and "" or "s", short(heldCost)) end
     local endedNote = ended > 0 and (" %d of your auctions %s no longer seen on the auction house (sold, or returned): still counted above; the mailbox shows which."):format(
@@ -550,7 +555,7 @@ function UI.backIn(d)
     return mins >= 120 and ("%.1f hours"):format(mins / 60) or ("1h %02dm"):format(math.max(0, floor(mins - 60 + 0.5)))
 end
 
--- HOW YOU BUY (Setup tab, "Buy with"). Buying needs real inputs, and any of
+-- HOW YOU BUY (More tab, "Buy with"). Buying needs real inputs, and any of
 -- these supplies them:
 --   wheel   roll the mouse wheel in the snipe box (and anywhere while a deal is up)
 --   key     tap a key of your choice; it works anywhere while the Trades tab is open
@@ -603,7 +608,7 @@ function UI:InputBlocked(via)
     end
     cfg.buyMode, cfg.wheel = to, nil
     ns.Log("INPUT '%s' is blocked by the game for buying: switched to '%s'", tostring(via), to)
-    self:Notice(("This game does not accept '%s' as an input for buying. Switched to '%s' (Setup tab, Buy with)."):format(UI.BUY_NAMES[via], UI.BUY_NAMES[to]), true)
+    self:Notice(("This game does not accept '%s' as an input for buying. Switched to '%s' (More tab, Buy with)."):format(UI.BUY_NAMES[via], UI.BUY_NAMES[to]), true)
     self:Dirty()
 end
 
@@ -796,7 +801,7 @@ function UI:RenderSnipe(short)
                 text = ORANGE .. "STAKE-OUT WAITING|r    " .. S.nameOf(sk) .. ": " .. tostring(why or "reading its market first")
             end
         elseif m and GetTime() - m.at < 600 and m.best >= 50 and m.best < ns.Deals.cfg.minProfit then
-            text = ORANGE .. ("%d deal%s hidden by your %s minimum profit (best: + %s). Lower it on the Setup tab.|r"):format(
+            text = ORANGE .. ("%d deal%s hidden by your %s minimum profit (best: + %s). Lower it on the More tab.|r"):format(
                 m.n, m.n == 1 and "" or "s", short(ns.Deals.cfg.minProfit), short(m.best))
         else
             text = GREY .. (ahOpen() and "Watching. No deal right now.|r" or "Open the auction house to look for deals.|r")
@@ -836,10 +841,10 @@ function UI:RenderSnipe(short)
                 or "put the mouse here and keep rolling the wheel"
         elseif mode == "key" then
             how = cfg.buyKey and ("tap " .. cfg.buyKey .. " (it works anywhere while this tab is open), or click here")
-                or "no key chosen yet: Setup tab, Key"
+                or "no key chosen yet: More tab, Key"
         elseif mode == "one" then
             how = cfg.buyKey and ("keep tapping " .. cfg.buyKey .. ": it buys the deal that is up; with none it posts what is ready in your bags")
-                or "no key chosen yet: Setup tab, Key"
+                or "no key chosen yet: More tab, Key"
         else
             how = "click here"
         end
@@ -894,155 +899,202 @@ function UI:RenderSnipe(short)
     end
 end
 
--- The bar at the top: what the request engine is doing right now.
---   orange = measuring or trying something (the bar is its progress)
---   teal   = tuned (the bar is how much of the request budget is in use)
-function UI:RenderBar()
-    local paused
-    if not ahOpen() then paused = "Idle: the auction house is closed"
-    elseif GetTime() < (ns.Gate.holdUntil or 0) then paused = "Holding fire: the auction house is free for your click"
-    elseif ns.Gate:UserBusy() then paused = "Paused while you click"
-    elseif not ns.Sniper.active then paused = "Idle" end
-    local st = ns.Tuner:State(paused)
-    local bar = frame.bar
-    if not self.barWidth or self.barWidth < 60 or frame.snap:GetLeft() ~= self.fitAt then
-        self.fitAt = frame.snap:GetLeft()
-        self:FitHeader() -- the window was resized or moved since the bar was last fitted
-    end
-    local w = floor(math.max(0, math.min(1, st.fill)) * ((self.barWidth or BAR_W) - 2) + 0.5)
-    bar.fill:SetShown(w > 0)
-    bar.fill:SetWidth(math.max(1, w))
-    if st.mode == "try" then bar.fill:SetColorTexture(1, 0.55, 0.25, 1)
-    else bar.fill:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 1) end
-    frame.barText:SetText((st.mode == "try" and ORANGE or GREY) .. st.text .. "|r")
-    self.barState = st
-end
-
--- Setup tab: every control shows its current value; then what the engine has learned.
+-- More tab: every control shows its current value; then what the engine has learned.
 -- THE PICKS TAB. One sentence that says what to do with your inputs right now,
 -- the figures behind it, and one button per item.
 -- THE GOLD TAB, DRAWN (see where its widgets are made, and Gold.lua).
-UI.GOLD = { w = 600, h = 170, slots = 30, marks = 6, lines = 7 }
+-- x: where the plot begins (the amounts are to its left). cols x colW = w.
+UI.GOLD = { x = 64, w = 560, h = 190, cols = 140, colW = 4, grid = 6, days = 31, ticks = 9, hover = 35, marks = 6, lines = 5 }
 function UI:RenderGold(short)
-    local gd, G = frame.gold, ns.Gold
-    local view = self.goldView or "days"
+    local gd, G, C = frame.gold, ns.Gold, UI.GOLD
+    local view = self.goldView or "d2"
     for name, b in pairs(gd.views) do UI.outline(b, name == view and ACCENT or LINE) end
-    local function signed(c) return ((c >= 0) and (GREEN .. "+ ") or (RED .. "- ")) .. short(math.abs(c)) .. "|r" end
-    local function pctOf(c, base) return (base and base > 0) and (" (%+.1f%%)"):format(c / base * 100) or "" end
     local now = GetMoney()
-    gd.big:SetText(GOLD .. short(now) .. "|r")
-    do
-        local t, base = G:Today()
-        gd.today:SetText(t and (GREY .. "today|r " .. signed(t) .. GREY .. pctOf(t, base) .. "|r") or "")
-        local parts = {}
-        for _, w in ipairs({ { 7, "7 days" }, { 30, "30 days" } }) do
-            local c, b = G:Change(w[1] * 86400)
-            if c then parts[#parts + 1] = GREY .. w[2] .. "|r " .. signed(c) .. GREY .. pctOf(c, b) .. "|r" end
-        end
-        parts[#parts + 1] = GREY .. "Gold on this character, recorded each time it changes.|r"
-        gd.sum:SetText(table.concat(parts, "     "))
-    end
-    local s = G:Series(view)
-    local n = #s.slots
-    local PW, PH = UI.GOLD.w, UI.GOLD.h
-    local slotW = floor(PW / n)
-    local lo, hi = s.lo or now, s.hi or now
-    do  -- room above and below, and a flat line is drawn in the middle
-        local span = hi - lo
-        if span <= 0 then span = math.max(2, floor(hi * 0.02)) end
-        lo, hi = lo - span * 0.08, hi + span * 0.08
-        if lo < 0 then lo = 0 end
-    end
-    local function y(v) return floor((v - lo) / (hi - lo) * (PH - 1) + 0.5) end
-    local dayFmt, hourFmt = "%a %d %b", "%a %H:00"
-    local function label(sl) return date(view == "hours" and hourFmt or dayFmt, sl.t) end
-    -- what moved the gold most, and where on the chart
-    local swings = G:Swings(view, UI.GOLD.lines)
-    local bySlot = {}
-    for _, e in ipairs(G:Swings(view, 60)) do
-        bySlot[e.slot] = bySlot[e.slot] or {}
-        table.insert(bySlot[e.slot], e)
-    end
-    for i = 1, UI.GOLD.slots do
-        local c, sl = gd.candles[i], s.slots[i]
-        if not sl or sl.none then
-            c.wick:Hide(); c.body:Hide(); c.hit:Hide(); c.hit.tip = nil
+    local L = G:Line(view, C.cols)
+    local first, last = L.first or now, L.last or now
+    local chg = last - first
+    local up = chg >= 0
+    local RGB = up and { 0.20, 0.90, 0.40 } or { 1.00, 0.25, 0.20 }
+    local function signed(c) return ((c >= 0) and (GREEN .. "+ ") or (RED .. "- ")) .. short(math.abs(c)) .. "|r" end
+    -- the amount now, and the change over the range with its percentage
+    gd.big:SetText("|cffffffff" .. short(now) .. "|r")
+    gd.chg:SetText((up and GREEN or RED) .. (up and "+ " or "- ") .. short(math.abs(chg))
+        .. ((first > 0) and ("  [%+.2f%%]"):format(chg / first * 100) or "") .. "|r" .. GREY .. "  " .. (G.LINES[view] or G.LINES.d2).name .. "|r")
+    do  -- under it, in one line: what you are worth once everything has sold
+        local m = self.moneyNow
+        if m then
+            local extra = {}
+            local function part(v, what) if v > 0 then extra[#extra + 1] = short(v) .. " " .. what end end
+            part(m.waiting, "in the mailbox"); part(m.onway, "on its way"); part(m.listed, "listed"); part(m.bought, "in your bags")
+            gd.sum:SetText(GREY .. "When everything has sold: |r" .. GOLD .. short(m.total) .. "|r"
+                .. (#extra > 0 and (GREY .. "   (" .. table.concat(extra, ", ") .. ")|r") or ""))
         else
-            local x = (i - 1) * slotW
-            local bw = math.max(3, slotW - 6)
-            local up, down = sl.c > sl.o, sl.c < sl.o
-            local r, g, b = 0.55, 0.55, 0.55
-            if up then r, g, b = 0.2, 0.9, 0.4 elseif down then r, g, b = 0.95, 0.25, 0.25 end
-            local y0, y1 = y(math.min(sl.o, sl.c)), y(math.max(sl.o, sl.c))
-            c.body:ClearAllPoints()
-            c.body:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", x + floor((slotW - bw) / 2), y0)
-            c.body:SetSize(bw, math.max(sl.flat and 1 or 2, y1 - y0))
-            c.body:SetColorTexture(r, g, b, sl.flat and 0.6 or 1)
-            c.body:Show()
-            local w0, w1 = y(sl.l), y(sl.h)
-            c.wick:ClearAllPoints()
-            c.wick:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", x + floor(slotW / 2), w0)
-            c.wick:SetSize(1, math.max(1, w1 - w0))
-            c.wick:SetColorTexture(r, g, b, 1)
-            c.wick:SetShown(not sl.flat)
-            c.hit:ClearAllPoints()
-            c.hit:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", x, 0)
-            c.hit:SetSize(slotW, PH)
-            c.hit:Show()
-            local tip = { label(sl) }
-            if sl.flat then
-                tip[#tip + 1] = "No change: " .. short(sl.c)
-            else
-                tip[#tip + 1] = ("Began at %s, ended at %s: %s%s"):format(short(sl.o), short(sl.c), signed(sl.c - sl.o), pctOf(sl.c - sl.o, sl.o))
-                tip[#tip + 1] = ("Most %s, least %s"):format(short(sl.h), short(sl.l))
-            end
-            for k, e in ipairs(bySlot[i] or {}) do
-                if k > 4 then break end
-                tip[#tip + 1] = date("%H:%M", e.t) .. "  " .. signed(e.d) .. "  " .. G.Why(e)
-            end
-            c.hit.tip = tip
+            gd.sum:SetText("")
         end
     end
-    -- marks: green above the candle for gold in, red under it for gold out
+    -- the range drawn: a little room above and below, lines at round amounts
+    local lo, hi = math.min(L.lo or now, now), math.max(L.hi or now, now)
+    do
+        local span = hi - lo
+        if span <= 0 then span = math.max(4, floor(hi * 0.04)) end
+        lo, hi = math.max(0, lo - span * 0.10), hi + span * 0.12
+    end
+    local PH = C.h
+    local function y(v) return floor((v - lo) / (hi - lo) * (PH - 1) + 0.5) end
+    local step = G.AxisStep(lo, hi, 4)
+    local gridVals = {}
+    do
+        local v = math.ceil(lo / step) * step
+        for i = 1, C.grid do
+            local g = gd.grid[i]
+            if v <= hi and y(v) <= PH - 6 then
+                gridVals[#gridVals + 1] = v
+                g.line:ClearAllPoints()
+                g.line:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", 0, y(v))
+                g.line:Show()
+                g.label:SetText(short(v))
+                v = v + step
+            else
+                g.line:Hide(); g.label:SetText("")
+            end
+        end
+    end
+    -- the line, and the area under it
+    local prev
+    for i = 1, C.cols do
+        local w, c = gd.cols[i], L.cols[i]
+        if not c or c.none then
+            w.fill:Hide(); w.line:Hide()
+        else
+            local yv = y(c.v)
+            w.fill:SetHeight(math.max(1, yv))
+            w.fill:SetColorTexture(RGB[1], RGB[2], RGB[3], 0.22)
+            w.fill:Show()
+            -- from the least to the most it was in this stretch, joined to the stretch before
+            local a, b = math.min(c.lo, prev or c.lo), math.max(c.hi, prev or c.hi)
+            local y0, y1 = y(a), y(b)
+            w.line:ClearAllPoints()
+            w.line:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", (i - 1) * C.colW, y0)
+            w.line:SetHeight(math.max(2, y1 - y0 + 2))
+            w.line:SetColorTexture(RGB[1], RGB[2], RGB[3], 1)
+            w.line:Show()
+            prev = c.v
+        end
+    end
+    -- where each day begins, with its date under the stretch it covers
+    do
+        local bounds = { 1 }
+        for _, d in ipairs(L.days) do bounds[#bounds + 1] = d.col end
+        bounds[#bounds + 1] = C.cols + 1
+        local n = #bounds - 1 -- the days in view
+        for i = 1, C.days do
+            local w = gd.days[i]
+            local from, to = bounds[i], bounds[i + 1]
+            if not (from and to) then
+                w.line:Hide(); w.label:SetText("")
+            else
+                local x0, x1 = (from - 1) * C.colW, (to - 1) * C.colW
+                w.line:ClearAllPoints()
+                w.line:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", x0, 0)
+                w.line:SetShown(i > 1)
+                local t = (L.cols[math.min(C.cols, from + 1)] or {}).t or L.to
+                local wide = x1 - x0
+                local text = ""
+                if n <= 3 then text = date("%a %d %b", t)
+                elseif n <= 8 then text = (wide >= 40) and date("%a %d", t) or ""
+                elseif (n - i) % 5 == 0 then text = date("%d %b", t) end
+                w.label:ClearAllPoints()
+                w.label:SetPoint("TOP", gd.plot, "BOTTOMLEFT", (x0 + x1) / 2, (n <= 3) and -18 or -4)
+                w.label:SetText(text)
+            end
+        end
+    end
+    do  -- times of day, on the 2-day view
+        local k = 0
+        if view == "d2" then
+            local t = math.ceil(L.from / 3600) * 3600
+            while t < L.to and k < C.ticks do
+                local h = tonumber(date("%H", t)) or 0
+                if h % 6 == 0 and h ~= 0 then
+                    k = k + 1
+                    local lab = gd.ticks[k]
+                    lab:ClearAllPoints()
+                    lab:SetPoint("TOP", gd.plot, "BOTTOMLEFT", (t - L.from) / L.span * C.w, -4)
+                    lab:SetText(h == 12 and "12P" or (h < 12 and (h .. "A") or ((h - 12) .. "P")))
+                end
+                t = t + 3600
+            end
+        end
+        for i = k + 1, C.ticks do gd.ticks[i]:SetText("") end
+    end
+    do  -- the latest amount, in its box at the end of the line
+        local yl = y(last)
+        local xl = C.w - 3
+        gd.dot:ClearAllPoints()
+        gd.dot:SetPoint("CENTER", gd.plot, "BOTTOMLEFT", xl, yl)
+        local above = yl + 46 <= PH
+        gd.call:ClearAllPoints()
+        gd.call:SetPoint(above and "BOTTOMRIGHT" or "TOPRIGHT", gd.plot, "BOTTOMLEFT", C.w - 2, above and (yl + 24) or (yl - 24))
+        gd.call.text:SetText("|cffffffff" .. short(last) .. "|r")
+        gd.stem:ClearAllPoints()
+        gd.stem:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", xl, above and yl or (yl - 24))
+        gd.stem:SetSize(1, 24)
+    end
+    -- what moved the gold most, on the line and listed under the chart
+    local swings = G:Swings(view, C.lines, C.cols)
     local used = {}
-    for i = 1, UI.GOLD.marks do
+    for i = 1, C.marks do
         local m, e = gd.marks[i], swings[i]
-        local sl = e and s.slots[e.slot]
-        if not (e and sl and not sl.none) then
+        if not e then
             m:Hide(); m.tip = nil
         else
-            local key = e.slot .. (e.d > 0 and "u" or "d")
+            local key = e.col .. (e.d > 0 and "u" or "d")
             local nth = used[key] or 0
             used[key] = nth + 1
-            local x = (e.slot - 1) * slotW + floor(slotW / 2) - 5
-            local yy = (e.d > 0) and (y(sl.h) + 4 + nth * 12) or (y(sl.l) - 15 - nth * 12)
+            local yy = (e.d > 0) and (y(e.g) + 6 + nth * 12) or (y(e.g) - 17 - nth * 12)
             yy = math.max(1, math.min(PH - 12, yy))
             m:ClearAllPoints()
-            m:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", x, yy)
+            m:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", math.max(0, math.min(C.w - 11, (e.col - 1) * C.colW - 4)), yy)
             if e.d > 0 then m.tex:SetColorTexture(0.2, 1, 0.4, 1) else m.tex:SetColorTexture(1, 0.2, 0.2, 1) end
             m.tip = { date("%a %d %b, %H:%M", e.t), signed(e.d), G.Why(e), GREY .. "Gold after it: " .. short(e.g) .. "|r" }
             m:Show()
         end
     end
-    gd.grid[1]:SetText(short(floor(lo + 0.5)))
-    gd.grid[2]:SetText(short(floor((lo + hi) / 2 + 0.5)))
-    gd.grid[3]:SetText(short(floor(hi + 0.5)))
-    gd.xl:SetText(label(s.slots[1]))
-    gd.xm:SetText(label(s.slots[floor((n + 1) / 2)]))
-    gd.xr:SetText(view == "hours" and "now" or "today")
-    gd.key:SetText(GREEN .. "green|r" .. GREY .. ": ended higher than it began   |r" .. RED .. "red|r" .. GREY .. ": ended lower   thin line: the most and the least   squares: the biggest changes (mouse over one)|r")
-    gd.head:SetText(GREY .. (view == "hours" and "BIGGEST CHANGES, LAST 24 HOURS" or "BIGGEST CHANGES, LAST 30 DAYS") .. "|r")
-    for i = 1, UI.GOLD.lines do
+    do  -- the mouse on the chart: the amount at that time
+        local per = C.cols / C.hover
+        local byStrip = {}
+        for _, e in ipairs(G:Swings(view, 60, C.cols)) do
+            local sidx = math.ceil(e.col / per)
+            byStrip[sidx] = byStrip[sidx] or {}
+            table.insert(byStrip[sidx], e)
+        end
+        for i = 1, C.hover do
+            local c = L.cols[math.min(C.cols, floor(i * per + 0.5))]
+            local tip
+            if not c or c.none then
+                tip = { date("%a %d %b, %H:%M", c and c.t or L.to), "Nothing on record yet at this time." }
+            else
+                tip = { date("%a %d %b, %H:%M", c.t), "Gold: " .. short(c.v), "Since the start of this chart: " .. signed(c.v - first) }
+                for k, e in ipairs(byStrip[i] or {}) do
+                    if k > 3 then break end
+                    tip[#tip + 1] = date("%H:%M", e.t) .. "  " .. signed(e.d) .. "  " .. G.Why(e)
+                end
+            end
+            gd.hover[i].tip = tip
+        end
+    end
+    gd.head:SetText(GREY .. "BIGGEST CHANGES, LAST " .. (G.LINES[view] or G.LINES.d2).name:upper() .. "   (the squares on the line: mouse over one)|r")
+    for i = 1, C.lines do
         local w, e = gd.lines[i], swings[i]
         if e then
             w.label:SetText(GREY .. date("%a %d %b %H:%M", e.t) .. "|r   " .. G.Why(e))
             w.value:SetText(signed(e.d))
         else
-            w.label:SetText((i == 1) and (GREY .. "Nothing recorded yet in this range. It fills in as your gold changes.|r") or "")
+            w.label:SetText((i == 1) and (GREY .. "Nothing recorded yet in this range. The line fills in as your gold changes.|r") or "")
             w.value:SetText("")
         end
     end
-    self.goldState = { view = view, n = n, lo = lo, hi = hi, swings = swings, series = s }
+    self.goldState = { view = view, first = first, last = last, change = chg, up = up, lo = lo, hi = hi, grid = gridVals, swings = swings, line = L }
 end
 
 function UI:RenderPicks(short)
@@ -1152,6 +1204,24 @@ function UI.TradesFooter(short)
     return parts
 end
 
+-- WHAT IS BEING SNIPED, in one plain line at the top of the Trades tab: the
+-- profit a deal must make to be offered, and the kinds of deal. The figure
+-- is the addon's own (it raises and lowers it from how your tries go) unless
+-- auto-adjust is off; there is nothing here to set or to work out.
+function UI.TargetLine(short)
+    local S, cfg = ns.Sniper, AuctionMeshDB.cfg
+    if ns.Dormant() then return "" end
+    local sk = S:StakeKey()
+    if sk then
+        local max = S:StakeTerms()
+        return GOLD .. "SNIPING FOR|r  " .. WHITE_C .. S.nameOf(sk) .. (max and (" at " .. short(max) .. " or less") or "") .. "|r" .. GREY .. "    one item, by asking its price (stake-out)|r"
+    end
+    local kinds = (ns.Deals.cfg.flips and not S.lowGold) and "vendor deals and flips" or "vendor deals only"
+    local whose = (cfg.tune ~= false) and "the addon sets this figure from your results" or "fixed by you (More, Advanced)"
+    return GOLD .. "SNIPING FOR|r  " .. WHITE_C .. "any deal that makes|r " .. GREEN .. "+ " .. short(ns.Deals.cfg.minProfit) .. "|r" .. WHITE_C .. " or more|r"
+        .. GREY .. "    " .. kinds .. "    " .. whose .. "|r"
+end
+
 -- THE MODE BADGE (top left). What is being bought, and one click to change it.
 function UI:RenderMode()
     local b = frame and frame.mode
@@ -1185,7 +1255,7 @@ function UI:ModeClick()
     self:Render()
 end
 
--- Waiting for a key press (Setup, Key) ends when the Setup tab is left.
+-- Waiting for a key press (Setup, Key) ends when the More tab is left.
 function UI:StopKeyCapture()
     if not self.capturingKey then return end
     self.capturingKey = false
@@ -1195,6 +1265,12 @@ end
 
 function UI:RenderSetup()
     local sp, cfg = frame.setup, AuctionMeshDB.cfg
+    do  -- the page: Settings, or Advanced
+        local pg = (self.morePage == "adv") and "adv" or "basic"
+        for name, f in pairs(sp.pages) do f:SetShown(name == pg) end
+        sp.title:SetText(GREY .. (pg == "adv" and "ADVANCED: the addon sets and adjusts these by itself. Change one only to overrule it.    "
+            or "SETTINGS    ") .. sp.version .. "|r")
+    end
     -- your own setting (while gold is low the addon runs on vendor deals only without changing it)
     sp.flips:SetText(AuctionMeshDB.cfg.flips ~= false and (ns.Sniper.lowGold and "Vendor deals + flips (off: low gold)" or "Vendor deals + flips") or "Vendor deals only")
     sp.scope:SetText(ns.Do.SCOPE_NAMES[cfg.scope] or ns.Do.SCOPE_NAMES.mats)
@@ -1257,8 +1333,7 @@ function UI:Render()
     self.lastDeals, self.lastEntries = deals, entries
     local tab = self.tab
     self:Layout()
-    self:RenderBar()
-    if tab == "BUY" then self:RenderMoney(entries, short) end
+    if tab == "BUY" or tab == "GOLD" then self:RenderMoney(entries, short) end
     if tab == "HISTORY" then self:RenderSetup() end
     if tab == "PICKS" then self:RenderPicks(short) end
     if tab == "GOLD" then self:RenderGold(short) end
@@ -1269,17 +1344,22 @@ function UI:Render()
     frame.tabSell:SetText(todo > 0 and ("Bags (%d)"):format(todo) or "Bags")
     UI.selectTab(frame.tabBuy, tab == "BUY")
     UI.selectTab(frame.tabSell, tab == "SELL")
-    UI.selectTab(frame.tabHist, tab == "HISTORY")
+    UI.selectTab(frame.tabHist, tab == "HISTORY" or tab == "PICKS")
     UI.selectTab(frame.tabPick, tab == "PICKS")
+    UI.selectTab(frame.navBasic, tab == "HISTORY" and (self.morePage or "basic") == "basic")
+    UI.selectTab(frame.navAdv, tab == "HISTORY" and self.morePage == "adv")
     UI.selectTab(frame.tabGold, tab == "GOLD")
     do  -- "Picks (1)" when a stake-out is worth a try and none is set
         local P = ns.Picks
         local r = P and P.result
-        frame.tabPick:SetText((r and r.best and not ns.Sniper:StakeKey()) and "Picks (1)" or "Picks")
+        local pick = r and r.best and not ns.Sniper:StakeKey()
+        frame.tabPick:SetText(pick and "Stake-out picks (1)" or "Stake-out picks")
+        frame.tabHist:SetText(pick and "More (1)" or "More")
     end
 
     if tab == "SELL" then frame.next:SetText(TEAL .. "NEXT|r  " .. nextStep(deals, entries, short)) end -- (hidden on the other tabs)
     self:RenderMode()
+    if tab == "BUY" then frame.target:SetText(UI.TargetLine(short)) end
     self:RenderSnipe(short)
     if frame.stakeStop then frame.stakeStop:SetShown(tab == "BUY" and ns.Sniper:StakeKey() ~= nil) end
     local status = tab == "BUY" and buyStatus(#deals) or tab == "SELL" and Se:Instructions(entries) or ""
@@ -1317,7 +1397,6 @@ function UI:Render()
             end
             if c then r.heat:SetColorTexture(c[1], c[2], c[3], 0.22); r.heat:Show() end
         end
-        r.sel:SetShown(item ~= nil and item.key ~= nil and item.key == self.sel and AuctionMeshDB.cfg.drawer == true)
         if not item then r:Hide() else
             local plain = item.head or item.note
             r.head:SetText(plain and (GREY .. plain .. "|r") or "")
@@ -1348,9 +1427,9 @@ function UI:Render()
                 local name = ns.Sniper.nameOf(item.key)
                 r.name:SetText(GREY .. (item.count > 1 and (name .. " x" .. item.count) or name) .. "|r")
                 r.c[1]:SetText(GREY .. item.count .. "|r"); r.c[2]:SetText("")
-                r.c[3]:SetText(GREY .. short(item.market) .. "|r"); r.c[4]:SetText("")
+                r.c[3]:SetText(GREY .. (item.market and short(item.market) or "?") .. "|r"); r.c[4]:SetText("")
                 r.state:SetText("")
-                r.profit:SetText(GREY .. "about " .. short(floor(item.market * (1 - ns.Deals.cfg.cut)) * item.count) .. "|r")
+                r.profit:SetText(GREY .. (item.market and ("about " .. short(floor(item.market * (1 - ns.Deals.cfg.cut)) * item.count)) or "price read on Add") .. "|r")
                 r.btn:SetText("Add"); r.btn:Enable(); r.btn:Show()
             elseif item.ghost then
                 -- a deal that is over: its row for the length of the flash, with what happened
@@ -1414,7 +1493,6 @@ function UI:Render()
         frame.vend:SetShown(tab == "SELL" and merchantOpen() and nv > 0 and not ahOpen())
         frame.vend:SetText(("Sell all to vendor  +%s"):format((short(gain):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))))
     end
-    self:RenderDrawer(entries)
 end
 
 ---------------------------------------------------------------- clicks
@@ -1479,7 +1557,7 @@ local function rowEnter(self)
             GameTooltip:AddLine(RED .. p.hold .. "|r")
         end
         if item.f.proof then GameTooltip:AddLine(GREEN .. "Purchase confirmed: " .. item.f.proof .. "|r") end
-        GameTooltip:AddLine(GREY .. "Click: details and what to do|r")
+        GameTooltip:AddLine(GREY .. "Shift + right-click: stop tracking this item|r")
     else
         local d = item
         if d.kind == "FLIP" then
@@ -1511,11 +1589,16 @@ end
 
 local function rowMouseUp(self, button)
     if GetCursorInfo() then return ns.Seller.AcceptDrop() end
-    -- a click (either button) opens this item's details in the drawer; nothing
-    -- is removed by a stray right-click any more
-    if self.item and self.item.key then
-        UI.sel, UI.dscroll = self.item.key, 0
-        UI:ToggleDrawer(true)
+    -- Shift + right-click on a row of the Bags tab: stop tracking that item
+    -- (something added by mistake, or that you want to keep). A plain click
+    -- does nothing, so a stray one removes nothing. (This was a button in the
+    -- Details sidebar, which is gone.)
+    local item = rawget(self, "item")
+    if item and item.key and item.action and button == "RightButton" and IsShiftKeyDown and IsShiftKeyDown() then
+        local name = ns.Sniper.nameOf(item.key)
+        ns.Seller:Untrack(item.key)
+        UI:Notice("Stopped tracking " .. name .. ". It is still yours: it shows under 'in your bags' again, and nothing was sold.", true)
+        UI:Render()
     end
 end
 
@@ -1623,19 +1706,17 @@ end
 -- while the auction house is open), Snapshot, Refresh. The narrowest panel is
 -- the floating one (WIDTH), with Dock shown: the sizes below leave a gap
 -- there, and UI.HeaderRoom works it out so the test can hold it to that.
--- (In 3.47 Refresh was added without this sum, and lay over the Setup tab.)
--- (3.52: a fifth tab, Gold. The tabs are as wide as their labels need, and on
--- the floating panel the button reads "Dock", which needs less than "Pop out".)
-local HDR = { tabX = 178, tabW = { 76, 64, 58, 46, 50 }, tabGap = 4, close = 34, edge = 12, pop = 56, dock = 44, snap = 68, refresh = 56, gap = 4 }
+-- (In 3.47 Refresh was added without this sum, and lay over the More tab.)
+-- (3.54: four tabs, Trades, Bags, Gold, More, and one button on the right,
+-- Refresh. Snapshot and Dock are on the More tab, where they also were; the
+-- engine bar is gone: the Trades tab's status line says what the radar does.)
+local HDR = { tabX = 178, tabW = { 76, 64, 50, 62 }, tabGap = 4, close = 34, edge = 12, refresh = 56 }
 UI.HDR = HDR
--- pixels between the last tab and the leftmost button on the right
-function UI.HeaderRoom(width, floating, withDock)
+-- pixels between the last tab and the Refresh button
+function UI.HeaderRoom(width, floating)
     local tabsRight = HDR.tabX + (#HDR.tabW - 1) * HDR.tabGap
     for _, w in ipairs(HDR.tabW) do tabsRight = tabsRight + w end
-    local x = width - (floating and HDR.close or HDR.edge)
-    if withDock then x = x - (floating and HDR.dock or HDR.pop) - HDR.gap end
-    x = x - HDR.snap - HDR.gap - HDR.refresh
-    return x - tabsRight
+    return width - (floating and HDR.close or HDR.edge) - HDR.refresh - tabsRight
 end
 local function makeTab(parent, n, text, onClick)
     return button(parent, HDR.tabW[n], text, onClick)
@@ -1735,7 +1816,7 @@ function UI:Create()
     frame.closeBtn:SetScript("OnClick", function() UI:Close() end)
 
     -- THE MODE, top left on every tab, where the name used to be: what is being
-    -- bought right now, in colour. A click changes it (no trip to the Setup tab).
+    -- bought right now, in colour. A click changes it (no trip to the More tab).
     frame.mode = button(frame, 158, "", function() UI:ModeClick() end)
     frame.mode:SetHeight(20)
     frame.mode:SetPoint("TOPLEFT", 12, -7)
@@ -1754,45 +1835,30 @@ function UI:Create()
     -- tabs (positioned in Place(): to the right of the mode badge)
     frame.tabBuy = makeTab(frame, 1, "Trades", function() UI:StopKeyCapture(); UI.tab = "BUY"; UI:Render() end)
     frame.tabSell = makeTab(frame, 2, "Bags", function() UI:StopKeyCapture(); UI.tab = "SELL"; UI:Render() end)
-    frame.tabPick = makeTab(frame, 3, "Picks", function() UI:StopKeyCapture(); UI.tab = "PICKS"; UI:Render() end)
-    frame.tabGold = makeTab(frame, 4, "Gold", function() UI:StopKeyCapture(); UI.tab = "GOLD"; UI:Render() end)
-    frame.tabHist = makeTab(frame, 5, "Setup", function() UI.tab = "HISTORY"; UI:Render() end)
+    frame.tabGold = makeTab(frame, 3, "Gold", function() UI:StopKeyCapture(); UI.tab = "GOLD"; UI:Render() end)
+    frame.tabHist = makeTab(frame, 4, "More", function() UI:StopKeyCapture(); UI.tab = "HISTORY"; UI.morePage = "basic"; UI:Render() end)
     frame.tabSell:SetPoint("LEFT", frame.tabBuy, "RIGHT", HDR.tabGap, 0)
-    frame.tabPick:SetPoint("LEFT", frame.tabSell, "RIGHT", HDR.tabGap, 0)
-    frame.tabGold:SetPoint("LEFT", frame.tabPick, "RIGHT", HDR.tabGap, 0)
+    frame.tabGold:SetPoint("LEFT", frame.tabSell, "RIGHT", HDR.tabGap, 0)
     frame.tabHist:SetPoint("LEFT", frame.tabGold, "RIGHT", HDR.tabGap, 0)
-
-    -- POP OUT / DOCK. Inside the auction house the panel is part of that window
-    -- and cannot be dragged on its own; this button turns it into a separate
-    -- window that can, and back.
-    frame.pop = button(frame, HDR.pop, "Pop out", function() ns.Do.Dock(not UI.docked) end)
-    frame.pop:SetHeight(18)
-    frame.pop:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
-        GameTooltip:AddLine(UI.docked and "Pop out" or "Dock", 1, 1, 1)
-        GameTooltip:AddLine(UI.docked and "Makes the panel a separate window that you can drag anywhere."
-            or "Puts the panel back inside the auction house window.", 0.8, 0.8, 0.8, true)
-        GameTooltip:Show()
-    end)
-    frame.pop:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    -- SNAPSHOT: on every tab. One short block of text to copy and paste to
-    -- Claude: gold, mailbox, auctions, bags, settings and the last snipes.
-    frame.snap = button(frame, HDR.snap, "Snapshot", function() ns.Do.Snapshot() end)
-    frame.snap:SetHeight(18)
-    frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -HDR.gap, 0)
-    outline(frame.snap, ACCENT)
-    frame.snap:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
-        GameTooltip:AddLine("Snapshot for Claude", 1, 1, 1)
-        GameTooltip:AddLine("Opens one short block of text: your gold, what is in the mailbox, what has sold and is on its way, what is listed and in your bags, your settings, and the last 20 snipes with how fast each input was. Copy it and paste it to Claude.", 0.8, 0.8, 0.8, true)
-        GameTooltip:Show()
-    end)
-    frame.snap:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- MORE has three pages, picked on a row of its own under the tabs:
+    -- Settings, Advanced, and the stake-out picks (which used to be a tab).
+    do
+        local nav = CreateFrame("Frame", nil, frame)
+        nav:SetPoint("TOPLEFT", 14, -40); nav:SetPoint("TOPRIGHT", -14, -40)
+        nav:SetHeight(22)
+        frame.navBasic = button(nav, 90, "Settings", function() UI:StopKeyCapture(); UI.tab = "HISTORY"; UI.morePage = "basic"; UI:Render() end)
+        frame.navBasic:SetPoint("TOPLEFT", 0, 0)
+        frame.navAdv = button(nav, 90, "Advanced", function() UI:StopKeyCapture(); UI.tab = "HISTORY"; UI.morePage = "adv"; UI:Render() end)
+        frame.navAdv:SetPoint("LEFT", frame.navBasic, "RIGHT", 4, 0)
+        frame.tabPick = button(nav, 130, "Stake-out picks", function() UI:StopKeyCapture(); UI.tab = "PICKS"; UI:Render() end)
+        frame.tabPick:SetPoint("LEFT", frame.navAdv, "RIGHT", 4, 0)
+        nav:Hide()
+        frame.moreNav = nav
+    end
 
     -- REFRESH: reads your bags (and the open mailbox) again and redraws everything
     frame.refresh = button(frame, HDR.refresh, "Refresh", function() UI:Refresh() end)
     frame.refresh:SetHeight(18)
-    frame.refresh:SetPoint("RIGHT", frame.snap, "LEFT", -HDR.gap, 0)
     frame.refresh:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
         GameTooltip:AddLine("Refresh", 1, 1, 1)
@@ -1800,22 +1866,6 @@ function UI:Create()
         GameTooltip:Show()
     end)
     frame.refresh:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-    -- ENGINE BAR, top right on every tab: what the request engine is doing now
-    local bar = CreateFrame("Frame", nil, frame)
-    bar:SetSize(BAR_W, 8)
-    bar.bg = bar:CreateTexture(nil, "BACKGROUND")
-    bar.bg:SetAllPoints()
-    bar.bg:SetColorTexture(0.09, 0.10, 0.12, 1)
-    outline(bar, LINE)
-    bar.fill = bar:CreateTexture(nil, "ARTWORK")
-    bar.fill:SetPoint("TOPLEFT", 1, -1); bar.fill:SetPoint("BOTTOMLEFT", 1, 1)
-    bar.fill:SetWidth(1)
-    frame.bar = bar
-    frame.barText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    frame.barText:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -3)
-    frame.barText:SetWidth(BAR_W)
-    frame.barText:SetJustifyH("RIGHT"); frame.barText:SetWordWrap(false)
 
     -- NEXT STEP: one plain instruction, always the most profitable thing to do now
     frame.next = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -1839,7 +1889,7 @@ function UI:Create()
     if sn.RegisterForClicks then sn:RegisterForClicks("AnyDown", "AnyUp") end
     sn:EnableMouseWheel(true)
     sn:SetScript("OnMouseWheel", function() UI.InputPress(true, "wheel") end)
-    sn:SetPoint("TOPLEFT", 12, -178); sn:SetPoint("TOPRIGHT", -12, -178)
+    sn:SetPoint("TOPLEFT", 12, -82); sn:SetPoint("TOPRIGHT", -12, -82)
     sn.label = sn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     sn.label:SetPoint("TOPLEFT", 10, -8); sn.label:SetPoint("TOPRIGHT", -10, -8)
     sn.label:SetJustifyH("LEFT"); sn.label:SetWordWrap(false)
@@ -1891,18 +1941,48 @@ function UI:Create()
     outline(frame.stakeStop, { 1, 0.82, 0 })
     frame.stakeStop:Hide()
 
-    -- MONEY (Trades tab): the answer to "how much do I really have?"
+    -- THE FRONT OF THE TRADES TAB, two lines above the snipe box:
+    --   1. WHAT IS BEING SNIPED: the profit a deal must make to be offered.
+    --      The addon sets and adjusts that figure itself; it is said here in
+    --      plain words so there is nothing to work out.
+    --   2. YOUR MONEY in one line: gold in hand, what is still to come, and
+    --      the total once everything has sold. The mouse on the line opens
+    --      the breakdown (it used to be six lines that were always there).
+    frame.target = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    frame.target:SetPoint("TOPLEFT", 14, -42); frame.target:SetPoint("TOPRIGHT", -14, -42)
+    frame.target:SetJustifyH("LEFT"); frame.target:SetWordWrap(false)
+    frame.target:Hide()
+    local mn = CreateFrame("Button", nil, frame)
+    mn:SetPoint("TOPLEFT", 14, -61); mn:SetPoint("TOPRIGHT", -14, -61)
+    mn:SetHeight(15)
+    mn.text = mn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    mn.text:SetAllPoints(); mn.text:SetJustifyH("LEFT"); mn.text:SetWordWrap(false)
+    mn:SetScript("OnEnter", function() if UI.tab == "BUY" and frame.ledger then frame.ledger:Show() end end)
+    mn:SetScript("OnLeave", function() if frame.ledger then frame.ledger:Hide() end end)
+    mn:Hide()
+    frame.money = mn
+
+    -- the breakdown: opens under the money line while the mouse is on it
     local lg = CreateFrame("Frame", nil, frame)
-    lg:SetPoint("TOPLEFT", 14, -40); lg:SetPoint("TOPRIGHT", -14, -40)
-    lg:SetHeight(134)
-    lg.title = heading(lg, 0, "MONEY")
+    lg:SetPoint("TOPLEFT", 8, -78); lg:SetPoint("TOPRIGHT", -8, -78)
+    lg:SetHeight(146)
+    do
+        local bgp = lg:CreateTexture(nil, "BACKGROUND")
+        bgp:SetAllPoints(); bgp:SetColorTexture(0.045, 0.05, 0.06, 0.98)
+        outline(lg, ACCENT)
+        local lv = frame.GetFrameLevel and frame:GetFrameLevel()
+        if type(lv) == "number" and lg.SetFrameLevel then lg:SetFrameLevel(lv + 20) end
+    end
+    local inner = CreateFrame("Frame", nil, lg)
+    inner:SetPoint("TOPLEFT", 6, -6); inner:SetPoint("BOTTOMRIGHT", -6, 6)
+    lg.title = heading(inner, 0, "MONEY")
     lg.rows = {}
-    for i = 1, 5 do lg.rows[i] = ledgerRow(lg, -16 - (i - 1) * 15) end
-    lg.rule = lg:CreateTexture(nil, "ARTWORK")
+    for i = 1, 5 do lg.rows[i] = ledgerRow(inner, -16 - (i - 1) * 15) end
+    lg.rule = inner:CreateTexture(nil, "ARTWORK")
     lg.rule:SetPoint("TOPLEFT", 0, -93); lg.rule:SetPoint("TOPRIGHT", 0, -93); lg.rule:SetHeight(1)
     lg.rule:SetColorTexture(LINE[1], LINE[2], LINE[3], 1)
-    lg.total = ledgerRow(lg, -99, "GameFontHighlight")
-    lg.note = lg:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    lg.total = ledgerRow(inner, -99, "GameFontHighlight")
+    lg.note = inner:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     lg.note:SetPoint("TOPLEFT", 0, -119); lg.note:SetPoint("TOPRIGHT", 0, -119)
     lg.note:SetJustifyH("LEFT"); lg.note:SetWordWrap(false)
     lg:Hide()
@@ -1911,11 +1991,21 @@ function UI:Create()
     -- SETUP tab: a control for everything that can be changed (no commands
     -- to remember), then what the request engine has learned.
     local sp = CreateFrame("Frame", nil, frame)
-    sp:SetPoint("TOPLEFT", 14, -40); sp:SetPoint("TOPRIGHT", -14, -40)
-    sp:SetHeight(430)
-    heading(sp, 0, "SETTINGS    (AuctionMesh version " .. tostring(C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("AuctionMesh", "Version") or "?") .. ")")
+    sp:SetPoint("TOPLEFT", 14, -68); sp:SetPoint("TOPRIGHT", -14, -68)
+    sp:SetHeight(402)
+    -- TWO PAGES. "Settings": the few things you set once (how you buy, where
+    -- the panel lives, your bank alt, what to send to Claude). "Advanced":
+    -- the figures the addon works out and adjusts by itself (the smallest
+    -- profit, the flip margin, the money limits, what the radar reads), for
+    -- when you want to overrule it. Each control is made on the page it
+    -- belongs to; `cur` is the page being filled.
+    sp.pages = { basic = CreateFrame("Frame", nil, sp), adv = CreateFrame("Frame", nil, sp) }
+    for _, pg in pairs(sp.pages) do pg:SetAllPoints(sp) end
+    local cur, curName = sp.pages.adv, "adv"
+    sp.title = heading(sp, 0, "")
+    sp.version = ("(AuctionMesh version " .. tostring(C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("AuctionMesh", "Version") or "?") .. ")")
     local function setting(y, text)
-        local l = sp:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        local l = cur:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         l:SetPoint("TOPLEFT", 0, y)
         l:SetJustifyH("LEFT"); l:SetWordWrap(false)
         l:SetText(text)
@@ -1926,13 +2016,13 @@ function UI:Create()
         label:SetPoint("RIGHT", control, "LEFT", -8, 0)
     end
     local function box(w, numeric, letters, suffix, onDone)
-        local e = CreateFrame("EditBox", nil, sp, "InputBoxTemplate")
+        local e = CreateFrame("EditBox", nil, cur, "InputBoxTemplate")
         e:SetSize(w, 20)
         e:SetAutoFocus(false)
         if numeric then e:SetNumeric(true) end
         e:SetMaxLetters(letters)
         if suffix then
-            local s = sp:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            local s = cur:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             s:SetPoint("LEFT", e, "RIGHT", 2, 0)
             s:SetText(suffix)
         end
@@ -1959,9 +2049,14 @@ function UI:Create()
     -- panel, above the footer in both the docked and the floating window.
     local ROW, HEAD = 22, 15
     local yy = -28
+    local ys = { basic = -28, adv = -28 }
+    local function page(name)
+        ys[curName] = yy
+        cur, curName, yy = sp.pages[name], name, ys[name]
+    end
     local function group(text)
         yy = yy - 4
-        heading(sp, yy, text)
+        heading(cur, yy, text)
         yy = yy - HEAD
     end
     local function row(text)
@@ -1971,7 +2066,8 @@ function UI:Create()
         return l, at
     end
 
-    group("DEALS")
+    page("adv")
+    group("DEALS: WORKED OUT BY THE ADDON (change one only to overrule it)")
     local L, at = row("Smallest profit worth showing")
     frame.minC = box(30, true, 3, "c", function() UI:ApplyMinProfit() end)
     frame.minC:SetPoint("TOPRIGHT", -12, at + 5)
@@ -1985,29 +2081,30 @@ function UI:Create()
     upTo(L, sp.margin)
 
     L, at = row("Show")
-    sp.flips = tip(button(sp, 190, "", function() UI:SetVendorOnly(AuctionMeshDB.cfg.flips ~= false) end),
+    sp.flips = tip(button(cur, 190, "", function() UI:SetVendorOnly(AuctionMeshDB.cfg.flips ~= false) end),
         "Vendor deals are guaranteed profit: the item is listed for less than a vendor pays. Flips are resold on the auction house and are not guaranteed.")
     sp.flips:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.flips)
 
     L, at = row("Most of your money in unsold auctions, and in one flip")
-    sp.spend = tip(button(sp, 92, "", function() ns.Do.MaxSpend() end),
+    sp.spend = tip(button(cur, 92, "", function() ns.Do.MaxSpend() end),
         "The most of the gold you hold that ONE flip may take. Click to change: 35%, 50%, 75%, 100%. At 100% the first big pile can take everything you hold; nothing more can be bought until it sells and pays out.")
     sp.spend:SetPoint("TOPRIGHT", 0, at + 5)
-    sp.tied = tip(button(sp, 92, "", function() ns.Do.MaxTied() end),
+    sp.tied = tip(button(cur, 92, "", function() ns.Do.MaxTied() end),
         "The most of your money that may sit in auctions that have NOT SOLD yet. Gold from auctions that have sold is on its way and does not count. A small flip (15% of the gold in hand) is always allowed. Click to change: 30%, 50%, 70%, 100%.")
     sp.tied:SetPoint("RIGHT", sp.spend, "LEFT", -6, 0)
     upTo(L, sp.tied)
 
+    page("basic")
     group("BUYING")
     L, at = row("Buy with")
-    sp.buy = tip(button(sp, 190, "", function() UI:SetBuyMode() end),
+    sp.buy = tip(button(cur, 190, "", function() UI:SetBuyMode() end),
         "Click to change.\nMouse wheel: put the mouse in the snipe box and roll.\nA key, tap it: pick a key below; tapping it buys, anywhere, while the Trades tab is open.\nOne key, buys and posts: the same key; with no deal up, each press posts the next item in your bags that is ready, at the addon's price. Trades and Bags tabs.\nClicks only: click the snipe box.\nClicking the box works in every mode.")
     sp.buy:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.buy)
 
     L, at = row("Key (for 'A key: tap it')")
-    sp.key = tip(button(sp, 190, "", function(self)
+    sp.key = tip(button(cur, 190, "", function(self)
         -- click, then press the key you want (Esc cancels; a mouse side button works too)
         UI.capturingKey = not UI.capturingKey
         if self.EnableKeyboard then self:EnableKeyboard(UI.capturingKey and true or false) end
@@ -2041,22 +2138,23 @@ function UI:Create()
     end)
     UI.GotKey = gotKey
 
+    page("adv")
     group("WATCHING")
     L, at = row("Radar reads")
-    sp.scope = tip(button(sp, 250, "", function() ns.Do.Scope() end),
+    sp.scope = tip(button(cur, 250, "", function() ns.Do.Scope() end),
         "Click to change. Crafting materials are read about every second whatever is chosen; a wider setting adds the other categories, each every 30 seconds.")
     sp.scope:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.scope)
 
     L, at = row("Look for flips only on")
-    sp.focus = tip(button(sp, 250, "", function() ns.Do.FocusMode() end),
+    sp.focus = tip(button(cur, 250, "", function() ns.Do.FocusMode() end),
         "Click to change.\nOff: every material is watched.\nPrime items: the addon picks the items measured to sell fastest with the most gold moving, and re-reads each one about once a minute. Your own watch list is included.\nMy own list: only items you added in the drawer or with a settings code.\nVendor-price deals are always shown, whatever is chosen.")
     sp.focus:SetPoint("TOPRIGHT", 0, at + 5)
     upTo(L, sp.focus)
 
-    group("CLAUDE")
+    group("A CODE FROM CLAUDE")
     L, at = row("Import: paste what Claude sent")
-    sp.apply = tip(button(sp, 50, "Apply", function()
+    sp.apply = tip(button(cur, 50, "Apply", function()
         if ns.Do.Import(sp.code:GetText()) then sp.code:SetText("") end
     end), "Paste a settings code (it starts with AMS1:), or the whole message it came in: the code is found in the text. Apply sets everything in it and says exactly what changed. Your current code is in the Snapshot.")
     sp.apply:SetPoint("TOPRIGHT", 0, at + 5)
@@ -2081,13 +2179,15 @@ function UI:Create()
         self:ClearFocus()
     end)
 
-    L, at = row("Send to Claude")
-    local log = tip(button(sp, 60, "Log", function() ns.Diag:Show() end), "Everything the addon did this session, step by step. Send it when something looks wrong.")
+    page("basic")
+    group("SEND TO CLAUDE")
+    L, at = row("When something looks wrong")
+    local log = tip(button(cur, 60, "Log", function() ns.Diag:Show() end), "Everything the addon did this session, step by step. Send it when something looks wrong.")
     log:SetPoint("TOPRIGHT", 0, at + 5)
-    sp.report = tip(button(sp, 100, "Daily report", function() ns.Do.Report() end),
+    sp.report = tip(button(cur, 100, "Daily report", function() ns.Do.Report() end),
         "The long version, once a day: what sold, what was found and missed, which items move the most gold.")
     sp.report:SetPoint("RIGHT", log, "LEFT", -6, 0)
-    sp.snap = tip(button(sp, 90, "Snapshot", function() ns.Do.Snapshot() end),
+    sp.snap = tip(button(cur, 90, "Snapshot", function() ns.Do.Snapshot() end),
         "The short version, any time: gold, mailbox, auctions, settings and the last snipes. The same as the Snapshot button at the top.")
     sp.snap:SetPoint("RIGHT", sp.report, "LEFT", -6, 0)
     outline(sp.snap, ACCENT)
@@ -2095,19 +2195,21 @@ function UI:Create()
 
     group("ADDON")
     L, at = row("Panel / bank alt")
-    sp.dock = tip(button(sp, 190, "", function() ns.Do.Dock(AuctionMeshDB.cfg.dock == false) end),
+    sp.dock = tip(button(cur, 190, "", function() ns.Do.Dock(AuctionMeshDB.cfg.dock == false) end),
         "Inside the auction house window, or as a window of its own that you can drag anywhere.")
     sp.dock:SetPoint("TOPRIGHT", 0, at + 5)
-    sp.auto = tip(button(sp, 150, "", function() ns.Do.Auto(not AuctionMeshDB.cfg.autoOpen) end),
+    sp.auto = tip(button(cur, 150, "", function() ns.Do.Auto(not AuctionMeshDB.cfg.autoOpen) end),
         "On: the panel opens and starts reading prices when you open the auction house. Off: click the AuctionMesh tab under the auction house window.")
     sp.auto:SetPoint("RIGHT", sp.dock, "LEFT", -6, 0)
-    sp.bank = tip(button(sp, 190, "", function() ns.Do.BankAlt() end),
+    sp.bank = tip(button(cur, 190, "", function() ns.Do.BankAlt() end),
         "Your bank alt: the one character the addon is for. Click to pick: every character, then each of your characters in turn (the one picked last comes first). With a bank alt set, the addon works on that character and is switched off on all the others: it opens nowhere by itself and nothing runs. Kept for the whole account. A character is on the list once it has logged in with the addon.")
     sp.bank:SetPoint("RIGHT", sp.auto, "LEFT", -6, 0)
     upTo(L, sp.bank)
 
+    page("adv")
+    group("AUTO-ADJUST")
     L, at = row("Auto-adjust (pace, smallest profit, quiet time)")
-    sp.forget = tip(button(sp, 190, "Forget what was learned", function()
+    sp.forget = tip(button(cur, 190, "Forget what was learned", function()
         -- two clicks, so it can't happen by accident
         if UI.forgetUntil and GetTime() < UI.forgetUntil then
             UI.forgetUntil = nil
@@ -2118,7 +2220,7 @@ function UI:Create()
         end
     end), "Clears the measured request limit, the pace and the record of how trades turned out. Needs a second click.")
     sp.forget:SetPoint("TOPRIGHT", 0, at + 5)
-    sp.tune = tip(button(sp, 150, "", function() ns.Do.Tuning(not ns.Tuner.cfg.enabled) end),
+    sp.tune = tip(button(cur, 150, "", function() ns.Do.Tuning(not ns.Tuner.cfg.enabled) end),
         "On: the pace of requests, the flip profit bar, the smallest profit and the radar's quiet time adjust themselves from results, and each change is listed below. Off: nothing changes by itself.")
     sp.tune:SetPoint("RIGHT", sp.forget, "LEFT", -6, 0)
     upTo(L, sp.tune)
@@ -2126,57 +2228,92 @@ function UI:Create()
     -- three lines of what the addon is doing by itself
     yy = yy - 6
     sp.rows = {}
-    for i = 1, 3 do sp.rows[i] = ledgerRow(sp, yy - (i - 1) * 14, nil, 170) end
-    sp.bottom = yy - 2 * 14 - 12 -- where the last line ends, for the layout test
+    for i = 1, 3 do sp.rows[i] = ledgerRow(cur, yy - (i - 1) * 14, nil, 170) end
+    page("basic") -- (both pages' ends are known now)
+    sp.bottom = math.min(ys.basic, ys.adv - 2 * 14 - 12) - 28 -- where the longer page ends (the pages start 28 lower than they did), for the layout test
     sp:Hide()
     frame.setup = sp
 
-    -- THE GOLD TAB: your gold over time, drawn the way a stock chart is.
-    -- One candle per hour (the last 24 hours) or per day (the last 30 days):
-    -- the thick part runs from what the gold was when the hour or day began
-    -- to what it was at its end (green: it went up; red: it went down); the
-    -- thin line reaches the most and the least it was in between. The biggest
-    -- single changes are marked on the chart, and the mouse over a mark says
-    -- what it was. Recorded by Gold.lua; nothing here sends a request.
+    -- THE GOLD TAB: your gold as a line with the area under it filled, the way
+    -- a market chart is drawn on television. The amount now in large figures
+    -- with the change over the range next to it (green up, red down), the
+    -- amounts down the left with a line across for each, a divider where each
+    -- day begins with its date under it, and a box on the latest amount. The
+    -- biggest single changes are marked on the line; the mouse over a mark
+    -- says what it was. Recorded by Gold.lua; nothing here sends a request.
     do
+        local C = UI.GOLD
         local gd = CreateFrame("Frame", nil, frame)
         gd:SetPoint("TOPLEFT", 14, -40); gd:SetPoint("TOPRIGHT", -14, -40)
         gd:SetHeight(430)
         gd.big = gd:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         gd.big:SetPoint("TOPLEFT", 0, -2); gd.big:SetJustifyH("LEFT")
-        gd.today = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        gd.today:SetPoint("LEFT", gd.big, "RIGHT", 14, 0); gd.today:SetJustifyH("LEFT")
+        gd.chg = gd:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        gd.chg:SetPoint("LEFT", gd.big, "RIGHT", 14, 0); gd.chg:SetJustifyH("LEFT")
         gd.sum = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        gd.sum:SetPoint("TOPLEFT", 0, -28); gd.sum:SetPoint("TOPRIGHT", 0, -28)
+        gd.sum:SetPoint("TOPLEFT", 0, -27); gd.sum:SetPoint("TOPRIGHT", 0, -27)
         gd.sum:SetJustifyH("LEFT"); gd.sum:SetWordWrap(false)
         gd.views = {}
-        gd.views.days = button(gd, 76, "30 days", function() UI.goldView = "days"; UI:Render() end)
-        gd.views.days:SetPoint("TOPRIGHT", 0, 0)
-        gd.views.hours = button(gd, 76, "24 hours", function() UI.goldView = "hours"; UI:Render() end)
-        gd.views.hours:SetPoint("RIGHT", gd.views.days, "LEFT", -6, 0)
-        -- the plot
-        local PW, PH, N = UI.GOLD.w, UI.GOLD.h, UI.GOLD.slots
-        local plot = CreateFrame("Frame", nil, gd)
-        plot:SetPoint("TOPLEFT", 0, -52); plot:SetSize(PW, PH)
-        local bg = plot:CreateTexture(nil, "BACKGROUND")
-        bg:SetAllPoints(); bg:SetColorTexture(1, 1, 1, 0.03)
-        outline(plot, LINE)
-        gd.plot = plot
-        gd.grid = {}
-        for i = 1, 3 do
-            local ln = plot:CreateTexture(nil, "BORDER")
-            ln:SetPoint("BOTTOMLEFT", 0, floor((i - 1) * (PH - 1) / 2)); ln:SetSize(PW, 1)
-            ln:SetColorTexture(1, 1, 1, 0.07)
-            local lab = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-            lab:SetPoint("LEFT", ln, "RIGHT", 6, 0); lab:SetJustifyH("LEFT")
-            gd.grid[i] = lab
+        local prev
+        for _, v in ipairs({ { "d30", "30 days" }, { "d7", "7 days" }, { "d2", "2 days" } }) do
+            local bt = button(gd, 62, v[2], function() UI.goldView = v[1]; UI:Render() end)
+            if prev then bt:SetPoint("RIGHT", prev, "LEFT", -4, 0) else bt:SetPoint("TOPRIGHT", 0, 0) end
+            gd.views[v[1]] = bt
+            prev = bt
         end
-        gd.xl = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        gd.xl:SetPoint("TOPLEFT", plot, "BOTTOMLEFT", 0, -3)
-        gd.xm = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        gd.xm:SetPoint("TOP", plot, "BOTTOM", 0, -3)
-        gd.xr = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        gd.xr:SetPoint("TOPRIGHT", plot, "BOTTOMRIGHT", 0, -3)
+        -- the plot
+        local plot = CreateFrame("Frame", nil, gd)
+        plot:SetPoint("TOPLEFT", C.x, -50); plot:SetSize(C.w, C.h)
+        local bg = plot:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(); bg:SetColorTexture(0.04, 0.09, 0.20, 0.85)
+        gd.plot = plot
+        -- the amounts down the left, each with a line across
+        gd.grid = {}
+        for i = 1, C.grid do
+            local ln = plot:CreateTexture(nil, "BORDER")
+            ln:SetSize(C.w, 1); ln:SetColorTexture(1, 1, 1, 0.10)
+            local lab = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            lab:SetPoint("RIGHT", ln, "LEFT", -6, 0); lab:SetJustifyH("RIGHT")
+            gd.grid[i] = { line = ln, label = lab }
+        end
+        -- the line and the area under it: one column of each
+        gd.cols = {}
+        for i = 1, C.cols do
+            local fill = plot:CreateTexture(nil, "ARTWORK")
+            fill:SetPoint("BOTTOMLEFT", (i - 1) * C.colW, 0); fill:SetSize(C.colW, 1)
+            local line = plot:CreateTexture(nil, "OVERLAY")
+            line:SetSize(C.colW, 2)
+            gd.cols[i] = { fill = fill, line = line }
+        end
+        -- where each day begins, and its date
+        gd.days = {}
+        for i = 1, C.days do
+            local dv = plot:CreateTexture(nil, "OVERLAY")
+            dv:SetSize(1, C.h); dv:SetColorTexture(0.6, 0.75, 1, 0.45)
+            local lab = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            lab:SetJustifyH("CENTER")
+            gd.days[i] = { line = dv, label = lab }
+        end
+        -- times of day along the bottom (the 2-day view)
+        gd.ticks = {}
+        for i = 1, C.ticks do
+            local lab = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            lab:SetJustifyH("CENTER")
+            gd.ticks[i] = lab
+        end
+        -- the latest amount, in a box on the line's end
+        local call = CreateFrame("Frame", nil, plot)
+        call:SetSize(84, 20)
+        local cbg = call:CreateTexture(nil, "BACKGROUND")
+        cbg:SetAllPoints(); cbg:SetColorTexture(0.10, 0.22, 0.45, 1)
+        outline(call, { 0.6, 0.8, 1 })
+        call.text = call:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        call.text:SetPoint("CENTER")
+        gd.call = call
+        gd.dot = plot:CreateTexture(nil, "OVERLAY")
+        gd.dot:SetSize(6, 6); gd.dot:SetColorTexture(1, 1, 1, 1)
+        gd.stem = plot:CreateTexture(nil, "OVERLAY")
+        gd.stem:SetColorTexture(0.6, 0.8, 1, 0.9)
         local function tipOf(self)
             if not self.tip then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -2186,46 +2323,43 @@ function UI:Create()
             GameTooltip:Show()
         end
         local function tipOff() GameTooltip:Hide() end
-        gd.candles = {}
-        for i = 1, N do
-            local c = {}
-            c.wick = plot:CreateTexture(nil, "ARTWORK")
-            c.body = plot:CreateTexture(nil, "OVERLAY")
-            -- the whole column answers the mouse: the day (or hour) in figures
-            c.hit = CreateFrame("Frame", nil, plot)
-            c.hit:EnableMouse(true)
-            c.hit:SetScript("OnEnter", tipOf); c.hit:SetScript("OnLeave", tipOff)
-            gd.candles[i] = c
+        -- the mouse anywhere on the chart: the amount at that time
+        gd.hover = {}
+        local hw = C.w / C.hover
+        for i = 1, C.hover do
+            local h = CreateFrame("Frame", nil, plot)
+            h:SetPoint("BOTTOMLEFT", (i - 1) * hw, 0); h:SetSize(hw, C.h)
+            h:EnableMouse(true)
+            h:SetScript("OnEnter", tipOf); h:SetScript("OnLeave", tipOff)
+            gd.hover[i] = h
         end
         -- the biggest changes, marked: the mouse over a mark says what it was
         gd.marks = {}
-        for i = 1, UI.GOLD.marks do
+        for i = 1, C.marks do
             local m = CreateFrame("Button", nil, plot)
             m:SetSize(11, 11)
             m.tex = m:CreateTexture(nil, "OVERLAY")
             m.tex:SetAllPoints()
-            outline(m, { 0, 0, 0 })
+            outline(m, { 1, 1, 1 })
             m:SetScript("OnEnter", tipOf); m:SetScript("OnLeave", tipOff)
-            do  -- above the columns, so that the mouse reaches the mark and not the column behind it
+            do  -- above the hover strips, so that the mouse reaches the mark
                 local lv = plot.GetFrameLevel and plot:GetFrameLevel()
                 if type(lv) == "number" and m.SetFrameLevel then m:SetFrameLevel(lv + 5) end
             end
             m:Hide()
             gd.marks[i] = m
         end
-        gd.key = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        gd.key:SetPoint("TOPLEFT", plot, "BOTTOMLEFT", 0, -20); gd.key:SetJustifyH("LEFT")
-        -- the same swings as a list, largest first
+        -- the same changes as a list, largest first
         gd.head = gd:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        gd.head:SetPoint("TOPLEFT", plot, "BOTTOMLEFT", 0, -42)
+        gd.head:SetPoint("TOPLEFT", 0, -50 - C.h - 40)
         gd.lines = {}
-        for i = 1, UI.GOLD.lines do
-            local y = -58 - (i - 1) * 15
+        for i = 1, C.lines do
+            local y = -50 - C.h - 56 - (i - 1) * 15
             local l = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            l:SetPoint("TOPLEFT", plot, "BOTTOMLEFT", 0, y)
-            l:SetWidth(PW - 100); l:SetJustifyH("LEFT"); l:SetWordWrap(false)
+            l:SetPoint("TOPLEFT", 0, y)
+            l:SetWidth(C.x + C.w - 100); l:SetJustifyH("LEFT"); l:SetWordWrap(false)
             local v = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            v:SetPoint("TOPRIGHT", plot, "BOTTOMRIGHT", 0, y)
+            v:SetPoint("TOPRIGHT", gd, "TOPLEFT", C.x + C.w, y)
             v:SetJustifyH("RIGHT"); v:SetWordWrap(false)
             gd.lines[i] = { label = l, value = v }
         end
@@ -2237,8 +2371,8 @@ function UI:Create()
     -- it is worked out from deals the radar has already seen (see Picks.lua):
     -- it sends nothing to the auction house and waits while you are sniping.
     local pk = CreateFrame("Frame", nil, frame)
-    pk:SetPoint("TOPLEFT", 14, -40); pk:SetPoint("TOPRIGHT", -14, -40)
-    pk:SetHeight(430)
+    pk:SetPoint("TOPLEFT", 14, -68); pk:SetPoint("TOPRIGHT", -14, -68)
+    pk:SetHeight(402)
     heading(pk, 0, "PICKS    worked out from deals the radar has already seen: no requests, and never while you are sniping")
     pk.head = pk:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     pk.head:SetPoint("TOPLEFT", 0, -34); pk.head:SetPoint("TOPRIGHT", 0, -34)
@@ -2319,11 +2453,6 @@ function UI:Create()
         r.flash[2]:SetPoint("BOTTOMLEFT"); r.flash[2]:SetPoint("BOTTOMRIGHT"); r.flash[2]:SetHeight(2)
         r.flash[3]:SetPoint("TOPLEFT"); r.flash[3]:SetPoint("BOTTOMLEFT"); r.flash[3]:SetWidth(2)
         r.flash[4]:SetPoint("TOPRIGHT"); r.flash[4]:SetPoint("BOTTOMRIGHT"); r.flash[4]:SetWidth(2)
-        -- teal edge on the row whose details are open in the drawer
-        r.sel = r:CreateTexture(nil, "ARTWORK")
-        r.sel:SetPoint("TOPLEFT", 0, 0); r.sel:SetPoint("BOTTOMLEFT", 0, 0); r.sel:SetWidth(2)
-        r.sel:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 1)
-        r.sel:Hide()
         -- section heading: grey small caps over a thin rule
         r.head = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
         r.head:SetPoint("LEFT", 4, 0)
@@ -2414,7 +2543,6 @@ function UI:Create()
         if sb and sb.phase == "confirm" and ns.Sniper:OneClick(sb.key) ~= UI.wasOneClick then UI.wasOneClick = ns.Sniper:OneClick(sb.key); UI.dirty = true end
         if UI.dirty then UI:Render() end
     end)
-    self:CreateDrawer()
     frame:Hide()
 end
 
@@ -2423,7 +2551,7 @@ end
 --   Bags:   the NEXT line, what to do, the list
 --   Setup:  one status line under the heading, then the settings
 local LAYOUT = {
-    BUY = { next = -182, status = -260, statusH = 38, top = 304 }, -- (the pace gauge sits between the snipe box's lines and the status)
+    BUY = { next = -86, status = -164, statusH = 38, top = 208 }, -- (the pace gauge sits between the snipe box's lines and the status)
     SELL = { next = -40, status = -58, statusH = 38, top = 104 },
     HISTORY = { status = -55, statusH = 14, top = 480 },
     PICKS = { status = -55, statusH = 14, top = 480 },
@@ -2435,10 +2563,13 @@ function UI:Layout()
     self.listTop = L.top
     if self.layoutKey == tab then return end
     self.layoutKey = tab
-    frame.ledger:SetShown(tab == "BUY")
+    if tab ~= "BUY" then frame.ledger:Hide() end -- (the breakdown opens only from the Trades tab's money line)
+    frame.target:SetShown(tab == "BUY")
+    frame.money:SetShown(tab == "BUY")
     frame.setup:SetShown(tab == "HISTORY")
     frame.picks:SetShown(tab == "PICKS")
     frame.gold:SetShown(tab == "GOLD")
+    frame.moreNav:SetShown(tab == "HISTORY" or tab == "PICKS")
     frame.next:SetShown(L.next ~= nil)
     if L.next then
         frame.next:ClearAllPoints()
@@ -2504,7 +2635,6 @@ function UI:Place()
     local dock = ahOpen() and AuctionMeshDB.cfg.dock ~= false
     frame:ClearAllPoints()
     frame.tabBuy:ClearAllPoints()
-    frame.bar:ClearAllPoints()
     if dock then
         -- Inside the auction house: no title or close button of our own.
         frame:SetParent(ah)
@@ -2515,9 +2645,7 @@ function UI:Place()
         frame:SetMovable(false)
         frame.closeBtn:Hide()
         frame.tabBuy:SetPoint("TOPLEFT", HDR.tabX, -8)
-        frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -HDR.edge, -6)
-        frame.pop:SetWidth(HDR.pop)
-        frame.pop:SetText("Pop out"); frame.pop:Show()
+        frame.refresh:ClearAllPoints(); frame.refresh:SetPoint("TOPRIGHT", -HDR.edge, -6)
     else
         frame:SetParent(UIParent)
         frame:SetScale(0.9)
@@ -2526,556 +2654,11 @@ function UI:Place()
         frame:SetMovable(true)
         frame.closeBtn:Show()
         frame.tabBuy:SetPoint("TOPLEFT", HDR.tabX, -8)
-        -- "Dock" only makes sense while the auction house is open
-        frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -HDR.close, -6)
-        frame.pop:SetWidth(HDR.dock)
-        frame.pop:SetText("Dock"); frame.pop:SetShown(ahOpen() and true or false)
-        -- with no Dock button the Snapshot button takes its place
-        frame.snap:ClearAllPoints()
-        if ahOpen() then frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -HDR.gap, 0) else frame.snap:SetPoint("TOPRIGHT", -HDR.close, -6) end
+        frame.refresh:ClearAllPoints(); frame.refresh:SetPoint("TOPRIGHT", -HDR.close, -6)
         local pos = AuctionMeshDB.cfg.pos
         if pos then frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else frame:SetPoint("CENTER", 0, 40) end
     end
-    if dock then frame.snap:ClearAllPoints(); frame.snap:SetPoint("RIGHT", frame.pop, "LEFT", -HDR.gap, 0) end
     self.docked = dock
-    self:FitHeader()
-end
-
--- The engine bar and its line of text live in the space between the tabs and
--- the Snapshot button, and are sized to it: on a narrow panel they shrink, and
--- when there is no room at all they are hidden rather than drawn over the
--- buttons. (The bar had a fixed place and a fixed 420-wide text, which ran
--- over the Snapshot button and the Setup tab.)
-function UI:FitHeader()
-    if not frame then return end
-    local bar, txt = frame.bar, frame.barText
-    bar:ClearAllPoints()
-    bar:SetPoint("RIGHT", frame.refresh, "LEFT", -10, 3)
-    local function num(v) return type(v) == "number" and v or nil end
-    local left = num(frame.tabHist.GetRight and frame.tabHist:GetRight())
-    local right = num(frame.refresh.GetLeft and frame.refresh:GetLeft())
-    local room = (left and right) and (right - left - 24) or BAR_W
-    local w = math.max(0, math.min(BAR_W, floor(room)))
-    self.barWidth = w
-    if w < 60 then
-        bar:Hide(); txt:Hide()
-    else
-        bar:Show(); txt:Show()
-        bar:SetWidth(w)
-        txt:SetWidth(w)
-    end
-end
-
----------------------------------------------------------------- detail drawer
-
--- A panel that slides out on the right: every trade from purchase to sale
--- with its profit, and one recommendation per open trade. Clicking an item
--- row on the left shows that item alone, with everything known about it.
-local DRAWER_W, DLINES, DLINE_H = 400, 34, 15
-local WHITE = "|cffffffff"
-
-local function ago(t)
-    local age = GetServerTime() - (t or GetServerTime())
-    if age < 90 then return age .. "s ago" end
-    if age < 5400 then return floor(age / 60) .. " min ago" end
-    if age < 48 * 3600 then return floor(age / 3600) .. " h ago" end
-    return floor(age / 86400) .. " days ago"
-end
-
--- breaks plain text into lines of about `width` characters, at spaces
-local function wrap(text, width)
-    local out, line = {}, ""
-    local function len(s) return #(s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end -- colour codes take no room
-    for word in tostring(text):gmatch("%S+") do
-        if #line > 0 and len(line) + 1 + len(word) > width then out[#out + 1] = line; line = word
-        else line = (#line > 0) and (line .. " " .. word) or word end
-    end
-    if #line > 0 then out[#out + 1] = line end
-    return out
-end
-
-local function signed(c, short) return (c >= 0 and "+ " or "- ") .. short(math.abs(c)) end
-
-local TONE = { ["do"] = { TEAL, "DO" }, wait = { GREY, "WAIT" }, warn = { ORANGE, "CHECK" } }
-
--- one recommendation, wrapped, with its tone word in front of the first line
-local function adviceLines(out, e)
-    local text, tone = ns.Seller:Advice(e)
-    local t = TONE[tone] or TONE.wait
-    text = text:gsub("^Wait%. ", "") -- the tone word in front already says it
-    for i, l in ipairs(wrap(text, 56)) do
-        out[#out + 1] = { l = (i == 1 and (t[1] .. t[2] .. "|r  ") or "         ") .. l, advice = i == 1 and tone or nil }
-    end
-end
-
--- the lines of one trade: bought, what became of it, profit, what to do
-local function tradeLines(out, t, byKey, short)
-    local J, Se = ns.Journal, ns.Seller
-    local left = J.left(t)
-    out[#out + 1] = { l = WHITE .. tostring(t.name) .. " x" .. t.qty .. "|r", r = GREY .. ago(t.at) .. "|r", trade = t }
-    if t.kind == "FARM" then
-        out[#out + 1] = { l = "Farmed or mined: cost nothing", r = GREY .. "-|r" }
-    else
-        out[#out + 1] = { l = t.cost and ("Bought at %s each"):format(short(t.cost)) or "Bought (cost not known)",
-            r = t.cost and ("- " .. short(t.cost * t.qty)) or (GREY .. "?|r") }
-    end
-    local sold, vend = t.sold or 0, t.vend or 0
-    if sold > 0 and vend == 0 then
-        out[#out + 1] = { l = ("Sold %d at %s each, after the cut"):format(sold, short(t.soldPrice or 0)), r = GREEN .. "+ " .. short(t.got or 0) .. "|r" }
-    elseif vend > 0 and sold == 0 then
-        out[#out + 1] = { l = ("Sold %d to a vendor at %s each"):format(vend, short(t.vendPrice or 0)), r = GREEN .. "+ " .. short(t.got or 0) .. "|r" }
-    elseif sold > 0 then
-        out[#out + 1] = { l = ("Sold %d at auction and %d to a vendor"):format(sold, vend), r = GREEN .. "+ " .. short(t.got or 0) .. "|r" }
-    end
-    if (t.expired or 0) > 0 then
-        out[#out + 1] = { l = GREY .. ("Came back unsold %d time%s|r"):format(t.expired, t.expired == 1 and "" or "s") }
-    end
-    if (t.lost or 0) > 0 then
-        out[#out + 1] = { l = GREY .. ("%d not counted: %s|r"):format(t.lost, tostring(t.lostWhy or "removed")) }
-    end
-    if (t.feeLost or 0) > 0 then
-        out[#out + 1] = { l = "Posting fee lost (auction ran out)", r = RED .. "- " .. short(t.feeLost) .. "|r" }
-    end
-    local made = J.realized(t)
-    if made then
-        out[#out + 1] = { l = left > 0 and "Profit made so far" or "Profit made", r = (made >= 0 and GREEN or RED) .. signed(made, short) .. "|r" }
-    end
-    if left > 0 then
-        local listed = math.min(t.listed or 0, left)
-        local expect, known = 0, t.cost ~= nil
-        if listed > 0 then
-            local net = floor((t.price or 0) * (1 - ns.Deals.cfg.cut)) * listed
-            expect = expect + net
-            out[#out + 1] = { l = ("On the auction house: %d at %s each"):format(listed, short(t.price or 0)), r = ORANGE .. "+ " .. short(net) .. "|r" }
-        end
-        local rest = left - listed
-        local held
-        for _, e in ipairs(byKey[t.key] or {}) do if e.action ~= "LISTED" then held = held or e end end
-        if rest > 0 then
-            if held then
-                local _, _, net = Se:Numbers(held)
-                expect = expect + (net or 0) * rest
-                local where = held.action == "MAIL" and "In the mailbox" or held.action == "HOLD" and "Held in your bags" or "In your bags"
-                out[#out + 1] = { l = ("%s: %d, at the live price"):format(where, rest), r = ORANGE .. "+ " .. short((net or 0) * rest) .. "|r" }
-            else
-                known = false
-                out[#out + 1] = { l = GREY .. ("%d not found in bags or mailbox yet|r"):format(rest) }
-            end
-        end
-        if known then
-            local p = expect - t.cost * left
-            out[#out + 1] = { l = "Profit if this sells", r = (p >= 0 and ORANGE or RED) .. signed(p, short) .. "|r" }
-        end
-        -- what to do: one recommendation per state this trade is in
-        for _, e in ipairs(byKey[t.key] or {}) do
-            if (e.action == "LISTED" and listed > 0) or (e.action ~= "LISTED" and rest > 0) then adviceLines(out, e) end
-        end
-    end
-    out[#out + 1] = { rule = true }
-end
-
--- DETAILS: WHAT TO FOCUS ON. Two lists and nothing else.
---
---   YOUR BIGGEST PURCHASES   the purchases that made (or stand to make) the
---                            most, from the record of what you bought. Green
---                            is profit that is in; orange is what it makes
---                            if it sells at its listed (or planned) price.
---   BIGGEST SPREADS          the items whose deals offered the most, from the
---                            record of deals seen (the last 400). For each:
---                            the profit offered in all, what you got of it,
---                            and its best single deal, bought at -> sells at.
---
--- Both are plain sums over records already in memory: no request is sent, and
--- they are worked out at most every 10 seconds and never on the fast path of
--- a deal appearing.
-UI.FOCUS = { purchases = 8, spreads = 10, every = 10 }
-function UI:FocusData()
-    local c = self.focusCache
-    if c and GetTime() - c.at < UI.FOCUS.every then return c end
-    local J, Sc = ns.Journal, ns.Scout
-    local now = GetServerTime()
-    local cut = ns.Deals.cfg.cut
-    c = { at = GetTime(), buys = {}, items = {}, deals = 0, trades = 0 }
-    -- purchases: profit made, or expected at the listed / planned price
-    for _, t in ipairs(J.list or {}) do
-        local counted = t.qty - (t.lost or 0)
-        if t.cost and counted > 0 and t.kind ~= "FARM" then -- (what you farmed is not a purchase)
-            local left = J.left(t)
-            local p, open = J.realized(t) or 0, left > 0
-            if open then
-                local listed = math.min(t.listed or 0, left)
-                local function net(unit) return (t.kind == "VENDOR") and unit or floor(unit * (1 - cut)) end
-                p = p + net(t.price or t.plan or 0) * listed + net(t.plan or t.price or 0) * (left - listed) - t.cost * left
-            end
-            c.trades = c.trades + 1
-            c.buys[#c.buys + 1] = { key = t.key, name = t.name, qty = counted, cost = t.cost, profit = p, open = open, at = t.at }
-        end
-    end
-    table.sort(c.buys, function(a, b)
-        if a.profit ~= b.profit then return a.profit > b.profit end
-        return (a.at or 0) > (b.at or 0)
-    end)
-    while #c.buys > UI.FOCUS.purchases do c.buys[#c.buys] = nil end
-    -- spreads: every deal on record, by item
-    local by = {}
-    local log = (Sc.d and Sc.d.deals) or {}
-    for i = 1, #log do
-        local e = log[i]
-        local p = e.p or 0
-        if e.k and p > 0 and (e.u or 0) > 0 then
-            local it = by[e.k]
-            if not it then
-                it = { key = e.k, n = 0, offered = 0, got = 0, gotN = 0 }
-                by[e.k] = it
-                c.items[#c.items + 1] = it
-            end
-            it.n, it.offered = it.n + 1, it.offered + p
-            if e.o == "bought" then
-                local share = (e.bu and e.u > 0) and math.min(1, e.bu / e.u) or 1
-                it.got, it.gotN = it.got + floor(p * share + 0.5), it.gotN + 1
-            end
-            if not it.best or p > (it.best.p or 0) then it.best = e end
-            c.deals = c.deals + 1
-            if not c.oldest or (e.t or now) < c.oldest then c.oldest = e.t end
-        end
-    end
-    table.sort(c.items, function(a, b)
-        if a.offered ~= b.offered then return a.offered > b.offered end
-        return a.key < b.key
-    end)
-    while #c.items > UI.FOCUS.spreads do c.items[#c.items] = nil end
-    c.hours = c.oldest and math.max(1, math.ceil((now - c.oldest) / 3600)) or 0
-    self.focusCache = c
-    return c
-end
-
-function UI:FocusLines(short)
-    local S = ns.Sniper
-    local c = self:FocusData()
-    local out = {}
-    out[#out + 1] = { head = "YOUR BIGGEST PURCHASES" }
-    if #c.buys == 0 then out[#out + 1] = { l = GREY .. "Nothing bought yet.|r" } end
-    for _, b in ipairs(c.buys) do
-        out[#out + 1] = {
-            l = ("%s x%d"):format(tostring(b.name or S.nameOf(b.key)), b.qty) .. GREY .. "  at " .. short(b.cost) .. "|r",
-            r = ((b.profit < 0 and RED) or (b.open and ORANGE) or GREEN) .. signed(b.profit, short) .. "|r" .. GREY .. (b.open and "  if sold" or "  made") .. "|r",
-            rw = 150,
-        }
-    end
-    out[#out + 1] = { rule = true }
-    out[#out + 1] = { head = "BIGGEST SPREADS" }
-    if #c.items == 0 then
-        out[#out + 1] = { l = GREY .. "No deal seen yet. They are recorded as the radar finds them.|r" }
-    else
-        out[#out + 1] = { l = GREY .. ("From the last %d deals seen, %d hour%s.|r"):format(c.deals, c.hours, c.hours == 1 and "" or "s") }
-        out[#out + 1] = { l = GREY .. "Focus  Ignore|r" }
-    end
-    for _, it in ipairs(c.items) do
-        out[#out + 1] = { item = it.key, l = WHITE .. S.nameOf(it.key) .. "|r", rw = 120, r = GREY .. "offered|r " .. short(it.offered) }
-        local e = it.best
-        local each = floor((e.c or 0) / e.u + 0.5)
-        local pct = (each > 0 and e.s) and floor((e.s - each) / each * 100 + 0.5) or nil
-        out[#out + 1] = {
-            l = GREY .. ("best: %d at %s, sells %s%s|r"):format(e.u, short(each), short(e.s or 0), pct and (" (+%d%%)"):format(pct) or ""),
-            r = (it.got > 0 and (GREEN .. "got " .. short(it.got) .. "|r") or (GREY .. "got nothing|r")) .. GREY .. (", %d of %d|r"):format(it.gotN, it.n),
-            rw = 130,
-        }
-    end
-    -- what you ignore is never offered, so it would never show above: it is
-    -- listed here, so that a tick can bring it back
-    local ig = {}
-    for k in pairs(AuctionMeshDB.cfg.ignore or {}) do ig[#ig + 1] = k end
-    if #ig > 0 then
-        table.sort(ig, function(a, b) return S.nameOf(a) < S.nameOf(b) end)
-        out[#out + 1] = { rule = true }
-        out[#out + 1] = { head = ("IGNORED, NEVER OFFERED (%d)"):format(#ig) }
-        for _, k in ipairs(ig) do out[#out + 1] = { item = k, l = S.nameOf(k) } end
-    end
-    return out
-end
-
--- A tick box next to an item was clicked.
-function UI:ItemTick(key, which)
-    local S, Sc = ns.Sniper, ns.Scout
-    local cfg = AuctionMeshDB.cfg
-    cfg.ignore = cfg.ignore or {}
-    if which == "ignore" then
-        if cfg.ignore[key] then
-            cfg.ignore[key] = nil
-        else
-            cfg.ignore[key] = true
-            if Sc:InList(key) then Sc:Toggle(key) end
-            -- a deal on screen for it goes, without counting as a miss
-            S.verified[key] = nil
-            if S.dealSeen then S.dealSeen[key] = nil end
-        end
-    else
-        if Sc:Toggle(key) then cfg.ignore[key] = nil end
-    end
-    if S.judged then S.judged[key] = nil end -- its next listing is looked at afresh
-    Sc:Changed()
-    self:Render()
-end
-
--- everything the drawer shows, as a flat list of lines
-function UI:DrawerLines(entries)
-    local J, Se, S, St = ns.Journal, ns.Seller, ns.Sniper, ns.Store
-    local short = Se.short
-    local out, byKey = {}, {}
-    for _, e in ipairs(entries) do
-        byKey[e.key] = byKey[e.key] or {}
-        table.insert(byKey[e.key], e)
-    end
-    local key = self.sel
-    if not key then return self:FocusLines(short) end
-    do
-        -- ONE ITEM: the market as last read, then your trades in it
-        local now = GetServerTime()
-        out[#out + 1] = { l = WHITE .. S.nameOf(key) .. "|r", big = true }
-        do  -- is it prime, and why or why not
-            local f = ns.Scout:Facts(key, now)
-            local score, why = ns.Scout:Score(f, S:Budget(), S.VENDOR_SOLD[key])
-            for _, l in ipairs(wrap(score and ("Prime item: " .. ns.Scout:Why(f, short) .. ".") or ("Not a prime item: " .. why .. "."), 62)) do
-                out[#out + 1] = { l = (score and TEAL or GREY) .. l .. "|r" }
-            end
-        end
-        out[#out + 1] = { head = "MARKET" }
-        local function fact(l, v) out[#out + 1] = { l = l, r = v or (GREY .. "not known yet|r") } end
-        fact("Cheapest listing", St.p[key] and (short(St.p[key]) .. GREY .. "  " .. ago(St.t[key]) .. "|r"))
-        local ft = St.ft[key]
-        fact("Market price, from the full listing", (ft and St.fp[key]) and (short(St.fp[key]) .. GREY .. "  " .. ago(ft) .. "|r"))
-        local tr = St:Trend(key, now, 24)
-        fact("Change in 24 hours", tr and ((tr >= 0 and GREEN or RED) .. ("%+d%%|r"):format(floor(tr * 100 + 0.5))))
-        local rate = St:Rate(key, 100)
-        fact("Sold per hour, measured", rate and tostring(floor(rate + 0.5)))
-        local paid = St:Sold(key, now, 48 * 3600)
-        fact("Buyers really paid, last 48h", paid and short(paid))
-        local v = S.vendorOf(key)
-        fact("A vendor pays", v and v > 0 and short(v) or (GREY .. "nothing|r"))
-        local why = S.reasons and S.reasons[key]
-        if why then
-            why = tostring(why):gsub("%$(%d+)", function(c) return short(tonumber(c)) end)
-            for i, l in ipairs(wrap("Last check: " .. why, 60)) do out[#out + 1] = { l = GREY .. l .. "|r" } end
-        end
-        local trades = J:Trades(key)
-        out[#out + 1] = { head = ("YOUR TRADES IN THIS ITEM (%d)"):format(#trades) }
-        if #trades == 0 then out[#out + 1] = { l = GREY .. "You have not bought this item with the addon.|r" } end
-        for _, t in ipairs(trades) do tradeLines(out, t, byKey, short) end
-        return out
-    end
-end
-
-function UI:CreateDrawer()
-    local d = CreateFrame("Frame", "AuctionMeshDrawer", frame)
-    d:SetWidth(DRAWER_W)
-    d:SetPoint("TOPLEFT", frame, "TOPRIGHT", 1, 0)
-    d:SetPoint("BOTTOMLEFT", frame, "BOTTOMRIGHT", 1, 0)
-    UI.Draggable(d)
-    d.art = d:CreateTexture(nil, "BACKGROUND", nil, -8)
-    d.art:SetAllPoints()
-    d.art:SetColorTexture(0.045, 0.05, 0.06, 0.97)
-    outline(d, LINE)
-    -- one view (what to focus on); with an item picked on the left, that item,
-    -- and a button back
-    d.title = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    d.title:SetPoint("TOPLEFT", 12, -12)
-    d.title:SetText("WHAT TO FOCUS ON")
-    d.back = button(d, 126, "< What to focus on", function() UI.sel, UI.dscroll = nil, 0; UI:Render() end)
-    d.back:SetPoint("TOPLEFT", 12, -8)
-    d.back:Hide()
-    d.hint = d:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    d.hint:SetPoint("BOTTOMLEFT", 12, 10)
-    d.hint:SetPoint("BOTTOMRIGHT", -12, 10)
-    d.hint:SetJustifyH("LEFT"); d.hint:SetWordWrap(false)
-    d.lines = {}
-    for i = 1, DLINES do
-        local y = -38 - (i - 1) * DLINE_H
-        local l = d:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        l:SetPoint("TOPLEFT", 12, y)
-        l:SetJustifyH("LEFT"); l:SetWordWrap(false)
-        local v = d:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        v:SetPoint("TOPRIGHT", -12, y)
-        v:SetJustifyH("RIGHT"); v:SetWordWrap(false)
-        local rule = d:CreateTexture(nil, "ARTWORK")
-        rule:SetPoint("TOPLEFT", 12, y - 7); rule:SetPoint("TOPRIGHT", -12, y - 7); rule:SetHeight(1)
-        rule:SetColorTexture(LINE[1], LINE[2], LINE[3], 0.6)
-        -- two tick boxes, shown on an item's line: focus on it, or ignore it
-        local function box(x, which)
-            local b = CreateFrame("Button", nil, d)
-            b:SetSize(12, 12); b:SetPoint("TOPLEFT", x, y - 1)
-            local bg = b:CreateTexture(nil, "BACKGROUND")
-            bg:SetAllPoints(); bg:SetColorTexture(1, 1, 1, 0.06)
-            b.tick = b:CreateTexture(nil, "ARTWORK")
-            b.tick:SetPoint("TOPLEFT", 3, -3); b.tick:SetPoint("BOTTOMRIGHT", -3, 3)
-            if which == "ignore" then b.tick:SetColorTexture(0.9, 0.25, 0.25, 1) else b.tick:SetColorTexture(0.30, 0.86, 0.76, 1) end
-            b.tick:Hide()
-            outline(b, LINE)
-            b:SetScript("OnClick", function(self) if self.key then UI:ItemTick(self.key, which) end end)
-            b:Hide()
-            return b
-        end
-        d.lines[i] = { label = l, value = v, rule = rule, y = y, always = box(23, "always"), ignore = box(62, "ignore") }
-    end
-    -- shown for one item: put it on, or take it off, your own focus list
-    d.focus = button(d, 126, "", function()
-        if not UI.sel then return end
-        local on = ns.Scout:Toggle(UI.sel)
-        UI:Notice(on and "Added to your focus list. Laser focus uses it when set to 'My own list' (Setup tab)."
-            or "Removed from your focus list.", true)
-        UI:Render()
-    end)
-    d.focus:SetPoint("TOPRIGHT", -12, -8)
-    d.focus:Hide()
-    -- stop tracking an item (it used to be a right-click on the row, which was too easy to do by accident)
-    d.remove = button(d, 150, "", function()
-        if not UI.sel then return end
-        if UI.removeUntil and GetTime() < UI.removeUntil then
-            UI.removeUntil = nil
-            ns.Seller:Untrack(UI.sel)
-            UI.sel = nil
-        else
-            UI.removeUntil = GetTime() + 5
-        end
-        UI:Render()
-    end)
-    d.remove:SetPoint("BOTTOMRIGHT", -12, 26)
-    d.remove:Hide()
-    -- STAKE-OUT: watch this one item by asking its price on every wheel notch
-    d.stake = button(d, 170, "", function()
-        if not UI.sel then return end
-        local S = ns.Sniper
-        if S:StakeKey() == UI.sel then
-            S:SetStake(nil)
-            UI:Notice("Stake-out ended. The radar is back to reading everything.", true)
-        else
-            S:SetStake(UI.sel)
-            UI:Notice("Stake-out set on " .. S.nameOf(UI.sel) .. ". Roll the wheel in the snipe box: every notch asks its price and buys if it is low. The radar is off while you roll.", true)
-        end
-        UI:Render()
-    end)
-    d.stake:SetPoint("BOTTOMLEFT", 12, 26)
-    d.stake:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
-        GameTooltip:AddLine("Stake-out", 1, 1, 1)
-        GameTooltip:AddLine("For one item that keeps being listed cheap. While you roll the wheel in the snipe box, every notch asks the server what one unit costs and buys it the moment that is a deal by your normal rules. This is about a second faster than the radar. Nothing else is watched while you roll.", 0.8, 0.8, 0.8, true)
-        GameTooltip:Show()
-    end)
-    d.stake:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    d.stake:Hide()
-    d:EnableMouseWheel(true)
-    d:SetScript("OnMouseWheel", function(_, delta)
-        UI.dscroll = math.max(0, (UI.dscroll or 0) - (delta or 0) * 4)
-        UI:Render()
-    end)
-    d:Hide()
-    frame.drawer = d
-
-    -- the handle on the panel's right edge: opens and closes the drawer
-    local h = button(frame, 18, "", function() UI:ToggleDrawer() end)
-    h:SetHeight(112)
-    h:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("Details")
-        GameTooltip:AddLine("What to focus on: your biggest purchases\nand the items with the biggest spreads.", 0.8, 0.8, 0.8)
-        GameTooltip:Show()
-    end)
-    h:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    frame.handle = h
-    self:PlaceDrawer()
-end
-
-function UI:PlaceDrawer()
-    local d, h = frame.drawer, frame.handle
-    local open = AuctionMeshDB.cfg.drawer == true
-    d:SetShown(open)
-    -- On a screen with no room to the right of the panel the drawer opens on
-    -- the left instead of running off the edge.
-    local left = false
-    do
-        local r, sw = frame.GetRight and frame:GetRight(), UIParent and UIParent.GetWidth and UIParent:GetWidth()
-        local fs, us = frame.GetEffectiveScale and frame:GetEffectiveScale(), UIParent and UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()
-        if type(r) == "number" and type(sw) == "number" and type(fs) == "number" and type(us) == "number" and us > 0 then
-            left = (r + DRAWER_W + 24) * fs > sw * us
-        end
-    end
-    d:ClearAllPoints()
-    if left then
-        d:SetPoint("TOPRIGHT", frame, "TOPLEFT", -1, 0); d:SetPoint("BOTTOMRIGHT", frame, "BOTTOMLEFT", -1, 0)
-    else
-        d:SetPoint("TOPLEFT", frame, "TOPRIGHT", 1, 0); d:SetPoint("BOTTOMLEFT", frame, "BOTTOMRIGHT", 1, 0)
-    end
-    self.drawerLeft = left
-    h:ClearAllPoints()
-    h:SetPoint("TOPLEFT", (open and not left) and d or frame, "TOPRIGHT", 0, -40)
-    h:SetText(open and "<\n\nH\nI\nD\nE" or ">\n\nD\nE\nT\nA\nI\nL\nS")
-end
-
-function UI:ToggleDrawer(on)
-    self:Create()
-    if on == nil then on = not (AuctionMeshDB.cfg.drawer == true) end
-    AuctionMeshDB.cfg.drawer = on and true or false
-    self:PlaceDrawer()
-    self:Render()
-end
-
-function UI:RenderDrawer(entries)
-    local d = frame.drawer
-    if not d or not d:IsShown() then return end
-    -- A deal has just appeared (UI:Now): nothing in here is needed to buy it.
-    -- What is on the drawer stays, and it is brought up to date by the next
-    -- ordinary redraw.
-    local sig = tostring(self.sel)
-    if self.fast and self.drawerLines and self.drawerSig == sig then self.drawerStale = true; return end
-    self.drawerStale, self.drawerSig = nil, sig
-    local lines = self:DrawerLines(entries)
-    self.drawerLines = lines
-    local h = frame:GetHeight()
-    local vis = type(h) == "number" and h > 0 and math.max(6, math.min(DLINES, floor((h - 38 - 28) / DLINE_H))) or 28
-    local off = math.max(0, math.min(self.dscroll or 0, #lines - vis))
-    self.dscroll = off
-    d.title:SetShown(self.sel == nil)
-    d.back:SetShown(self.sel ~= nil)
-    do
-        local tracked = false
-        if self.sel then for _, e in ipairs(entries) do if e.key == self.sel then tracked = true end end end
-        d.remove:SetShown(tracked)
-        d.remove:SetText((self.removeUntil and GetTime() < self.removeUntil) and "Click again to remove" or "Stop tracking this item")
-    end
-    d.focus:SetShown(self.sel ~= nil)
-    d.stake:SetShown(self.sel ~= nil)
-    if self.sel then
-        local on = ns.Sniper:StakeKey() == self.sel
-        d.stake:SetText(on and "Stop the stake-out" or "Stake out this item")
-        outline(d.stake, on and ACCENT or LINE)
-    end
-    if self.sel then d.focus:SetText(ns.Scout:InList(self.sel) and "Remove from my focus" or "Add to my focus list") end
-    local cfg = AuctionMeshDB.cfg
-    for i = 1, DLINES do
-        local w, ln = d.lines[i], i <= vis and lines[i + off] or nil
-        local item = ln and ln.item
-        if (w.indent or false) ~= (item ~= nil) then
-            -- an item's line starts to the right of its two tick boxes
-            w.indent = item ~= nil
-            w.label:ClearAllPoints(); w.label:SetPoint("TOPLEFT", item and 92 or 12, w.y)
-        end
-        w.always:SetShown(item ~= nil); w.ignore:SetShown(item ~= nil)
-        if item then
-            w.always.key, w.ignore.key = item, item
-            w.always.tick:SetShown(ns.Scout:InList(item))
-            w.ignore.tick:SetShown(cfg.ignore ~= nil and cfg.ignore[item] == true)
-        end
-        if not ln then
-            w.label:SetText(""); w.value:SetText(""); w.rule:Hide()
-        else
-            w.rule:SetShown(ln.rule == true)
-            local rw = ln.rw or 130
-            w.label:SetWidth((ln.r and (DRAWER_W - 24 - rw) or (DRAWER_W - 24)) - (item and 80 or 0))
-            w.label:SetText(ln.head and (GREY .. ln.head .. "|r") or ln.l or "")
-            w.value:SetText(ln.r or "")
-        end
-    end
-    local more = #lines > vis and ("lines %d-%d of %d (mouse wheel). "):format(off + 1, math.min(#lines, off + vis), #lines) or ""
-    d.hint:SetText(more .. (self.sel and "" or "Click an item on the left for its details."))
 end
 
 function UI:Open(tab)

@@ -58,13 +58,13 @@ local function bump(list, id, prev, g, keep, t)
     local b = list[#list]
     if not b or b.id ~= id then
         -- a new hour (or day) opens at what the gold was before this change
-        b = { id = id, t = t, o = prev, h = max(prev, g), l = min(prev, g), c = g }
+        b = { id = id, t = t, tc = t, o = prev, h = max(prev, g), l = min(prev, g), c = g }
         list[#list + 1] = b
         while #list > keep do table.remove(list, 1) end
     else
         if g > b.h then b.h = g end
         if g < b.l then b.l = g end
-        b.c = g
+        b.c, b.tc = g, t
     end
 end
 
@@ -130,62 +130,77 @@ function Gold:Cause(text, sign)
     if e and t - e.t2 <= self.cfg.causeFor and (e.d > 0) == ((sign or 1) > 0) then addWhy(e, text, self.cfg.whys) end
 end
 
--- THE CHART'S DATA. view = "hours" (the last 24 hours, one candle an hour) or
--- "days" (the last 30 days, one candle a day). Returns
---   { slots = { { id, t, label, o, h, l, c, flat (no change in it), none (before any record) } ... },
---     lo, hi (the range drawn), first, last (gold at the two ends), from, to (times) }
-Gold.VIEWS = { hours = { n = 24, step = 3600 }, days = { n = 30, step = 86400 } }
-function Gold:Series(view)
-    local v = self.VIEWS[view] or self.VIEWS.days
+-- THE CHART'S DATA: your gold as a line over the last 2, 7 or 30 days.
+--
+-- Gold only changes at moments, and stays where it is in between. What is on
+-- record gives a list of "at this time it was this much": the amount before
+-- and after each swing, and the open and close of every hour and day. The
+-- line is that list, read at `cols` evenly spaced times.
+--
+-- Returns { cols = { { t, v, lo, hi } or { t, none = true } ... }, lo, hi,
+--           first, last (the amounts at the two ends), from, to, span,
+--           days = { { col, t } ... } (where each day begins) }
+Gold.LINES = { d2 = { span = 2 * 86400, name = "2 days" }, d7 = { span = 7 * 86400, name = "7 days" }, d30 = { span = 30 * 86400, name = "30 days" } }
+function Gold:Line(view, cols)
+    local v = self.LINES[view] or self.LINES.d2
     local d = self.d or { h = {}, d = {}, ev = {} }
-    local list = (view == "hours") and d.h or d.d
     local now = self.now()
-    local by = {}
-    for _, b in ipairs(list) do by[b.id] = b end
-    local function idOf(t) if view == "hours" then return floor(t / 3600) end return self.dayId(t) end
-    local res = { slots = {}, view = view, from = now - (v.n - 1) * v.step, to = now }
-    -- what the gold was before the first slot: the close of the last record before it
-    local carry
-    local firstId = idOf(res.from)
-    for _, b in ipairs(list) do if b.id < firstId then carry = b.c end end
-    for i = 1, v.n do
-        local t = now - (v.n - i) * v.step
-        local id = idOf(t)
-        local b = by[id]
-        local s = { id = id, t = t }
-        if b then
-            s.o, s.h, s.l, s.c = b.o, b.h, b.l, b.c
-            carry = b.c
-        elseif carry then
-            s.o, s.h, s.l, s.c, s.flat = carry, carry, carry, carry, true
+    local from = now - v.span
+    local pts, n = {}, 0
+    local function add(t, g) n = n + 1; pts[n] = { t, g, n } end
+    for _, b in ipairs(d.d) do add((b.t or 0) - 1, b.o); add(b.tc or b.t or 0, b.c) end
+    for _, b in ipairs(d.h) do add((b.t or 0) - 1, b.o); add(b.tc or b.t or 0, b.c) end
+    for _, e in ipairs(d.ev) do add(e.t - 1, e.g - e.d); add(e.t2 or e.t, e.g) end
+    add(now, self.money())
+    table.sort(pts, function(a, b)
+        if a[1] ~= b[1] then return a[1] < b[1] end
+        return a[3] < b[3]
+    end)
+    local res = { cols = {}, view = view, from = from, to = now, span = v.span, days = {} }
+    local at, cur = 1, nil
+    while pts[at] and pts[at][1] <= from do cur = pts[at][2]; at = at + 1 end -- what it was when the range begins
+    -- the amount the range began with: what it was at its start, or the first amount on record after it
+    res.first = cur or (pts[at] and pts[at][2]) or nil
+    local lastDay
+    for i = 1, cols do
+        local t = from + v.span * i / cols
+        local lo, hi = cur, cur
+        while pts[at] and pts[at][1] <= t do
+            cur = pts[at][2]
+            lo = lo and min(lo, cur) or cur
+            hi = hi and max(hi, cur) or cur
+            at = at + 1
+        end
+        local day = self.dayId(t)
+        if day ~= lastDay then
+            if lastDay then res.days[#res.days + 1] = { col = i, t = t } end
+            lastDay = day
+        end
+        if cur then
+            res.cols[i] = { t = t, v = cur, lo = lo, hi = hi }
+            res.lo = res.lo and min(res.lo, lo) or lo
+            res.hi = res.hi and max(res.hi, hi) or hi
+            res.last = cur
         else
-            s.none = true
+            res.cols[i] = { t = t, none = true }
         end
-        if not s.none then
-            res.lo = res.lo and min(res.lo, s.l) or s.l
-            res.hi = res.hi and max(res.hi, s.h) or s.h
-            res.first = res.first or s.o
-            res.last = s.c
-        end
-        res.slots[i] = s
     end
     return res
 end
 
--- The biggest swings between two times, largest first, at most n. Each is
--- { t, d, g, why = { ... }, more, n } with slot = the index of its candle.
-function Gold:Swings(view, n)
-    local v = self.VIEWS[view] or self.VIEWS.days
+-- The biggest swings in the same range, largest first, at most n. Each is
+-- { t, d, g, why, more, n } with col = the column of the line it sits on.
+function Gold:Swings(view, n, cols)
+    local v = self.LINES[view] or self.LINES.d2
     local d = self.d or { ev = {} }
     local now = self.now()
-    local from = now - (v.n - 1) * v.step
-    local function idOf(t) if view == "hours" then return floor(t / 3600) end return self.dayId(t) end
-    local slotOf = {}
-    for i = 1, v.n do slotOf[idOf(now - (v.n - i) * v.step)] = i end
+    local from = now - v.span
     local out = {}
     for _, e in ipairs(d.ev) do
-        local slot = slotOf[idOf(e.t)]
-        if slot and e.t >= from - v.step then out[#out + 1] = { t = e.t, d = e.d, g = e.g, why = e.why, more = e.more, n = e.n, slot = slot } end
+        if e.t > from and e.t <= now then
+            local col = max(1, min(cols or 1, math.ceil(((e.t2 or e.t) - from) / v.span * (cols or 1))))
+            out[#out + 1] = { t = e.t, d = e.d, g = e.g, why = e.why, more = e.more, n = e.n, col = col }
+        end
     end
     table.sort(out, function(a, b)
         if abs(a.d) ~= abs(b.d) then return abs(a.d) > abs(b.d) end
@@ -193,6 +208,18 @@ function Gold:Swings(view, n)
     end)
     while #out > (n or 6) do out[#out] = nil end
     return out
+end
+
+-- Round steps for the value axis: 1, 2 or 5 times a power of ten (in copper),
+-- so that about `want` lines fit between lo and hi.
+function Gold.AxisStep(lo, hi, want)
+    local raw = max(1, (hi - lo) / max(1, want or 4))
+    local p = 1
+    while p * 10 <= raw do p = p * 10 end
+    for _, m in ipairs({ 1, 2, 5, 10 }) do
+        if p * m >= raw then return p * m end
+    end
+    return p * 10
 end
 
 -- What a swing was, in words.

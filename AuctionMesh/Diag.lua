@@ -686,7 +686,7 @@ function Diag:ShowText(titleText, text, isLog)
         clr:SetScript("OnClick", function() Diag:Clear(); edit:SetText(Diag:Text()) end)
         win.clr = clr
         -- the log from before the last reload or login is one click away, here
-        -- (it used to be a button of its own on the Setup tab)
+        -- (it used to be a button of its own on the More tab)
         local prev = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
         prev:SetSize(150, 22); prev:SetPoint("LEFT", clr, "RIGHT", 8, 0)
         prev:SetScript("OnClick", function() Diag:Show(not Diag.showingPrev) end)

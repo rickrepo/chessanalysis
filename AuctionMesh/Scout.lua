@@ -329,7 +329,7 @@ function Scout:Focus(budget, vendorSold, classOf)
             end
         end
         if #list == 0 then
-            set, text = nil, "Your focus list is empty: click an item, then 'Add to my focus list' in the drawer, or paste a focus code on the Setup tab."
+            set, text = nil, "Your focus list is empty: paste a focus code from Claude on the More tab (Advanced)."
         else
             text = ("Focused on your list: %d item%s."):format(#list, #list == 1 and "" or "s")
         end
@@ -597,7 +597,7 @@ function Scout:Snapshot(o)
         add("auto-adjust (", cfg.tune ~= false and "on" or "off", "): ", #lines == 0 and "no changes yet" or "last changes, newest first")
         for _, l in ipairs(lines) do add("  ", date("%H:%M", l.t), " ", l.m) end
     end
-    if o.code then add("settings code (Claude sends back a changed one; paste it into the box on the Setup tab): ", o.code) end
+    if o.code then add("settings code (Claude sends back a changed one; paste it into the box on the More tab): ", o.code) end
 
     -- SNIPING
     add("")

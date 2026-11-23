@@ -66,18 +66,20 @@ local function mailOpen() return MailFrame and MailFrame:IsShown() end
 ---------------------------------------------------------------- bags
 
 local bagCount = {} -- key -> total in bags (rebuilt on BAG_UPDATE_DELAYED)
+local bagQuality = {} -- key -> the item's quality (2 = uncommon, 3 = rare, 4 = epic), as the bag says
 
 function Seller:ScanBags()
-    local counts = {}
+    local counts, quality = {}, {}
     for bag = 0, LAST_BAG do
         for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             if info and info.itemID and not info.isBound then
                 counts[info.itemID] = (counts[info.itemID] or 0) + (info.stackCount or 1)
+                if type(info.quality) == "number" then quality[info.itemID] = info.quality end
             end
         end
     end
-    bagCount = counts
+    bagCount, bagQuality = counts, quality
 end
 
 function Seller.FindInBags(key)
@@ -174,7 +176,9 @@ function Seller:Entries()
                 local v = Seller.VendorOf(key, f)
                 if v > (f.cost or 0) and not farm then vendorAlt = v end
             end
-            out[#out + 1] = { key = key, action = action, count = inBags, f = f, vendorAlt = vendorAlt, farm = farm or nil }
+            -- farmed, and there is no price to go by (nobody lists it): it stays in its section and says so
+            local noPrice = (farm and p and p.hold and now - p.at < HOLD_TTL) and p.hold or nil
+            out[#out + 1] = { key = key, action = action, count = inBags, f = f, vendorAlt = vendorAlt, farm = farm or nil, noPrice = noPrice }
         end
         if inMail > 0 then
             local seen = self.mailCount and (self.mailCount[key] or 0) >= inMail
@@ -211,7 +215,7 @@ end
 function Seller:PriceProgress(entries)
     local ready, total = 0, 0
     for _, e in ipairs(entries or self:Entries()) do
-        if e.action == "AH" then
+        if e.action == "AH" and not e.noPrice then -- (an item with no price to go by is not waited for)
             total = total + 1
             if self:PriceReady(e.key) then ready = ready + 1 end
         end
@@ -1087,7 +1091,12 @@ function Seller:OnResults(key, rows, commodity)
         -- yours to post, and it sat there.) With no price from the rule above
         -- it goes just under the cheapest listing; a vendor paying more is
         -- said on its row, and the choice is yours.
-        if not price then
+        if not priced[1] and (f.sell or 0) <= 0 then
+            -- NOBODY ELSE LISTS IT and no price is on record: there is nothing
+            -- to go by, and no price is made up. (The rule above would have
+            -- said "no competition" and posted at the lowest price there is.)
+            price, why = nil, "nobody else lists this item now: there is no price to go by. Post it from the game's own Sell screen at a price you choose."
+        elseif not price then
             local low = priced[1] and priced[1].price
             price = low and max(Deals.cfg.step or 1, Deals.round(low - Deals.cfg.undercut, Deals.cfg)) or nil
             if price then why = "undercut" end
@@ -1480,15 +1489,22 @@ end
 -- whatever an alt mailed you: it cost nothing, so all of what it sells for
 -- (after the cut) is profit.
 --
---   Seller:Loose()   what is in your bags that the addon does not track and
---                    that the auction house has a price for (from the radar):
---                    the Bags tab lists these with an Add button each.
+--   Seller:Loose()   what is in your bags that the addon does not track: the
+--                    Bags tab lists these with an Add button each. SELLING
+--                    HAS NOTHING TO DO WITH WHAT THE RADAR IS SET TO BUY:
+--                    everything in your bags that is not bound to you is
+--                    offered, whatever kind of item it is (gear that binds
+--                    when equipped, recipes, materials, anything), except
+--                    grey vendor junk. Where the radar happens to have a
+--                    price it is shown; where it has none, the price is read
+--                    when you add the item. Uncommon or better first, then by
+--                    what it is worth.
 --   Seller:Farm(key) adds it, on your click: tracked at a cost of nothing,
 --                    priced like anything else you post (under the real
 --                    market, never for less than a vendor pays), and posted
 --                    by your click on Post, Post next, or the one key.
 -- Nothing is added by itself: what is in your bags is yours until you say so.
-Seller.LOOSE_MAX = 12
+Seller.LOOSE_MAX = 40 -- (the list scrolls)
 function Seller:Loose()
     local St = ns.Store
     local out = {}
@@ -1497,10 +1513,20 @@ function Seller:Loose()
         local f = flips()[key]
         local extra = n - (f and f.units or 0)
         local market = (St.fp and St.fp[key]) or (St.p and St.p[key])
-        if extra > 0 and market and market > 0 then out[#out + 1] = { key = key, loose = true, count = extra, market = market } end
+        if extra > 0 then
+            if market and market > 0 then
+                out[#out + 1] = { key = key, loose = true, count = extra, market = market }
+            elseif (bagQuality[key] or 1) >= 1 then
+                -- no price on record (the radar only reads what it is set to buy): its price is read on Add
+                out[#out + 1] = { key = key, loose = true, count = extra, unpriced = true, q = bagQuality[key] or 1 }
+            end
+        end
     end
     table.sort(out, function(a, b)
-        local va, vb = a.count * a.market, b.count * b.market
+        -- uncommon or better with no price on record first (the gear), then what has a price, by worth, then the rest
+        local function rank(x) return (x.unpriced and (x.q or 1) >= 2) and 1 or (not x.unpriced) and 2 or 3 end
+        if rank(a) ~= rank(b) then return rank(a) < rank(b) end
+        local va, vb = a.count * (a.market or 0), b.count * (b.market or 0)
         if va ~= vb then return va > vb end
         return a.key < b.key
     end)
@@ -1836,7 +1862,7 @@ function Seller:Init()
             Seller:CollectMail()
         elseif event == "AUCTION_HOUSE_SHOW" and ns.Dormant and ns.Dormant() then
             -- not the bank alt: nothing of the addon's happens at the auction house
-            ns.Log("SWITCHED OFF on this character: a bank alt is set and this is not it. No radar, no price checks, no posting (Setup tab, 'Bank alt', or the badge at the top left)")
+            ns.Log("SWITCHED OFF on this character: a bank alt is set and this is not it. No radar, no price checks, no posting (More tab, 'Bank alt', or the badge at the top left)")
         elseif event == "AUCTION_HOUSE_SHOW" then
             Seller:AtAuctionHouse()
         elseif event == "AUCTION_HOUSE_CLOSED" then

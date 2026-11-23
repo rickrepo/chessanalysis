@@ -6,6 +6,22 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.54.0 (2026-11-23)
+
+Streamlined: fewer places, no duplicates, and the front says plainly what is being sniped.
+
+- **The Trades tab's front is two lines and the game.**
+  - `SNIPING FOR  any deal that makes + 50c or more    vendor deals and flips`: the profit a deal must make to be offered, in plain words. The addon sets and adjusts that figure itself; there is nothing to enter or work out.
+  - Your money in ONE line: gold in hand, what is still to come, and the total once everything has sold. The six-line MONEY block is gone from the tab; the mouse on the line opens the breakdown.
+  - Then the snipe box, the deals and the score, with more room for deals.
+- **Four tabs: Trades, Bags, Gold, More.** More has three pages: **Settings** (how you buy, the panel, your bank alt, what to send to Claude), **Advanced** (the figures the addon works out by itself: smallest profit, flip margin %, the money limits, what the radar reads; change one only to overrule it) and **Stake-out picks** (it was a tab).
+- **Duplicates removed:** the Snapshot and Dock buttons in the header (both are on More, Settings), the engine bar at the top right (the Trades status line says what the radar does), and the "Show: vendor deals + flips" setting from the everyday page (the badge at the top left is that switch).
+- **The Details sidebar is gone**, with its handle. To stop tracking an item (it had the button for that): **Shift + right-click** its row on the Bags tab. A plain click does nothing.
+- **The Gold chart is redrawn as a market chart:** a line with the area under it filled; the amount now in large figures with the change and its percentage (green up, red down); the amounts down the left at round figures with a line across for each; a divider where each day begins with its date; times of day on the 2-day view; and the latest amount in a box on the end of the line. Three ranges: 2, 7 and 30 days. The biggest changes are still marked on the line (mouse over a mark for what it was) and listed under the chart, and the mouse anywhere on the chart gives the amount at that time.
+- **Selling has nothing to do with what the radar is set to buy.** The Bags tab's "in your bags" list used to offer only items the radar had a price for, which meant crafting materials: gear you farmed never showed. It now offers everything in your bags that is not bound to you (gear that binds when equipped, recipes, anything; grey vendor junk excepted), uncommon or better first. Where the radar has no price, the price is read when you press Add.
+- **No price is ever made up.** If nobody else lists an item and no price is on record, its row says `No price to go by` and it is not posted by the addon: post it from the game's own Sell screen at a price you choose.
+- Not confirmed in game: all of this is new layout and drawing that has only run in the offline tests.
+
 ## 3.53.0 (2026-11-23)
 
 - **Posting: you can see what is going on, and it is faster.** Posting needs a live price for each item, and each price is one request to the auction house. Until now only one request in four read a price while you were on the Bags tab, and nothing said so: a dozen items took about half a minute of what looked like a frozen panel.
