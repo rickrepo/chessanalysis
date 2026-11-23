@@ -3914,119 +3914,153 @@ do
     UI.tab = "BUY"; UI.scroll = {}; UI.notice = nil; UI:Render()
 end
 
-print("an undercut auction: relist, or hold?")
+print("an undercut auction: relist or hold, worked out")
 do
     local cfg = AuctionMeshDB.cfg
     local St = ns.Store
     local listedWas, ownWas, readWas, foldWas, rowsWas = AuctionMeshDB.listed, S.own, S.ownRead, cfg.fold, S.lastRows
-    local soldQtyWas, soldPayWas, feeBackWas = S.ownSoldQty, S.ownSoldPay, cfg.feeBack
-    local realRate = St.Rate
-    local rate = nil
+    local soldQtyWas, soldPayWas, feeBackWas, idsWas = S.ownSoldQty, S.ownSoldPay, cfg.feeBack, S.ownIds
+    local realRate, realTrend, realGoldRate = St.Rate, St.Trend, Se.GoldRate
+    local rate, trend, rho = nil, nil, 0
     St.Rate = function(_, key) if key == 9801 then return rate, 3600 end return realRate(St, key) end
+    St.Trend = function(_, key, ...) if key == 9801 then return trend end return realTrend(St, key, ...) end
+    Se.GoldRate = function() return rho, 9 end -- what free gold earns an hour, set by each case
     for s2 = 1, 16 do bags[s2] = nil end
     fire("BAG_UPDATE_DELAYED")
     AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
     ITEMS[9801] = { "Stuck Ore", 1 }
-    -- 30 of yours listed at 1s00c 2 hours ago (cost 40c each, fee 30c): someone lists cheaper
+    -- 30 of yours listed at 1s00c two hours ago (cost 40c each, fee 30c, 10 hours left): someone lists cheaper
     AuctionMeshDB.listed, S.own, S.ownSoldQty, S.ownSoldPay = {}, {}, {}, {}
     AuctionMeshDB.listed[9801] = { qty = 30, price = 100, cost = 40, at = GetServerTime() - 2 * 3600, fee = 30, plan = 100 }
     S.own[9801] = { [100] = 30 }
+    S.ownIds = { [9801] = { { id = 77, qty = 30, price = 100, ends = GetTime() + 36000 } } }
     S.ownRead = true
     cfg.feeBack = true
     St:Put(9801, 90, 500, GetServerTime())
     local e = { key = 9801, action = "LISTED", count = 30, live = 30, f = { kind = "FLIP", cost = 40, sell = 100 }, listed = AuctionMeshDB.listed[9801] }
+    local function reset() Se.ucCache, Se.ucSeen, Se.ucLogged, Se.wantRows = nil, nil, nil, nil end
     local function advice()
         Se.ucCache = nil
         local r = Se:Undercut(e)
-        r.why, r.text = strip(r.why), strip(r.text) -- (the amounts are coloured on screen)
-        return r
+        return r, strip(r.why), strip(r.text), strip(r.brief)
     end
+    local function listing(rows) S.lastRows[9801] = { rows = rows, at = GetTime() } end
+    local CHEAP = { { price = 90, qty = 20 }, { price = 95, qty = 40 }, { price = 110, qty = 200 } } -- 60 units under yours
     gold = 5000
-    -- its listing has not been read: it is asked for, and the row says so
+    reset()
+    -- its listing has not been read: it is asked for
     S.lastRows = {}
-    local a = advice()
-    check(a.rec == "read" and a.word == "READING" and Se.wantRows[9801] == true, "with no full listing on record the advice waits for one: READING, and the listing is asked for")
-    -- 1. no sale rate measured
-    S.lastRows[9801] = { rows = { { price = 90, qty = 20 }, { price = 95, qty = 40 }, { price = 110, qty = 200 } }, at = GetTime() }
-    rate = nil
+    local a, why, text, brief = advice()
+    check(a.rec == "read" and a.word == "READING" and Se.wantRows[9801] == true, "with no full listing on record it waits for one: READING, and the listing is asked for")
+    -- no sale rate: nothing to work it out from
+    listing(CHEAP); rate = nil; reset()
+    a, why, text, brief = advice()
+    check(a.rec == "hold" and a.ahead == 60 and a.low == 90 and a.mean == 106 and a.repost == 89 and brief == "sale rate not known yet: cannot be worked out",
+        "60 cheaper units ahead (others ask 1s06c on average) and no sale rate measured: HOLD, it cannot be worked out yet")
+
+    -- THE SUM. 120 sell an hour: the 60 ahead are gone in 30 minutes, then yours.
+    --   hold:   30 x (95c - 40c) = 16s50c                (it sells well inside the 10 hours)
+    --   relist: 30 x (84c - 40c) = 13s20c, less the 30c fee lost with the cancel = 12s90c
+    rate = 120; rho = 0; reset()
+    a, why, text, brief = advice()
+    print("     " .. text)
+    check(a.rec == "hold" and a.evHold == 1650 and a.evRelist == 1290 and brief == "holding is worth 3s60c more",
+        "120 sell an hour: holding is worth 16s50c, a relist 12s90c. HOLD, worth 3s60c more")
+    check(a.untilT and math.abs((a.untilT - GetTime()) - 1800) < 2, "and the hold counts down the 30 minutes until your first unit should sell")
+    check(text:find("Hold = + 16s50c (30 sell at 1s00c, your turn in 30 min: + 16s50c)", 1, true)
+        and text:find("Relist = + 12s90c (30 sell at 89c, first in line: + 13s20c; fees lost 30c)", 1, true)
+        and text:find("Your call: Cancel on this row relists it anyway.", 1, true),
+        "the sums are behind the mouse: what each choice brings, the fee a relist loses, and how to overrule it")
+
+    -- THE WAIT HAS A PRICE once it is known what your gold earns. 20 sell an hour: 3 hours to your turn.
+    --   no rate for your gold yet: hold 16s50c against 12s90c: HOLD
+    --   your gold earns 6% an hour: hold 16s50c - 6% x 28s50c x 3.75h = 10s09c; relist 12s90c - 6% x 25s20c x 0.75h = 11s77c: RELIST
+    rate = 20; rho = 0; reset()
+    a, why, text, brief = advice()
+    check(a.rec == "hold" and a.evHold == 1650 and a.evRelist == 1290, "20 sell an hour, and nothing known about what your gold earns: the wait is free, so HOLD (16s50c against 12s90c)")
+    rho = 0.06; reset()
+    a, why, text, brief = advice()
+    print("     " .. text)
+    check(a.rec == "relist" and math.abs(a.evHold - 1008.75) < 0.01 and math.abs(a.evRelist - 1176.6) < 0.01 and brief == "relist is worth 1s68c more",
+        "the same auction when your gold earns 6% an hour: three hours of waiting cost more than the lower price. RELIST, worth 1s68c more")
+    check(text:find("the wait of 4 hours costs 6s41c", 1, true) and text:find("your free gold earns 6.0% an hour", 1, true)
+        and text:find("^RELIST at 89c: a relist is worth %+ 11s77c, holding %+ 10s09c: 1s68c more%. Press Cancel on this row %(twice%)"),
+        "the advice says what the wait costs, and what to press")
+    rho = 0
+
+    -- IT RUNS OUT FIRST. 5 sell an hour: 12 hours to your turn, 10 left. Holding means posting it again once: one fee lost.
+    --   hold: 16s50c - 30c = 16s20c; relist: 12s90c. HOLD: the fee is cheaper than the price cut.
+    rate = 5; reset()
+    a, why, text, brief = advice()
+    print("     " .. text)
+    check(a.rec == "hold" and a.hold.expiries == 1 and a.evHold == 1620 and a.evRelist == 1290 and text:find("fees lost 30c (it runs out 1 time first)", 1, true),
+        "5 sell an hour: it runs out once before your turn. One fee lost (16s20c) still beats cutting the price (12s90c): HOLD")
+
+    -- A BIG PRICE CUT IS NEVER WORTH IT ON ITS OWN. Cheaper units at 60c: a relist would go to 59c.
+    --   hold: wait for the 60 to sell, then yours at 1s00c: 16s20c; relist at 59c: 30 x (56c - 40c) - 30c = 4s50c
+    listing({ { price = 60, qty = 60 }, { price = 110, qty = 200 } }); reset()
+    a, why, text, brief = advice()
+    check(a.rec == "hold" and a.repost == 59 and a.evRelist == 450 and a.evHold == 1620 and brief == "holding is worth 11s70c more",
+        "cheaper units at 60c: a relist at 59c is worth 4s50c, holding 16s20c. HOLD, by 11s70c")
+    -- a falling price takes value off the hold
+    trend = -0.8; reset() -- the item lost 80% in 24 hours
     a = advice()
-    print("     " .. a.text)
-    check(a.rec == "hold" and a.ahead == 60 and a.low == 90 and a.mean == 106 and a.why:find("no sale rate is measured yet", 1, true)
-        and a.text:find("others ask 1s06c on average; yours is at 1s00c", 1, true),
-        "60 cheaper units ahead and no sale rate measured: HOLD (nothing says a relist would sell sooner); others ask 1s06c on average")
-    -- 2. your turn comes within the hour
-    rate = 120
-    a = advice()
-    print("     " .. a.word .. ": " .. a.why)
-    check(a.rec == "hold" and a.word == "HOLD" and a.untilT and math.abs((a.untilT - GetTime()) - 1800) < 2 and a.why:find("the cheaper units sell in about 30 min", 1, true)
-        and a.brief == "60 cheaper units ahead, 120 sell an hour",
-        "120 sell an hour: the 60 ahead are gone in about 30 minutes. HOLD, with the time it is given, and the reason in a few words")
-    check(a.text:find("Your call: Cancel on this row relists it anyway.", 1, true), "the advice says how to overrule it: Cancel relists it anyway")
-    Se.ucHold = nil
-    -- 6. a long wait, and relisting gives up little: RELIST
-    rate = 20 -- 3 hours to reach yours; 10 hours left
-    a = advice()
-    print("     " .. a.text)
-    check(a.rec == "relist" and a.word == "RELIST" and a.repost == 89 and a.holdProfit == 1650 and a.relistProfit == (84 - 40) * 30 - 30 and a.why:find("it sells next, for only 3s60c less than waiting 3 hours", 1, true),
-        "20 sell an hour, 3 hours to wait: relisting at 89c gives up 3s60c of 16s50c (under a quarter). RELIST")
-    check(a.text:find("^RELIST at 89c: ") and a.text:find("Press Cancel on this row (twice), collect it at a mailbox, and post it again.", 1, true)
-        and a.text:find("What a relist costs, all counted in that: 11c less on each of the 30 (after the 5% cut); the 30c fee paid for this auction is lost with the cancel; a new fee of 30c is paid first: it comes back when it sells, and is lost too if that auction runs out", 1, true)
-        and a.oldFee == 30 and a.newFee == 30,
-        "the advice says what to press and everything a relist costs: the lower price on every unit, the fee already paid (lost with the cancel) and the new fee")
-    do  -- on a realm where posting fees never come back, the new fee is the cost
-        cfg.feeBack = false
-        local nb = advice()
-        check(nb.relistProfit == (84 - 40) * 30 - 30 and nb.text:find("a new fee of 30c, which does not come back on this realm", 1, true),
-            "where fees do not come back, the new fee is what the relist costs, and it is counted")
-        cfg.feeBack = true
-    end
-    -- 7. a long wait, but relisting gives up a lot: HOLD
-    S.lastRows[9801] = { rows = { { price = 60, qty = 60 }, { price = 110, qty = 200 } }, at = GetTime() }
-    a = advice()
-    print("     " .. a.word .. ": " .. a.why)
-    check(a.rec == "hold" and a.repost == 59 and a.why:find("waiting about 3 hours is worth", 1, true),
-        "cheaper units at 60c: relisting under them gives up most of the profit. HOLD, the wait is worth it")
-    -- 5. it will not sell before it runs out. A relist that keeps most of the profit: RELIST.
-    rate = 5 -- 12 hours to reach yours, 10 left
-    S.lastRows[9801] = { rows = { { price = 90, qty = 20 }, { price = 95, qty = 40 }, { price = 110, qty = 200 } }, at = GetTime() }
-    a = advice()
-    print("     " .. a.word .. ": " .. a.why)
-    check(a.rec == "relist" and a.keeps == true and a.why:find("it will not sell before it runs out", 1, true),
-        "5 sell an hour: 12 hours to reach yours and 10 left. A relist at 89c keeps 12s90c of 16s50c: RELIST, it will not sell before it runs out")
-    -- ...but a relist is never advised when it throws the profit away: cheaper units at 60c would send it down to 59c
-    S.lastRows[9801] = { rows = { { price = 60, qty = 60 }, { price = 110, qty = 200 } }, at = GetTime() }
-    local logLines, realLog = {}, ns.Log
-    ns.Log = function(fmt, ...) local ok, l = pcall(string.format, fmt, ...); logLines[#logLines + 1] = ok and l or tostring(fmt); return realLog(fmt, ...) end
-    Se.ucLogged = nil
-    a = advice()
-    ns.Log = realLog
-    print("     " .. a.word .. ": " .. a.why)
-    check(a.rec == "hold" and a.keeps == false and a.repost == 59 and a.why:find("the price has dropped: a relist at 59c would give up", 1, true)
-        and a.why:find("post it again then", 1, true) and a.brief:find("^price dropped: a relist gives up"),
-        "the same wait with cheaper units at 60c: a relist would give up most of the 16s50c. HOLD: the price has dropped; post it again if it comes back")
-    do  -- the advice is in the log, with the figures it came from, whenever it changes
-        local found
-        for _, l in ipairs(logLines) do
-            if l:find("^ADVICE 9801: HOLD %(the price has dropped") and l:find("60 cheaper ahead, cheapest 60", 1, true) and l:find("hold makes 1650, relist at 59 makes", 1, true) then found = l end
-        end
-        print("     " .. tostring(found))
-        check(found ~= nil, "the log has the advice with the figures it came from")
-    end
-    -- 3. relisting would leave nothing
-    S.lastRows[9801] = { rows = { { price = 42, qty = 60 }, { price = 110, qty = 200 } }, at = GetTime() }
-    a = advice()
-    print("     " .. a.word .. ": " .. a.why)
-    check(a.rec == "hold" and (a.relistProfit or 0) <= 0, "the cheaper units are at 42c against a cost of 40c: a relist would leave nothing. HOLD")
-    -- 4. no gold for the fee
-    S.lastRows[9801] = { rows = { { price = 90, qty = 20 }, { price = 95, qty = 40 }, { price = 110, qty = 200 } }, at = GetTime() }
-    rate = 20; gold = 5
-    a = advice()
-    check(a.rec == "hold" and a.why:find("needs a posting fee of 30c first and you have 5c", 1, true), "not enough gold for the new posting fee: HOLD, and it says so")
+    check(a.rec == "hold" and math.abs(a.hold.sellAt - 60) < 0.001 and math.abs(a.evHold - (30 * (57 - 40) - 30)) < 0.001, "an item whose price is falling fast: by the time your turn comes its price is counted lower (60c), and the hold is worth that much less")
+    trend = nil
+    listing(CHEAP)
+
+    -- THE QUEUE DOES NOT MOVE. The listing read again ten minutes later: still 60 ahead (as many listed under you as were bought).
+    rate = 20; reset()
+    advice()
+    advance(700)
+    listing(CHEAP)
+    St:Put(9801, 90, 500, GetServerTime())
+    a, why, text, brief = advice()
+    print("     " .. a.word .. ": " .. why)
+    check(a.rec == "relist" and a.watched == true and a.sells == 0 and a.hold.never == true and brief == "the queue is not moving; relist is worth 12s90c",
+        "read again ten minutes later and the 60 ahead are still 60: holding does not sell. RELIST")
+    -- ...and when it does move, that measured speed is what the sum uses
+    advance(700)
+    listing({ { price = 90, qty = 10 }, { price = 95, qty = 26 }, { price = 110, qty = 200 } }) -- 36 ahead: 24 gone
+    St:Put(9801, 90, 500, GetServerTime())
+    a, why, text, brief = advice()
+    check(a.watched == true and math.abs(a.sells - 24 / (1400 / 3600)) < 0.5 and text:find("they have gone down by 62 an hour since the listing was first read", 1, true),
+        "then the units ahead go from 60 to 36: the sum uses how fast they really went (62 an hour), not the item's average")
+
+    -- no gold for the new fee
+    rate = 20; rho = 0.06; gold = 5; reset(); listing(CHEAP)
+    a, why = advice()
+    check(a.rec == "hold" and why:find("needs a posting fee of 30c first and you have 5c", 1, true), "a relist that is worth more but cannot be paid for: HOLD, and it says so")
     gold = 5000
-    -- on the Sell tab: the row carries the advice; the heading counts it
-    cfg.fold = nil; Se.ucCache = nil
-    local idsWas = S.ownIds
-    S.ownIds = { [9801] = { { id = 77, qty = 30, price = 100, ends = GetTime() + 36000 } } } -- (the auction itself, so it can be cancelled)
+    -- where fees never come back, the new fee is the cost of a relist
+    cfg.feeBack = false; reset()
+    a = advice()
+    check(a.relist.feeLost == 30 and a.rec == "relist", "where posting fees never come back, the new fee is the cost of a relist (and it is counted)")
+    cfg.feeBack = true
+    rho = 0
+
+    -- the log has the sums
+    do
+        local logLines, realLog = {}, ns.Log
+        ns.Log = function(fmt, ...) local ok, l = pcall(string.format, fmt, ...); logLines[#logLines + 1] = ok and l or tostring(fmt); return realLog(fmt, ...) end
+        rate = 120; reset(); listing(CHEAP)
+        advice()
+        ns.Log = realLog
+        local found
+        for _, l in ipairs(logLines) do if l:find("^ADVICE 9801: HOLD") and l:find("HOLD 1650 = sales 1650 %- fees 0 %- wait 0") and l:find("RELIST at 89: 1290 = sales 1320 %- fees 30 %- wait 0") then found = l end end
+        print("     " .. tostring(found))
+        check(found ~= nil, "the log has the advice with its sums")
+    end
+
+    -- ON THE SELL TAB: the row carries the advice, the heading counts it, the hold counts down and is worked out again when its time is up
+    local function wait(secs)
+        while secs > 0 do
+            local step = math.min(120, secs)
+            advance(step); secs = secs - step
+            St:Put(9801, 90, 500, GetServerTime())
+        end
+    end
+    cfg.fold = nil; rate = 120; rho = 0; reset(); listing(CHEAP)
     UI:Open("SELL"); UI.notice = nil; UI:Render()
     local row
     for i = 1, #frames do
@@ -4034,86 +4068,61 @@ do
         if rawget(f, "detail") and f._shown and rawget(f, "item") and f.item.key == 9801 then row = f end
     end
     local hs = table.concat(headsText(), "\n")
-    print("     " .. strip(row.name._text) .. " | " .. strip(row.c[4]._text) .. " | " .. strip(row.state._text))
-    check(hs:find("[-] UNDERCUT (1) | QTY / WHY /  / ADVICE / P / L", 1, true) and row and strip(row.c[4]._text) == "RELIST"
-        and row.brief._shown and strip(row.brief._text) == "sells next for 3s60c less (or wait 3 hours)" and row.btn._text == "Cancel" and strip(row.detail._text):find("^RELIST at 89c: "),
-        "on the Sell tab the row says RELIST and, in a few words on the row itself, why; the whole advice is behind the mouse, and Cancel is the button")
-    do  -- A SMALL AMOUNT IS NOT WORTH A WAIT: something that makes 20c is not held for hours over 7c
-        local Lw = AuctionMeshDB.listed[9801]
-        local costWas, minWas = Lw.cost, ns.Deals.cfg.minProfit
-        Lw.cost, Lw.qty, Lw.fee = 80, 1, 1
-        e.count, e.live = 1, 1
-        S.lastRows[9801] = { rows = { { price = 97, qty = 60 }, { price = 110, qty = 200 } }, at = GetTime() }
-        ns.Deals.cfg.minProfit = 50
-        Se.ucHold = nil
-        local a7 = advice()
-        print("     " .. a7.word .. ": " .. a7.why)
-        check(a7.rec == "relist" and a7.holdProfit == 15 and a7.relistProfit == 10 and a7.why:find("it sells next, for only 5c less", 1, true),
-            "a 15c profit: relisting gives up 5c of it, more than a quarter, but far under the 50c you bother with. RELIST, not a three-hour wait")
-        Lw.cost, Lw.qty, Lw.fee, ns.Deals.cfg.minProfit = costWas, 30, 30, minWas
-        e.count, e.live = 30, 30
-    end
-    do  -- A HOLD COUNTS DOWN, and when its time is up and the auction is still undercut the advice becomes RELIST
-        -- (time passes with the radar still seeing the cheaper listing, as it does in the game)
-        local function wait(secs)
-            while secs > 0 do
-                local step = math.min(120, secs)
-                advance(step); secs = secs - step
-                St:Put(9801, 90, 500, GetServerTime())
-            end
-        end
-        St:Put(9801, 90, 500, GetServerTime())
-        rate = 120 -- 60 ahead: your turn in 30 minutes
-        S.lastRows[9801] = { rows = { { price = 90, qty = 20 }, { price = 95, qty = 40 }, { price = 110, qty = 200 } }, at = GetTime() }
-        Se.ucHold, Se.ucCache, Se.wantRows = nil, nil, nil
-        UI:Render()
-        print("     " .. strip(row.c[4]._text) .. " | " .. strip(row.brief._text))
-        check((strip(row.c[4]._text) == "HOLD 30:00" or strip(row.c[4]._text):find("^HOLD 29:5%d$")) and UI.holdTick == true, "the row shows HOLD with the time left: 30:00")
-        wait(60); UI:Render()
-        check(strip(row.c[4]._text):find("^HOLD 28:5%d$"), "a minute later it reads 28:5x: it counts down by itself")
-        -- the time runs out: the listing on record is from before, so it is read again first
-        LIST[9801] = { { 90, 20 }, { 95, 40 }, { 110, 200 } } -- still the same cheaper units
-        Se.pricedAt = {}
-        local readsBefore = #sent
-        wait(1700); UI:Render()
-        print("     " .. strip(row.c[4]._text))
-        check(strip(row.c[4]._text):find("^HOLD 0:%d%d$") and #sent - readsBefore >= 0, "with under a minute left it still says HOLD (the listing was read again on the way, and the count went on)")
-        local n9801 = 0
-        for i = 1, #sent do if sent[i] == "search9801" then n9801 = n9801 + 1 end end
-        wait(60) -- the time runs out while the tab is open
-        local n2 = 0
-        for i = 1, #sent do if sent[i] == "search9801" then n2 = n2 + 1 end end
-        check(n2 == n9801 + 1, "when the time is up the listing is read again, once, by itself")
-        Se.ucCache = nil; UI:Render()
-        local ax = Se:Undercut(e)
-        print("     " .. ax.word .. ": " .. strip(ax.why) .. " | row: " .. strip(row.c[4]._text) .. " | " .. strip(row.brief._text))
-        check(ax.rec == "relist" and strip(ax.why) == "it was given 30 min to sell and is still undercut" and strip(row.c[4]._text) == "RELIST"
-            and strip(row.brief._text) == "still undercut after 30 min: relist",
-            "read again, still undercut: the wait did not work, and the advice is now RELIST")
-        -- had the cheaper units gone, it would simply be listed
-        S.lastRows[9801] = { rows = { { price = 110, qty = 200 } }, at = GetTime() }
-        Se.ucCache = nil
-        ax = Se:Undercut(e)
-        check(ax.rec == "hold" and ax.ahead == 0 and Se.ucHold[9801] == nil, "(with nobody cheaper any more there is nothing to do, and the count starts afresh next time)")
-        rate = 20
-        S.lastRows[9801] = { rows = { { price = 90, qty = 20 }, { price = 95, qty = 40 }, { price = 110, qty = 200 } }, at = GetTime() }
-        Se.ucHold, Se.ucCache = nil, nil
-    end
-    -- the listing is read on the Sell tab when it is missing
-    S.lastRows[9801] = nil; Se.ucCache = nil; Se.pricedAt = {}; Se.wantRows = nil
+    print("     " .. strip(row.name._text) .. " | " .. strip(row.c[4]._text) .. " | " .. strip(row.brief._text))
+    check(hs:find("[-] UNDERCUT (1) | QTY / WHY /  / ADVICE / P / L", 1, true) and row and (strip(row.c[4]._text) == "HOLD 30:00" or strip(row.c[4]._text):find("^HOLD 29:5%d$"))
+        and row.brief._shown and strip(row.brief._text) == "holding is worth 3s60c more" and row.btn._text == "Cancel" and strip(row.detail._text):find("^HOLD: holding is worth"),
+        "on the Sell tab the row says HOLD with the time left and, in a few words, what the sum came to; Cancel is still there to overrule it")
+    wait(60); UI:Render()
+    check(strip(row.c[4]._text):find("^HOLD 28:5%d$") and UI.holdTick == true, "a minute later it reads 28:5x: it counts down by itself")
+    -- the time runs out and nothing ahead of you has sold: the listing is read again, and the sum now says relist
     LIST[9801] = { { 90, 20 }, { 95, 40 }, { 110, 200 } }
+    Se.pricedAt = {}
+    local n0 = 0
+    for i = 1, #sent do if sent[i] == "search9801" then n0 = n0 + 1 end end
+    wait(1760)
+    local n1 = 0
+    for i = 1, #sent do if sent[i] == "search9801" then n1 = n1 + 1 end end
+    Se.ucCache = nil; UI:Render()
+    print("     " .. strip(row.c[4]._text) .. " | " .. strip(row.brief._text))
+    check(n1 > n0 and strip(row.c[4]._text) == "RELIST" and strip(row.brief._text):find("^the queue is not moving; relist is worth"),
+        "when its time is up the listing is read again by itself; the 60 ahead have not moved, so the sum now says RELIST")
+    -- the listing is read on the Sell tab when it is missing
+    S.lastRows[9801] = nil; reset(); Se.pricedAt = {}
+    St:Put(9801, 90, 500, GetServerTime())
     UI:Render()
-    St:Put(9801, 90, 500, GetServerTime()) -- (the radar still sees the cheaper listing)
-    check(Se.wantRows and Se.wantRows[9801] == true and Se:NextToPrice() == 9801, "with no listing on record it is asked for in the Sell tab's upkeep turn")
+    check(Se.wantRows and Se.wantRows[9801] == true and Se:NextToPrice() == 9801, "with no listing on record it is asked for on the Sell tab")
     Se.pricedAt = {}
     advance(6); UI:Render()
-    check(S.lastRows[9801] ~= nil and #S.lastRows[9801].rows == 3 and (Se.wantRows == nil or Se.wantRows[9801] == nil), "the listing is read, and the advice has its figures")
+    check(S.lastRows[9801] ~= nil and #S.lastRows[9801].rows == 3, "the listing is read, and the sum has its figures")
+
+    -- WHAT YOUR GOLD EARNS: from your own finished flips
+    do
+        Se.GoldRate = realGoldRate
+        Se.goldRate = nil
+        local J = ns.Journal
+        local keep = J.list
+        J.list = {}
+        local tnow = GetServerTime()
+        check(select(1, Se:GoldRate()) == 0, "with no finished flips the wait is not charged for")
+        for i = 1, 6 do
+            J.list[i] = { id = i, key = 9900 + i, name = "Flip " .. i, kind = "FLIP", qty = 10, cost = 100, at = tnow - 48 * 3600, doneAt = tnow - 3600, sold = 10, vend = 0, lost = 0, got = 1500 }
+        end
+        Se.goldRate = nil
+        local capital = (ns.Gold:Cash())
+        for _, Lr in pairs(AuctionMeshDB.listed or {}) do capital = capital + math.floor((Lr.price or 0) * 0.95) * (Lr.qty or 0) end
+        local got, nflips = Se:GoldRate()
+        local want = (6 * 500) / capital / 48
+        print(("     6 flips made 30s00c in 48 hours on %d copper: %.4f%% an hour"):format(capital, got * 100))
+        check(nflips == 6 and math.abs(got - math.min(0.2, want)) < 1e-9, "six finished flips: their profit, over all you have, per hour of the stretch they cover")
+        J.list = keep
+        Se.goldRate = nil
+    end
+
     ITEMS[9801] = nil; LIST[9801] = nil
-    St.Rate = realRate
+    St.Rate, St.Trend, Se.GoldRate = realRate, realTrend, realGoldRate
     AuctionMeshDB.listed, S.own, S.ownRead, cfg.fold, S.lastRows = listedWas, ownWas, readWas, foldWas, rowsWas
-    S.ownSoldQty, S.ownSoldPay, cfg.feeBack = soldQtyWas, soldPayWas, feeBackWas
-    Se.ucCache, Se.wantRows = nil, nil
-    S.ownIds = idsWas
+    S.ownSoldQty, S.ownSoldPay, cfg.feeBack, S.ownIds = soldQtyWas, soldPayWas, feeBackWas, idsWas
+    reset()
     gold = 900
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
 end

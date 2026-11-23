@@ -1849,58 +1849,90 @@ function Seller:Advice(e)
     return ("Wait. No cheaper listing%s.%s%s"):format(fresh and " in the last radar read" or " seen (no recent radar read)", sells, expires), "wait"
 end
 
--- AN AUCTION OF YOURS HAS BEEN UNDERCUT: RELIST IT, OR HOLD?
+-- AN AUCTION OF YOURS HAS BEEN UNDERCUT: RELIST IT, OR HOLD? WORKED OUT.
 --
--- Worked out from what is measured, nothing else:
---   ahead     units other people list for less than yours (from the item's
---             listing as last read in full; yours are not in it)
---   rate      units of the item that sell an hour, measured by watching it
---   your turn ahead / rate: how long until the cheaper units are gone, if
---             nobody else undercuts meanwhile
---   left      how long your auction still runs
---   mean      the mean price of what others list (its first 20 price levels),
---             and what buyers really paid in the last 48 hours
---   relist    the price it would be posted at now (the same rule as any
---             post), what that leaves after the cut, and what relisting
---             costs: cancelling loses the posting fee already paid
+-- There are two things you can do, and each is given a value in copper: the
+-- profit you can expect from it, after the cut and the fees, less what the
+-- waiting costs. The larger value is the advice. No thresholds, no rules of
+-- thumb: the same sum for every auction. (It used to be a list of rules with
+-- "within the hour", "a quarter of the profit", "half of it" in them.)
 --
--- The rule, in this order:
---   1. no sale rate measured yet                    HOLD (nothing says relisting sells it sooner)
---   2. your turn comes within the hour              HOLD (it sells anyway, for more)
---   3. relisting would leave nothing                HOLD (it comes back by mail if it runs out)
---   4. not enough gold for the new posting fee      HOLD
---   5. it will not sell before it runs out          RELIST
---   6. relisting gives up a quarter of the profit
---      or less, or no more than the smallest profit
---      you bother with                              RELIST (sells next, for a little less)
---   7. otherwise                                    HOLD (worth the wait)
--- (6 used to be the quarter alone: something that makes 20c was held for
--- hours over 7c. An amount you would not buy a deal for is not worth a wait.)
+-- WHAT GOES IN, all of it measured:
+--   Q, P, cost  your units, your price, what they cost you
+--   ahead       units other people list for less than yours
+--   r           units that sell an hour. At first: the item's measured sale
+--               rate. Once its listing has been read twice: how fast the
+--               cheaper units ahead of you have really gone down, which has
+--               the people who keep undercutting already in it.
+--   T           hours your auction still runs; a new one runs 12
+--   R           the price a relist would be posted at (the usual rule)
+--   fees        the fee you paid (lost when you cancel, and on what runs out
+--               unsold) and the new one (back on a sale, where fees come back)
+--   trend       the item's price change over 24 hours, if known: what comes
+--               back unsold is counted at the price a repost would get then
+--   rho         what your gold earns an hour: the profit of the flips you
+--               finished in the last 7 days, over what you have in all (cash
+--               and what is listed), per hour of those days. Nothing until
+--               five flips are finished.
 --
--- A HOLD THAT HAS A TIME COUNTS DOWN (rules 2 and 7: "your turn in about 30
--- minutes"). When the time is up the listing is read again. Nobody cheaper
--- any more: it is simply listed. Still undercut: the wait did not work, and
--- the advice becomes RELIST (if a relist still pays and you have the fee).
+-- HOLD    keep your price until it sells. The units ahead go first
+--         (ahead / r hours), then yours (Q / the item's sale rate). If that
+--         is longer than the auction still runs, it comes back and is posted
+--         again at your price: one fee lost each time that happens.
+--         Value: Q x (your price after the cut - cost) - those fees - waiting.
+-- RELIST  cancel and post at R now. The fee you paid is lost. Yours are first
+--         in line and sell at the item's sale rate.
+--         Value: Q x (R after the cut - cost) - the fee - waiting.
+-- WAITING every sale's gold counts for less the longer it takes:
+--         rho x the gold x the hours until it is sold.
+-- If the units ahead of you are NOT going down (as many are listed under you
+-- as are bought), holding never sells: a relist is the advice if it pays.
+-- Equal values: the one that has your gold sooner.
 --
--- A RELIST NEVER THROWS THE PROFIT AWAY. Whatever rule says "relist", it is
--- only said if the relist keeps at least half of what the auction makes where
--- it is (or what it gives up is no more than the smallest profit you bother
--- with). Otherwise: HOLD, the price has dropped; if the auction comes back
--- unsold it can be posted again then. (Rule 5 and the end of a timed hold
--- used to say RELIST for any relist that left anything at all: an auction
--- making 1g51s could be sent down to a price that left a few silver.)
+-- A HOLD COUNTS DOWN to when your first unit should sell. When that time is
+-- up the listing is read again and the sum is done afresh, now with how fast
+-- the units ahead of you really went.
 --
--- THE ADVICE IS ADVICE. The Cancel button is on the row whatever it says:
--- press it to relist an auction the addon would hold; leave it to keep one
--- the addon would relist.
+-- THE ADVICE IS ADVICE. The Cancel button is on the row whatever it says.
 --
--- Returns { rec = "relist" | "hold" | "read", word, brief (a few words for
--- the row), why, text, untilT (when a timed hold is up), and the figures }.
-Seller.UNDERCUT = { fresh = 900, soon = 1, giveUp = 0.25 }
+-- Returns { rec = "relist" | "hold" | "read", word, brief, why, text, untilT,
+--           evHold, evRelist, hold = {...}, relist = {...}, and the inputs }.
+Seller.UNDERCUT = { fresh = 900, newRuns = DURATION_HOURS, minWatch = 300 }
+
+-- What your gold earns an hour, as a fraction (0.005 = half a percent an
+-- hour): the profit of the flips you finished in the last 7 days, over what
+-- you have in all (cash, and your auctions at their prices after the cut),
+-- per hour of the stretch they cover. 0 until five are finished. Worked out
+-- once a minute.
+function Seller:GoldRate()
+    local c = self.goldRate
+    if c and GetTime() - c.at < 60 then return c.rho, c.n end
+    local J = ns.Journal
+    local now = GetServerTime()
+    local profit, n, first = 0, 0, now
+    for _, t in ipairs((J and J.list) or {}) do
+        if t.cost and t.cost > 0 and t.at and t.doneAt and now - t.doneAt <= 7 * 86400 and t.kind ~= "FARM" then
+            local p = J.realized(t)
+            if p and ((t.sold or 0) + (t.vend or 0)) > 0 then
+                profit, n = profit + p, n + 1
+                if t.at < first then first = t.at end
+            end
+        end
+    end
+    local capital = (ns.Gold and ns.Gold.Cash and ns.Gold.d) and (ns.Gold:Cash()) or GetMoney()
+    for _, Lr in pairs(AuctionMeshDB.listed or {}) do
+        capital = capital + floor((Lr.price or 0) * (1 - Deals.cfg.cut)) * (Lr.qty or 0)
+    end
+    local hrs = max(24, min(7 * 24, (now - first) / 3600))
+    local rho = (n >= 5 and capital > 0) and max(0, min(0.2, profit / capital / hrs)) or 0
+    self.goldRate = { at = GetTime(), rho = rho, n = n }
+    return rho, n
+end
+
 function Seller:Undercut(e)
     local key, L = e.key, e.listed
     local S, St, cfg, U = ns.Sniper, ns.Store, Deals.cfg, self.UNDERCUT
-    local price, qty, cost = L.price or 0, e.count, L.cost
+    local price, qty, cost = L.price or 0, max(1, e.count or 1), L.cost
     local now = GetServerTime()
     do  -- worked out at most every 2 seconds for an item (the panel redraws several times a second)
         self.ucCache = self.ucCache or {}
@@ -1919,8 +1951,8 @@ function Seller:Undercut(e)
         r.rec, r.word = "read", "READING"
         r.why = ahOpen() and "its listing is being read" or "open the auction house: its listing is read first"
         r.brief = r.why
-        r.text = "Someone lists this for less than you do. " .. (ahOpen() and "Its listing is being read now; the advice (relist or hold) follows in a moment."
-            or "Open the auction house: its listing is read, then the advice (relist or hold) is given.")
+        r.text = "Someone lists this for less than you do. " .. (ahOpen() and "Its listing is being read now; then relist or hold is worked out."
+            or "Open the auction house: its listing is read, then relist or hold is worked out.")
         return r
     end
     local rows = last.rows
@@ -1937,140 +1969,187 @@ function Seller:Undercut(e)
         if h >= 1.5 then return ("%d hours"):format(floor(h + 0.5)) end
         return ("%d min"):format(max(1, floor(h * 60 + 0.5)))
     end
-    local function signed(c) return (c >= 0 and "+ " or "- ") .. short(math.abs(c)) end
-    -- the figures, said once, in the order they are used
-    local facts = {}
-    facts[#facts + 1] = ("%s%d cheaper unit%s ahead of yours%s"):format(r.more and "at least " or "", ahead, ahead == 1 and "" or "s",
-        r.low and (", the cheapest at " .. short(r.low)) or "")
-    if r.rate and r.rate > 0 then
-        r.eta = ahead / r.rate
-        facts[#facts + 1] = ("about %d sell an hour, so your turn comes in %s%s"):format(max(1, floor(r.rate + 0.5)), r.more and "at least " or "about ", hours(r.eta))
-    else
-        facts[#facts + 1] = "no sale rate measured for it yet"
+    local function signed(c) return (c >= 0 and "+ " or "- ") .. short(math.abs(floor(c + 0.5))) end
+
+    -- HOW FAST THE UNITS AHEAD OF YOU REALLY GO: from two readings of the listing
+    self.ucSeen = self.ucSeen or {}
+    local seen = self.ucSeen[key]
+    if not seen or seen.price ~= price then
+        seen = { price = price, at0 = last.at, ahead0 = ahead, at1 = last.at, ahead1 = ahead }
+        self.ucSeen[key] = seen
+    elseif last.at ~= seen.at1 then
+        if seen.at1 - seen.at0 > 3600 then seen.at0, seen.ahead0 = seen.at1, seen.ahead1 end -- the comparison stays within about an hour
+        seen.at1, seen.ahead1 = last.at, ahead
     end
-    facts[#facts + 1] = ("your auction runs %s more"):format(hours(r.left))
-    if r.mean then
-        facts[#facts + 1] = ("others ask %s on average%s; yours is at %s"):format(short(r.mean), r.paid and (", buyers paid " .. short(r.paid)) or "", short(price))
+    local rate, watched = r.rate, false
+    if seen.at1 - seen.at0 >= U.minWatch then
+        rate = max(0, (seen.ahead0 - seen.ahead1) / ((seen.at1 - seen.at0) / 3600))
+        watched = true
     end
-    -- what relisting would bring, and what it costs
+    r.sells, r.watched = rate, watched
+
+    -- the fees
+    local back = AuctionMeshDB.cfg.feeBack ~= false
+    local oldFee = floor((L.fee or 0) * qty / max(1, L.qty or qty) + 0.5)
     local newFee = self:DepositTotal(key, true, qty)
-    local feeEach = cfg.depositIsCost and math.ceil(newFee / max(1, qty)) or 0
+    local feeEach = cfg.depositIsCost and math.ceil(newFee / qty) or 0
     local repost = (#rows > 0) and Deals.postPrice(rows, cost or 0, L.plan or price, nil, feeEach) or nil
-    -- cancelling loses the fee already paid; where fees never come back, the new one is the cost
-    local feeCost = (AuctionMeshDB.cfg.feeBack == false) and newFee or floor((L.fee or newFee) * qty / max(1, L.qty or qty) + 0.5)
-    r.repost, r.fee, r.feeCost = repost, newFee, feeCost
-    if cost then
-        r.holdProfit = (floor(price * (1 - cfg.cut)) - cost) * qty
-        if repost then r.relistProfit = (floor(repost * (1 - cfg.cut)) - cost) * qty - feeCost end
+    r.repost, r.fee, r.oldFee, r.newFee = repost, newFee, oldFee, newFee
+    local c0 = cost or 0
+    local function net(p) return floor(p * (1 - cfg.cut)) end
+    local trend = St.Trend and St:Trend(key, now, 24) or nil
+    r.trend = trend
+    -- the price h hours from now, moved by the item's trend (whole copper; never under a fifth, never over double)
+    local function later(p, h) return floor(p * max(0.2, min(2, 1 + (trend or 0) * h / 24)) + 0.5) end
+    local rho, flips = self:GoldRate()
+    r.rho = rho
+
+    -- the two rates: how fast the units ahead of you go (watched, or the item's
+    -- rate until it has been watched), and how fast yours sell once they are first
+    local qRate = rate
+    local sRate = (r.rate and r.rate > 0) and r.rate or ((rate and rate > 0) and rate or nil)
+    local D = U.newRuns
+    -- each time an auction runs out unsold a fee is lost: the one you paid the
+    -- first time, a new one after that (where fees never come back: a new one
+    -- for each repost)
+    local function expiryFees(k, first)
+        if k <= 0 then return 0 end
+        if back then return first + (k - 1) * newFee end
+        return k * newFee
     end
-    if repost and r.relistProfit then
-        -- EVERYTHING A RELIST COSTS, said in full, and all of it is in the figure:
-        --   the fee paid for this auction is gone the moment it is cancelled;
-        --   a new fee is paid for the new auction (back when it sells, where
-        --   fees come back at all; gone as well if that one runs out unsold);
-        --   the lower price, on every unit; and the cut, as on any sale.
-        local back = AuctionMeshDB.cfg.feeBack ~= false
-        local oldFee = floor((L.fee or 0) * qty / max(1, L.qty or qty) + 0.5)
-        r.oldFee, r.newFee = oldFee, newFee
-        local costs = {}
-        costs[#costs + 1] = ("%s less on each of the %d (after the 5%% cut)"):format(short(floor(price * (1 - cfg.cut)) - floor(repost * (1 - cfg.cut))), qty)
-        if back then
-            if oldFee > 0 then costs[#costs + 1] = ("the %s fee paid for this auction is lost with the cancel"):format(short(oldFee)) end
-            costs[#costs + 1] = ("a new fee of %s is paid first: it comes back when it sells, and is lost too if that auction runs out"):format(short(newFee))
+    local H = { price = price, queue = ahead }
+    if not sRate then
+        H.unknown = true
+    elseif not qRate or qRate <= 0 then
+        H.never = true -- the units ahead are not going down
+    else
+        H.start = ahead / qRate                          -- hours until your first unit sells
+        H.done = H.start + qty / sRate                   -- hours until your last one does
+        H.when = H.start + qty / (2 * sRate)             -- on average
+        H.expiries = (H.done > r.left) and math.ceil((H.done - r.left) / D) or 0
+        H.sellAt = later(price, H.start)                 -- your price, moved by the item's trend over the wait
+        H.fromSales = qty * (net(H.sellAt) - c0)
+        H.feeLost = expiryFees(H.expiries, oldFee)
+        H.wait = rho * qty * net(H.sellAt) * H.when
+        H.total = H.fromSales - H.feeLost - H.wait
+    end
+    local R
+    if repost then
+        R = { price = repost, queue = 0 }
+        if sRate then
+            R.start = 0
+            R.done = qty / sRate
+            R.when = qty / (2 * sRate)
+            R.expiries = (R.done > D) and math.ceil((R.done - D) / D) or 0
         else
-            costs[#costs + 1] = ("a new fee of %s, which does not come back on this realm"):format(short(newFee))
+            R.start, R.done, R.when, R.expiries = 0, 0, 0, 0
         end
-        facts[#facts + 1] = ("relisted at %s it leaves %s against %s if it sells where it is. What a relist costs, all counted in that: %s"):format(
-            short(repost), signed(r.relistProfit), signed(r.holdProfit), table.concat(costs, "; "))
+        R.fromSales = qty * (net(repost) - c0)
+        R.feeLost = (back and oldFee or newFee) + expiryFees(R.expiries, newFee)
+        R.wait = rho * qty * net(repost) * R.when
+        R.total = R.fromSales - R.feeLost - R.wait
     end
+    r.hold, r.relist = H, R
+    r.evHold, r.evRelist = H.total, R and R.total or nil
+    r.holdProfit, r.relistProfit = H.total, R and R.total or nil
+
     local rec, why, brief
-    local n2 = (ahead == 1) and "1 cheaper unit" or (("%s%d cheaper units"):format(r.more and "at least " or "", ahead))
-    local small = max(cfg.minProfit or 0, 1) -- an amount you would not buy a deal for
-    -- does a relist keep enough of the profit to be worth saying at all?
-    local givesUp = (r.holdProfit and r.relistProfit) and (r.holdProfit - r.relistProfit) or nil
-    local keeps = givesUp ~= nil and (r.relistProfit >= 0.5 * r.holdProfit or givesUp <= small)
-    r.keeps = keeps
+    local function more(x) return short(max(0, floor(x + 0.5))) end
     if ahead == 0 then
         rec, why, brief = "hold", "nobody was cheaper when its listing was last read in full", "nobody cheaper at the last full read"
-    elseif not r.eta then
-        rec, why = "hold", "no sale rate is measured yet, so nothing says a relist would sell sooner"
-        brief = n2 .. " ahead; sale rate not known yet"
-    elseif r.eta <= U.soon and r.eta <= r.left then
-        rec, why = "hold", ("the cheaper units sell in about %s: yours sells anyway, for more"):format(hours(r.eta))
-        brief = ("%s ahead, %d sell an hour"):format(n2, max(1, floor(r.rate + 0.5)))
-        r.timed = true
-    elseif not r.relistProfit or r.relistProfit <= 0 then
-        rec, why = "hold", repost and ("relisting at %s would leave %s"):format(short(repost), signed(r.relistProfit or 0)) or "the market is below what it cost you"
-        brief = repost and ("a relist at %s would lose"):format(short(repost)) or "the market is below your cost"
+    elseif H.unknown then
+        rec, why = "hold", "no sale rate is measured for it yet, so there is nothing to work it out from"
+        brief = "sale rate not known yet: cannot be worked out"
+    elseif not R then
+        rec, why, brief = "hold", "there is no price to relist at", "no price to relist at"
     elseif GetMoney() < newFee then
         rec, why = "hold", ("a relist needs a posting fee of %s first and you have %s"):format(short(newFee), short(GetMoney()))
         brief = ("no gold for the fee (%s)"):format(short(newFee))
-    elseif r.eta > r.left and not keeps then
-        rec, why = "hold", ("the price has dropped: a relist at %s would give up %s of the %s it makes where it is. It may come back unsold (%s left, %s%s to reach it): post it again then"):format(
-            short(repost), short(givesUp), short(r.holdProfit), hours(r.left), r.more and "at least " or "about ", hours(r.eta))
-        brief = ("price dropped: a relist gives up %s"):format(short(givesUp))
-    elseif r.eta > r.left then
-        rec, why = "relist", ("at this rate it will not sell before it runs out (%s left, %s%s to reach it)"):format(hours(r.left), r.more and "at least " or "about ", hours(r.eta))
-        brief = ("will not sell in the %s it has left"):format(hours(r.left))
-    elseif r.holdProfit - r.relistProfit <= max(U.giveUp * max(1, r.holdProfit), small) then
-        rec, why = "relist", ("it sells next, for only %s less than waiting %s"):format(short(r.holdProfit - r.relistProfit), hours(r.eta))
-        brief = ("sells next for %s less (or wait %s)"):format(short(r.holdProfit - r.relistProfit), hours(r.eta))
+    elseif H.never then
+        if R.total > 0 then
+            rec, why = "relist", ("the units ahead of you are not going down (as many are listed under you as are bought), so holding does not sell; a relist is worth %s"):format(signed(R.total))
+            brief = ("the queue is not moving; relist is worth %s"):format(more(R.total))
+        else
+            rec, why = "hold", ("the units ahead of you are not going down, and a relist at %s would lose (%s)"):format(short(repost), signed(R.total))
+            brief = "the queue is not moving, and a relist would lose"
+        end
+    elseif R.total > H.total + 0.5 or (math.abs(R.total - H.total) <= 0.5 and R.when < H.when) then
+        rec = "relist"
+        if R.total > H.total + 0.5 then
+            why = ("a relist is worth %s, holding %s: %s more"):format(signed(R.total), signed(H.total), more(R.total - H.total))
+            brief = ("relist is worth %s more"):format(more(R.total - H.total))
+        else
+            why = ("a relist and holding are both worth %s, and the relist has your gold %s sooner"):format(signed(R.total), hours(H.when - R.when))
+            brief = ("same gold, %s sooner"):format(hours(H.when - R.when))
+        end
     else
-        rec, why = "hold", ("waiting about %s is worth %s more than relisting"):format(hours(r.eta), short(r.holdProfit - r.relistProfit))
-        brief = ("the wait is worth %s more"):format(short(r.holdProfit - r.relistProfit))
-        r.timed = true
+        rec = "hold"
+        why = ("holding is worth %s, a relist %s: %s more"):format(signed(H.total), signed(R.total), more(H.total - R.total))
+        brief = ("holding is worth %s more"):format(more(H.total - R.total))
     end
-    -- A TIMED HOLD: counted down from when it was first given; once it is up
-    -- the listing is read again, and an auction still undercut is to relist.
-    self.ucHold = self.ucHold or {}
-    local h = self.ucHold[key]
-    if rec == "hold" and r.timed then
-        if not h or h.price ~= price then
-            h = { at = last.at, secs = r.eta * 3600, price = price }
-            self.ucHold[key] = h
-        end
-        r.untilT = h.at + h.secs
+
+    -- A HOLD COUNTS DOWN to when your first unit should sell; when that is up, the listing is read again
+    if rec == "hold" and ahead > 0 and H.start and H.start > 0 then
+        r.untilT = last.at + H.start * 3600
         if GetTime() >= r.untilT then
-            if last.at < r.untilT then
-                -- the listing on record is from before the time was up: it is read again first
-                self.wantRows = self.wantRows or {}
-                self.wantRows[key] = true
-                r.untilT = nil
-                r.checking = true
-                brief = "its time is up: reading the listing again"
-                why = why .. " (that time is up: its listing is being read again)"
-            else
-                r.untilT = nil
-                if keeps and r.relistProfit > 0 and GetMoney() >= newFee then
-                    rec = "relist"
-                    why = ("it was given %s to sell and is still undercut"):format(hours(h.secs / 3600))
-                    brief = ("still undercut after %s: relist"):format(hours(h.secs / 3600))
-                elseif givesUp and r.relistProfit and r.relistProfit > 0 then
-                    why = ("it is still undercut after %s, but a relist at %s would give up %s of the %s it makes where it is"):format(
-                        hours(h.secs / 3600), short(repost), short(givesUp), short(r.holdProfit))
-                    brief = ("still undercut; a relist gives up %s"):format(short(givesUp))
-                else
-                    brief = "still undercut, but a relist would not pay"
-                end
-            end
+            self.wantRows = self.wantRows or {}
+            self.wantRows[key] = true
+            r.untilT, r.checking = nil, true
+            brief = "its turn should have come: reading the listing again"
         end
-    elseif rec ~= "hold" or ahead == 0 then
-        if not (h and rec == "relist" and h.price == price and GetTime() >= h.at + h.secs) then self.ucHold[key] = nil end
     end
     r.rec, r.why, r.brief = rec, why, brief
     r.word = rec == "relist" and "RELIST" or r.checking and "CHECKING" or "HOLD"
-    do  -- in the log whenever the advice for an item changes, with the figures it came from
+
+    -- the sums, for the mouse and the log
+    local function line(name, o)
+        if not o then return name .. ": no price to relist at" end
+        if o.unknown then return name .. ": cannot be worked out without a sale rate" end
+        if o.never then return name .. ": does not sell while the units ahead of you are not going down" end
+        local parts = {}
+        parts[#parts + 1] = ("%d sell at %s%s: %s"):format(qty, short(floor(o.sellAt or o.price)),
+            (o.start and o.start > 0) and (", your turn in " .. hours(o.start)) or ", first in line", signed(o.fromSales))
+        if o.feeLost >= 0.5 then
+            parts[#parts + 1] = ("fees lost %s%s"):format(short(floor(o.feeLost + 0.5)),
+                (o.expiries or 0) > 0 and (" (it runs out %d time%s first)"):format(o.expiries, o.expiries == 1 and "" or "s") or "")
+        end
+        if o.wait >= 0.5 then parts[#parts + 1] = ("the wait of %s costs %s"):format(hours(o.when), short(floor(o.wait + 0.5))) end
+        return ("%s = %s (%s)"):format(name, signed(o.total), table.concat(parts, "; "))
+    end
+    local basis = {}
+    basis[#basis + 1] = ("%s%d cheaper unit%s ahead of yours%s"):format(r.more and "at least " or "", ahead, ahead == 1 and "" or "s",
+        r.low and (", the cheapest at " .. short(r.low)) or "")
+    if rate then
+        basis[#basis + 1] = watched and ("they have gone down by %d an hour since the listing was first read"):format(floor(rate + 0.5))
+            or ("about %d of the item sell an hour"):format(max(1, floor(rate + 0.5)))
+    end
+    basis[#basis + 1] = ("your auction runs %s more"):format(hours(r.left))
+    if r.mean then basis[#basis + 1] = ("others ask %s on average%s, you %s"):format(short(r.mean), r.paid and (", buyers paid " .. short(r.paid)) or "", short(price)) end
+    if trend then basis[#basis + 1] = ("its price moved %+d%% in 24 hours"):format(floor(trend * 100 + 0.5)) end
+    basis[#basis + 1] = (rho > 0) and ("your free gold earns %.1f%% an hour (your last %d finished flips)"):format(rho * 100, flips)
+        or "the wait is not charged for: fewer than five finished flips to measure what your gold earns"
+    r.text = (rec == "relist" and ("RELIST at %s: %s. Press Cancel on this row (twice), collect it at a mailbox, and post it again. "):format(short(repost), why)
+        or ("HOLD: %s. Your call: Cancel on this row relists it anyway. "):format(why))
+        .. line("Hold", H) .. ". " .. line("Relist", R) .. ". Worked out from: " .. table.concat(basis, "; ") .. "."
+
+    do  -- in the log whenever the advice for an item changes, with the sums it came from
         self.ucLogged = self.ucLogged or {}
         local sig = rec .. ":" .. tostring(repost) .. ":" .. tostring(ahead)
         if self.ucLogged[key] ~= sig then
             self.ucLogged[key] = sig
-            ns.Log("ADVICE %s: %s (%s) | yours %d at %s, cost %s | %d cheaper ahead, cheapest %s, others' mean %s | sells %s an hour | %s left | hold makes %s, relist at %s makes %s",
-                tostring(key), rec:upper(), (tostring(why):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")), qty, tostring(price), tostring(cost), ahead, tostring(r.low), tostring(r.mean),
-                r.rate and ("%.0f"):format(r.rate) or "?", hours(r.left), tostring(r.holdProfit), tostring(repost), tostring(r.relistProfit))
+            local function sums(o)
+                if not o then return "none" end
+                if o.unknown then return "no sale rate" end
+                if o.never then return "never (queue not moving)" end
+                return ("%.0f = sales %.0f - fees %.0f - wait %.0f; turn in %.2fh, sold by %.2fh, runs out %d time(s)"):format(
+                    o.total, o.fromSales, o.feeLost, o.wait, o.start or 0, o.done or 0, o.expiries or 0)
+            end
+            ns.Log("ADVICE %s: %s | yours %d at %s, cost %s | %d cheaper ahead, cheapest %s, mean %s | queue goes at %s an hour (%s), item sells %s an hour | %.1fh left | HOLD %s | RELIST at %s: %s | rho %.4f, trend %s",
+                tostring(key), rec:upper(), qty, tostring(price), tostring(cost), ahead, tostring(r.low), tostring(r.mean),
+                rate and ("%.1f"):format(rate) or "?", watched and "watched" or "item rate", r.rate and ("%.1f"):format(r.rate) or "?", r.left,
+                sums(H), tostring(repost), sums(R), rho, trend and ("%+.2f"):format(trend) or "?")
         end
     end
-    r.text = (rec == "relist" and ("RELIST at %s: %s. Press Cancel on this row (twice), collect it at a mailbox, and post it again. "):format(short(repost), why)
-        or ("HOLD: %s. Your call: Cancel on this row relists it anyway. "):format(why)) .. "The figures: " .. table.concat(facts, "; ") .. "."
     return r
 end
 

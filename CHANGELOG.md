@@ -6,6 +6,22 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.64.0 (2026-11-23)
+
+- **Relist or hold is now worked out, not ruled.** The advice on an undercut auction was a list of rules with thresholds in them ("within the hour", "a quarter of the profit", "half of it"). It is now one sum, the same for every auction: each choice is given a value in copper, and the larger one is the advice.
+  - **HOLD** = keep your price until it sells. The cheaper units go first, then yours. If that takes longer than the auction still runs, it comes back and is posted again at your price, one fee lost each time. Value: your units x (your price after the cut - cost) - those fees - the cost of the wait.
+  - **RELIST** = cancel and post at the relist price now. The fee you paid is lost; yours are first in line. Value: your units x (that price after the cut - cost) - the fee - the cost of the wait.
+  - **The cost of the wait** = what your gold earns an hour x the gold x the hours until it is sold.
+- **What it is worked out from (all measured):** the units listed under yours; how fast they go (at first the item's measured sale rate; once the listing has been read twice, how fast the units ahead of you really went down, which has the people who keep undercutting in it); the hours your auction has left; the relist price; the fees; the item's price change over 24 hours (your price is counted lower by the time your turn comes if it is falling); and **what your gold earns an hour**: the profit of the flips you finished in the last 7 days, over all you have, per hour. Until five flips are finished that is zero and the wait is not charged for.
+- **If the units ahead of you are not going down** (as many are listed under you as are bought), holding never sells: RELIST, if a relist pays.
+- **Equal values:** the choice that has your gold sooner.
+- **Two worked examples** (30 units at 1s00c, cost 40c, 60 cheaper units ahead, relist price 89c, fee 30c):
+  - 120 sell an hour: hold = 30 x 55c = 16s50c; relist = 30 x 44c - 30c = 12s90c. **HOLD**, worth 3s60c more.
+  - 20 sell an hour and your gold earns 6% an hour: hold = 16s50c - 6s41c of waiting = 10s09c; relist = 12s90c - 1s13c = 11s77c. **RELIST**, worth 1s68c more.
+- The row says what the sum came to (`holding is worth 3s60c more`, `relist is worth 1s68c more`, `the queue is not moving; relist is worth 12s90c`); the two sums are behind the mouse and in the log. A hold still counts down to when your first unit should sell, and when that time is up the listing is read again and the sum is done afresh. Cancel still overrules it.
+- **What the sum assumes**, since no sum is better than that: buyers take the cheapest units first; the item keeps selling at the measured rate; once the cheaper units are gone your price is the cheapest again (new undercutters only show up in the sum after the listing has been read twice); a falling price keeps falling at the same pace.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.63.0 (2026-11-23)
 
 - **The tabs are Buy, Sell, Sold, Chart, More.** Trades is now **Buy**, Bags is **Sell**, Gold is **Chart**, and what has sold has its own tab.
