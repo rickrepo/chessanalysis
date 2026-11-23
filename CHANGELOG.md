@@ -6,6 +6,28 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.60.0 (2026-11-23)
+
+- **An undercut auction now comes with advice: RELIST or HOLD**, on its row on the Bags tab (the section is called UNDERCUT; its ADVICE column shows the word, and the mouse on the row gives the whole advice with its figures). It is worked out from what is measured:
+  - **the other listings:** how many units other people list for less than yours, and the cheapest of them (from the item's listing as last read in full; yours are not counted);
+  - **the activity:** how many of the item sell an hour (measured by watching it), so how long until the cheaper units are gone and it is your turn;
+  - **the mean:** the mean price of what others ask, and what buyers really paid in the last 48 hours, next to your price;
+  - **the time left** on your auction;
+  - **what relisting brings and costs:** the price it would be posted at now, what that leaves after the cut, and the posting fee that is lost with the cancel.
+- **The rule, in this order:**
+  1. no sale rate measured yet: HOLD (nothing says a relist would sell sooner);
+  2. your turn comes within the hour: HOLD (it sells anyway, for more), shown as `HOLD 30m`;
+  3. relisting would leave nothing: HOLD (it comes back by mail if it runs out);
+  4. not enough gold for the new posting fee: HOLD;
+  5. it will not sell before it runs out: RELIST;
+  6. relisting gives up a quarter of the profit or less: RELIST (it sells next, for a little less);
+  7. otherwise: HOLD (the wait is worth it).
+- An example of what it says: `RELIST at 89c: it sells next, for only 3s60c less than waiting 3 hours. Press Cancel on this row (twice), collect it at a mailbox, and post it again. The figures: 60 cheaper units ahead of yours, the cheapest at 90c; about 20 sell an hour, so your turn comes in about 3 hours; your auction runs 10 hours more; others ask 1s06c on average; yours is at 1s00c; relisted at 89c it leaves + 12s90c (the posting fee of 30c is lost with the cancel) against + 16s50c if it sells where it is.`
+- The UNDERCUT heading counts the advice (`relist 2, hold 5`), auctions to relist are listed first, and the Cancel button stands out only where the advice is to relist. Nothing is cancelled or posted by the addon: the advice is words, the clicks are yours.
+- The listing an advice needs is read on the Bags tab, in the turns that already go to prices there (one read an item, again after 15 minutes). Until it is in, the row says `READING`. Nothing changes on the Trades tab.
+- The "one hour" and "a quarter" in the rule are my choices, not measurements; say so if they should be different.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.59.0 (2026-11-23)
 
 From a real screenshot of the Gold tab on 3.58.

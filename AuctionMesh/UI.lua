@@ -185,7 +185,11 @@ local STATE = {
             local can = ahOpen() and #Se:Cancellable(e.key) > 0
             local arm = Se.cancelArm
             local armed = arm and arm.key == e.key and GetTime() - arm.at < 5
-            return ORANGE .. "Listed, but someone is cheaper|r", can and (armed and "Sure?" or "Cancel") or nil
+            -- RELIST OR HOLD, with the reason (worked out by Seller:Undercut from the listing, the sale rate and the fees)
+            local a = e.adv
+            local text = a and ((a.rec == "relist" and GOLD or GREY) .. (a.rec == "relist" and "Relist: " or a.rec == "hold" and "Hold: " or "") .. a.why .. "|r")
+                or (ORANGE .. "Listed, but someone is cheaper|r")
+            return text, can and (armed and "Sure?" or "Cancel") or nil
         end
         return GREY .. "Listed for sale|r", nil
     end,
@@ -209,7 +213,9 @@ local function fillSell(r, e, short)
     r.c[1]:SetText(tostring(e.count))
     r.c[2]:SetText(e.farm and (GREEN .. "farmed|r") or paid and short(paid) or (ORANGE .. "?|r"))
     r.c[3]:SetText(short(sell) .. ((e.f.kind == "FLIP" and not live and e.action ~= "LISTED") and (GREY .. "*|r") or ""))
-    r.c[4]:SetText(e.action == "LISTED" and (e.sold and (GREEN .. "SOLD|r") or e.live == 0 and (GREEN .. "SOLD?|r") or e.undercut and (ORANGE .. "UNDERCUT|r") or (GREY .. "LISTED|r"))
+    r.c[4]:SetText(e.action == "LISTED" and (e.sold and (GREEN .. "SOLD|r") or e.live == 0 and (GREEN .. "SOLD?|r")
+            or (e.undercut and e.adv) and ((e.adv.rec == "relist" and GOLD or e.adv.rec == "hold" and GREEN or GREY) .. e.adv.word .. "|r")
+            or e.undercut and (ORANGE .. "UNDERCUT|r") or (GREY .. "LISTED|r"))
         or e.action == "AH" and (ready and (GOLD .. "READY|r") or (GREY .. "pricing|r"))
         or e.action == "VENDOR" and (GREEN .. "VENDOR|r") or e.action == "MAIL" and (CYAN .. "MAIL|r") or (RED .. "WAIT|r"))
     if profit and e.action ~= "HOLD" then
@@ -233,6 +239,7 @@ local function fillSell(r, e, short)
         r.detail:SetText(("Paid %s  >  Sell %s%s%s"):format(paidText, short(sell), est, profitText))
         -- A VENDOR WOULD PAY MORE THAN IT COST: both ways out on the row, with
         -- the difference. Vendor now, or wait (for the fee, for the sale) and list it.
+        if e.undercut and e.adv then r.detail:SetText(e.adv.text) end -- (the whole advice, with its figures: shown when the mouse is on the row)
         local c = Se:Choice(e)
         if c and e.action == "VENDOR" then
             -- IF LISTED: what waiting and listing brings on top of the vendor (or loses)
@@ -270,6 +277,8 @@ local function fillSell(r, e, short)
         end
     end
     if button then r.btn:SetText(button); r.btn:Enable(); r.btn:Show() else r.btn:Hide() end
+    -- the button to press stands out when the advice is to relist; with "hold" it is there but plain
+    UI.outline(r.btn, (e.undercut and e.adv and e.adv.rec ~= "relist") and LINE or ACCENT)
 end
 
 ---------------------------------------------------------------- status line
@@ -487,11 +496,28 @@ local function buildList(tab, deals, entries)
                     end
                 end
                 e.undercut = not e.sold and undercut(e)
+                e.adv = (e.undercut and e.live ~= 0) and ns.Seller:Undercut(e) or nil
                 local t = e.sold and sold or e.live == 0 and ended or e.undercut and stuck or ok
                 t[#t + 1] = e
             end
         end
-        sect("STUCK", "STUCK LISTINGS", CAPS.entry, stuck, "someone is cheaper: open to cancel and post again")
+        do  -- undercut: relist first, and the heading counts each advice
+            local nRelist, nHold, nRead = 0, 0, 0
+            for _, e in ipairs(stuck) do
+                local rec = e.adv and e.adv.rec
+                if rec == "relist" then nRelist = nRelist + 1 elseif rec == "hold" then nHold = nHold + 1 else nRead = nRead + 1 end
+            end
+            table.sort(stuck, function(a, b)
+                local ra, rb = (a.adv and a.adv.rec == "relist") and 1 or 2, (b.adv and b.adv.rec == "relist") and 1 or 2
+                if ra ~= rb then return ra < rb end
+                return a.key < b.key
+            end)
+            local parts = {}
+            if nRelist > 0 then parts[#parts + 1] = GOLD .. "relist " .. nRelist .. "|r" end
+            if nHold > 0 then parts[#parts + 1] = GREEN .. "hold " .. nHold .. "|r" end
+            if nRead > 0 then parts[#parts + 1] = GREY .. "reading " .. nRead .. "|r" end
+            sect("STUCK", "UNDERCUT", { "QTY", "COST", "MARKET", "ADVICE", "P / L" }, stuck, table.concat(parts, GREY .. ", |r"))
+        end
         sect("ENDED", "ENDED, CHECK A MAILBOX", CAPS.entry, ended, "sold or expired: the mailbox shows which")
         do  -- sold: one line with the gold that is coming and when the next of it arrives
             local sum, nextIn = 0, nil
