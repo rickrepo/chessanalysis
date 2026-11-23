@@ -1002,6 +1002,13 @@ function Seller:NextToPrice(onlyPressed)
         self.priority = k -- too soon: keep it for the next turn instead of dropping it
     end
     if onlyPressed then return nil end
+    -- REQUESTS FOLLOW THE TAB. Selling is the Bags tab's work: prices for what
+    -- you hold are read there, and nowhere else. On the Trades tab every
+    -- request is for buying. (They used to be refreshed every ten minutes on
+    -- every tab.) The one exception is the "one key" way of buying, which
+    -- also posts from the Trades tab and needs the prices for that.
+    local posting = ns.UI and ns.UI.tab == "SELL"
+    if not posting and not (ns.UI and ns.UI.BuyMode and ns.UI.BuyMode() == "one") then return nil end
     for key, f in pairs(flips()) do
         -- Everything held is priced live: a flip so it can be posted, and what
         -- was bought under vendor price so the better of the two ways out is
@@ -1014,7 +1021,6 @@ function Seller:NextToPrice(onlyPressed)
             -- the radar. (It was every 45 seconds on every tab: with five
             -- items held, one request in six was a price check.) Pressing Post
             -- still asks for the price at once.
-            local posting = ns.UI and ns.UI.tab == "SELL"
             local ttl = ((p and p.hold) or not posting) and HOLD_TTL or PRICE_REFRESH
             -- at most one price check per item every 20s, whatever else happens
             if (not p or now - p.at >= ttl) and (not last[key] or now - last[key] >= 20) then
@@ -1052,6 +1058,10 @@ function Seller:Unpriced()
             -- so an item whose price does not come cannot keep the faster pace on)
             if (not p or (p.price and now - p.at >= PRICE_TTL)) and (not last[key] or now - last[key] >= 20) then return true end
         end
+    end
+    -- the listing of an undercut auction that the advice is waiting for counts too
+    for key in pairs(self.wantRows or {}) do
+        if AuctionMeshDB.listed and AuctionMeshDB.listed[key] and (not last[key] or now - last[key] >= 20) then return true end
     end
     return false
 end
@@ -1861,10 +1871,23 @@ end
 --   4. not enough gold for the new posting fee      HOLD
 --   5. it will not sell before it runs out          RELIST
 --   6. relisting gives up a quarter of the profit
---      or less                                      RELIST (sells next, for a little less)
+--      or less, or no more than the smallest profit
+--      you bother with                              RELIST (sells next, for a little less)
 --   7. otherwise                                    HOLD (worth the wait)
+-- (6 used to be the quarter alone: something that makes 20c was held for
+-- hours over 7c. An amount you would not buy a deal for is not worth a wait.)
 --
--- Returns { rec = "relist" | "hold" | "read", word, why, text, and the figures }.
+-- A HOLD THAT HAS A TIME COUNTS DOWN (rules 2 and 7: "your turn in about 30
+-- minutes"). When the time is up the listing is read again. Nobody cheaper
+-- any more: it is simply listed. Still undercut: the wait did not work, and
+-- the advice becomes RELIST (if a relist still pays and you have the fee).
+--
+-- THE ADVICE IS ADVICE. The Cancel button is on the row whatever it says:
+-- press it to relist an auction the addon would hold; leave it to keep one
+-- the addon would relist.
+--
+-- Returns { rec = "relist" | "hold" | "read", word, brief (a few words for
+-- the row), why, text, untilT (when a timed hold is up), and the figures }.
 Seller.UNDERCUT = { fresh = 900, soon = 1, giveUp = 0.25 }
 function Seller:Undercut(e)
     local key, L = e.key, e.listed
@@ -1887,6 +1910,7 @@ function Seller:Undercut(e)
         self.wantRows[key] = true
         r.rec, r.word = "read", "READING"
         r.why = ahOpen() and "its listing is being read" or "open the auction house: its listing is read first"
+        r.brief = r.why
         r.text = "Someone lists this for less than you do. " .. (ahOpen() and "Its listing is being read now; the advice (relist or hold) follows in a moment."
             or "Open the auction house: its listing is read, then the advice (relist or hold) is given.")
         return r
@@ -1935,28 +1959,72 @@ function Seller:Undercut(e)
         facts[#facts + 1] = ("relisted at %s it leaves %s (the posting fee of %s is lost with the cancel) against %s if it sells where it is"):format(
             short(repost), signed(r.relistProfit), short(feeCost), signed(r.holdProfit))
     end
-    local rec, why
+    local rec, why, brief
+    local n2 = (ahead == 1) and "1 cheaper unit" or (("%s%d cheaper units"):format(r.more and "at least " or "", ahead))
+    local small = max(cfg.minProfit or 0, 1) -- an amount you would not buy a deal for
     if ahead == 0 then
-        rec, why = "hold", "nobody was cheaper when its listing was last read in full"
+        rec, why, brief = "hold", "nobody was cheaper when its listing was last read in full", "nobody cheaper at the last full read"
     elseif not r.eta then
         rec, why = "hold", "no sale rate is measured yet, so nothing says a relist would sell sooner"
+        brief = n2 .. " ahead; sale rate not known yet"
     elseif r.eta <= U.soon and r.eta <= r.left then
         rec, why = "hold", ("the cheaper units sell in about %s: yours sells anyway, for more"):format(hours(r.eta))
+        brief = ("%s ahead, %d sell an hour"):format(n2, max(1, floor(r.rate + 0.5)))
+        r.timed = true
     elseif not r.relistProfit or r.relistProfit <= 0 then
         rec, why = "hold", repost and ("relisting at %s would leave %s"):format(short(repost), signed(r.relistProfit or 0)) or "the market is below what it cost you"
+        brief = repost and ("a relist at %s would lose"):format(short(repost)) or "the market is below your cost"
     elseif GetMoney() < newFee then
         rec, why = "hold", ("a relist needs a posting fee of %s first and you have %s"):format(short(newFee), short(GetMoney()))
+        brief = ("no gold for the fee (%s)"):format(short(newFee))
     elseif r.eta > r.left then
         rec, why = "relist", ("at this rate it will not sell before it runs out (%s left, %s%s to reach it)"):format(hours(r.left), r.more and "at least " or "about ", hours(r.eta))
-    elseif r.holdProfit - r.relistProfit <= U.giveUp * max(1, r.holdProfit) then
+        brief = ("will not sell in the %s it has left"):format(hours(r.left))
+    elseif r.holdProfit - r.relistProfit <= max(U.giveUp * max(1, r.holdProfit), small) then
         rec, why = "relist", ("it sells next, for only %s less than waiting %s"):format(short(r.holdProfit - r.relistProfit), hours(r.eta))
+        brief = ("sells next for %s less (or wait %s)"):format(short(r.holdProfit - r.relistProfit), hours(r.eta))
     else
         rec, why = "hold", ("waiting about %s is worth %s more than relisting"):format(hours(r.eta), short(r.holdProfit - r.relistProfit))
+        brief = ("the wait is worth %s more"):format(short(r.holdProfit - r.relistProfit))
+        r.timed = true
     end
-    r.rec, r.why = rec, why
-    r.word = rec == "relist" and "RELIST" or (r.eta and r.eta <= 9 and ahead > 0) and ("HOLD " .. hours(r.eta):gsub(" hours", "h"):gsub(" min", "m")) or "HOLD"
+    -- A TIMED HOLD: counted down from when it was first given; once it is up
+    -- the listing is read again, and an auction still undercut is to relist.
+    self.ucHold = self.ucHold or {}
+    local h = self.ucHold[key]
+    if rec == "hold" and r.timed then
+        if not h or h.price ~= price then
+            h = { at = last.at, secs = r.eta * 3600, price = price }
+            self.ucHold[key] = h
+        end
+        r.untilT = h.at + h.secs
+        if GetTime() >= r.untilT then
+            if last.at < r.untilT then
+                -- the listing on record is from before the time was up: it is read again first
+                self.wantRows = self.wantRows or {}
+                self.wantRows[key] = true
+                r.untilT = nil
+                r.checking = true
+                brief = "its time is up: reading the listing again"
+                why = why .. " (that time is up: its listing is being read again)"
+            else
+                r.untilT = nil
+                if r.relistProfit and r.relistProfit > 0 and GetMoney() >= newFee then
+                    rec = "relist"
+                    why = ("it was given %s to sell and is still undercut"):format(hours(h.secs / 3600))
+                    brief = ("still undercut after %s: relist"):format(hours(h.secs / 3600))
+                else
+                    brief = "still undercut, but a relist would not pay"
+                end
+            end
+        end
+    elseif rec ~= "hold" or ahead == 0 then
+        if not (h and rec == "relist" and h.price == price and GetTime() >= h.at + h.secs) then self.ucHold[key] = nil end
+    end
+    r.rec, r.why, r.brief = rec, why, brief
+    r.word = rec == "relist" and "RELIST" or r.checking and "CHECKING" or "HOLD"
     r.text = (rec == "relist" and ("RELIST at %s: %s. Press Cancel on this row (twice), collect it at a mailbox, and post it again. "):format(short(repost), why)
-        or ("HOLD: %s. "):format(why)) .. "The figures: " .. table.concat(facts, "; ") .. "."
+        or ("HOLD: %s. Your call: Cancel on this row relists it anyway. "):format(why)) .. "The figures: " .. table.concat(facts, "; ") .. "."
     return r
 end
 

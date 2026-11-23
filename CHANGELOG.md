@@ -6,6 +6,19 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.61.0 (2026-11-23)
+
+- **Requests follow the tab.**
+  - **Bags tab (selling):** while selling has anything to read (a price for something to post, the listing of an undercut auction), every request goes to that, until it is all in. It was every other request. Once everything is read the radar ticks over again, so a deal still shows in the Trades tab's label.
+  - **Trades tab (buying):** nothing is read for selling at all. Prices of what you hold used to be refreshed there every ten minutes; those requests go to the radar now. (One exception: with "One key: buys and posts" the key also posts from the Trades tab, so prices are still read there in that mode.)
+- **The advice on an undercut auction is clearer, and says how to overrule it.**
+  - **The reason is on the row itself**, in a few words where the cost and market columns are on other rows: `60 cheaper units ahead, 120 sell an hour`, `sells next for 7c less (or wait 3 hours)`, `will not sell in the 2 hours it has left`. The whole advice with its figures is still behind the mouse.
+  - **You can always overrule it.** The Cancel button is on the row whatever the advice says: press it to relist something the addon would hold; leave it alone to keep something it would relist. The full advice now ends with `Your call: Cancel on this row relists it anyway.`
+  - **A small amount is not worth a wait.** The rule held an auction when relisting gave up more than a quarter of its profit, however little that was: something that makes 20c could be held for hours over 7c. Now it also relists when what is given up is no more than the smallest profit you bother with (the "sniping for" figure).
+- **A hold with a time counts down**, on the row: `HOLD 29:58`, `HOLD 0:42`. When the time is up the listing is read again by itself. Nobody cheaper any more: it is simply listed. Still undercut: the wait did not work, and the advice becomes `RELIST` (`still undercut after 30 min: relist`), provided a relist still pays and you have the fee.
+- **The marks on the Gold chart are small diamonds** (they were 11-pixel squares).
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.60.0 (2026-11-23)
 
 - **An undercut auction now comes with advice: RELIST or HOLD**, on its row on the Bags tab (the section is called UNDERCUT; its ADVICE column shows the word, and the mouse on the row gives the whole advice with its figures). It is worked out from what is measured:

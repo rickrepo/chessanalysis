@@ -213,8 +213,23 @@ local function fillSell(r, e, short)
     r.c[1]:SetText(tostring(e.count))
     r.c[2]:SetText(e.farm and (GREEN .. "farmed|r") or paid and short(paid) or (ORANGE .. "?|r"))
     r.c[3]:SetText(short(sell) .. ((e.f.kind == "FLIP" and not live and e.action ~= "LISTED") and (GREY .. "*|r") or ""))
+    local adv = e.action == "LISTED" and e.undercut and e.adv or nil
+    local advWord
+    if adv then
+        -- a hold with a time counts down; when it is up the listing is read again (see Seller:Undercut)
+        advWord = adv.word
+        local left = adv.untilT and (adv.untilT - GetTime()) or nil
+        if adv.rec == "hold" and left and left > 0 then
+            advWord = "HOLD " .. (left >= 3600 and ("%dh%02d"):format(floor(left / 3600), floor(left / 60) % 60) or ("%d:%02d"):format(floor(left / 60), floor(left) % 60))
+            UI.holdTick = true
+        end
+        -- WHY, in a few words, where the cost and the market price are on other rows
+        r.c[2]:SetText(""); r.c[3]:SetText("")
+        r.brief:SetText((adv.rec == "relist" and GOLD or GREY) .. tostring(adv.brief or adv.why or "") .. "|r")
+        r.brief:Show()
+    end
     r.c[4]:SetText(e.action == "LISTED" and (e.sold and (GREEN .. "SOLD|r") or e.live == 0 and (GREEN .. "SOLD?|r")
-            or (e.undercut and e.adv) and ((e.adv.rec == "relist" and GOLD or e.adv.rec == "hold" and GREEN or GREY) .. e.adv.word .. "|r")
+            or adv and ((adv.rec == "relist" and GOLD or adv.rec == "hold" and GREEN or GREY) .. advWord .. "|r")
             or e.undercut and (ORANGE .. "UNDERCUT|r") or (GREY .. "LISTED|r"))
         or e.action == "AH" and (ready and (GOLD .. "READY|r") or (GREY .. "pricing|r"))
         or e.action == "VENDOR" and (GREEN .. "VENDOR|r") or e.action == "MAIL" and (CYAN .. "MAIL|r") or (RED .. "WAIT|r"))
@@ -516,7 +531,7 @@ local function buildList(tab, deals, entries)
             if nRelist > 0 then parts[#parts + 1] = GOLD .. "relist " .. nRelist .. "|r" end
             if nHold > 0 then parts[#parts + 1] = GREEN .. "hold " .. nHold .. "|r" end
             if nRead > 0 then parts[#parts + 1] = GREY .. "reading " .. nRead .. "|r" end
-            sect("STUCK", "UNDERCUT", { "QTY", "COST", "MARKET", "ADVICE", "P / L" }, stuck, table.concat(parts, GREY .. ", |r"))
+            sect("STUCK", "UNDERCUT", { "QTY", "WHY", "", "ADVICE", "P / L" }, stuck, table.concat(parts, GREY .. ", |r"))
         end
         sect("ENDED", "ENDED, CHECK A MAILBOX", CAPS.entry, ended, "sold or expired: the mailbox shows which")
         do  -- sold: one line with the gold that is coming and when the next of it arrives
@@ -1489,6 +1504,7 @@ function UI:Render()
     frame.status:SetText(status)
 
     -- as many rows as the panel's height holds; the mouse wheel scrolls the rest
+    UI.holdTick = nil -- (set while the list is drawn, if an undercut auction's hold is counting down)
     local list = buildList(tab, deals, entries)
     local h = frame:GetHeight()
     local vis = type(h) == "number" and h > 0 and math.max(3, math.min(MAXROWS, floor((h - self.listTop - 36) / ROW_H))) or ROWS
@@ -1511,6 +1527,7 @@ function UI:Render()
         local r, item = rows[i], (i <= vis) and list[i + off] or nil
         r.item, r.sect, r.looseItem = nil, nil, nil
         r.heat:Hide()
+        r.brief:Hide()
         do  -- the item just bought (green) or missed (red): its row is framed for the length of the flash
             local c = item and item.key ~= nil and not item.action and tab == "BUY" and item.key == self.flashKey
                 and self.flashUntil and GetTime() < self.flashUntil and UI.FLASH_RGB[self.flashKind]
@@ -2472,14 +2489,19 @@ function UI:Create()
             h:SetScript("OnEnter", tipOf); h:SetScript("OnLeave", tipOff)
             gd.hover[i] = h
         end
-        -- the biggest changes, marked: the mouse over a mark says what it was
+        -- the biggest changes, marked with a small diamond: the mouse over one says what it was.
+        -- (They were 11-pixel squares. The diamond is a 6-pixel square turned on its corner; the
+        -- area that answers the mouse stays a little larger than what is drawn.)
         gd.marks = {}
         for i = 1, C.marks do
             local m = CreateFrame("Button", nil, plot)
             m:SetSize(11, 11)
+            m.edge = m:CreateTexture(nil, "ARTWORK")
+            m.edge:SetSize(8, 8); m.edge:SetPoint("CENTER")
+            m.edge:SetColorTexture(0, 0, 0, 0.9)
             m.tex = m:CreateTexture(nil, "OVERLAY")
-            m.tex:SetAllPoints()
-            outline(m, { 1, 1, 1 })
+            m.tex:SetSize(6, 6); m.tex:SetPoint("CENTER")
+            if m.tex.SetRotation then m.tex:SetRotation(math.pi / 4); m.edge:SetRotation(math.pi / 4) end
             m:SetScript("OnEnter", tipOf); m:SetScript("OnLeave", tipOff)
             do  -- above the hover strips, so that the mouse reaches the mark
                 local lv = plot.GetFrameLevel and plot:GetFrameLevel()
@@ -2612,6 +2634,11 @@ function UI:Create()
             f:SetWidth(COLS[n][2]); f:SetJustifyH("LEFT"); f:SetWordWrap(false)
             r.c[n - 1] = f
         end
+        -- an undercut auction's row: why the advice is what it is, across the COST and MARKET columns
+        r.brief = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.brief:SetPoint("LEFT", COLS[3][1], 0)
+        r.brief:SetWidth(COLS[5][1] - COLS[3][1] - 8); r.brief:SetJustifyH("LEFT"); r.brief:SetWordWrap(false)
+        r.brief:Hide()
         -- One line per row. The longer explanation and status are kept for the
         -- tooltip (and shown in place only for recent activity).
         r.detail = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -2690,6 +2717,10 @@ function UI:Create()
                 UI.clockSec = sec
                 frame.footer:SetText(table.concat(UI.TradesFooter(ns.Seller.short), GREY .. "   |   |r"))
             end
+        end
+        do  -- a hold counting down on the Bags tab: redrawn once a second while one is shown
+            local sec = floor(GetTime())
+            if UI.tab == "SELL" and UI.holdTick and sec ~= UI.holdSec then UI.holdSec = sec; UI.dirty = true end
         end
         if UI.flashUntil and GetTime() >= UI.flashUntil then
             UI.flashUntil, UI.flashKind = nil, nil

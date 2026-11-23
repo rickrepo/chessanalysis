@@ -89,8 +89,10 @@ local ARMED_KEEP = 780            -- while armed: only a listing about to become
 local LADDER_MAX = 900            -- a listing older than this is never used for a flip straight from the radar
 local LADDER_ROWS = 20            -- rows of a listing that are remembered for it
 -- UPKEEP BUDGET: of every N+1 requests, N are radar reads (see Sniper:UpkeepTurn)
--- (bagsNew: on the Bags tab while something you want to post has no price yet)
-Sniper.upkeep = { every = 8, bags = 3, bagsNew = 1 }
+-- (bagsNew: on the Bags tab while selling still has something to read: a
+-- price for what you want to post, the listing of an undercut auction. 0:
+-- every request goes to that until it is all in.)
+Sniper.upkeep = { every = 8, bags = 3, bagsNew = 0 }
 local ALERT_SRC = { vendor = true, market = true, drop = true }
 local SEARCH_TIMEOUT = 3 -- default; the Tuner replaces it with a figure from the measured pace
 local PROFESSION = { [0] = true, [3] = true, [5] = true, [7] = true, [8] = true } -- stackable goods only
@@ -859,10 +861,12 @@ function Sniper:UpkeepEvery()
     local c = self.upkeep
     local U = ns.UI
     if U and U.tab == "SELL" and not self:SnipeMode() then
-        -- You are on the Bags tab to post, and some of it has no price yet:
-        -- every other request reads a price until they are all in (it was one
-        -- in four, and a dozen items took half a minute of what looked like
-        -- nothing happening). The radar still has every other request.
+        -- REQUESTS FOLLOW THE TAB. You are on the Bags tab to sell: while
+        -- selling has anything to read (a price for something to post, the
+        -- listing of an undercut auction) EVERY request goes to that. Once
+        -- it is all in, the radar has three of every four again, so deals
+        -- still show on the Trades tab's label. On the Trades tab it is the
+        -- other way round: nothing is read for selling there at all.
         local Se = ns.Seller
         if Se and Se.Unpriced and Se:Unpriced() then return c.bagsNew end
         return c.bags

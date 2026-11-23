@@ -3512,9 +3512,21 @@ do
     UI.tab = "SELL"
     check(Se:NextToPrice() == 2589, "Bags tab: it is re-read, as before, so Post always has a fresh price")
     Se.pricedAt = {}; Se.prices[2589] = nil; UI.tab = "BUY"
-    check(Se:NextToPrice() == 2589, "an item that has never been priced is priced on any tab")
+    -- REQUESTS FOLLOW THE TAB: on the Trades tab nothing is read for selling, on the Bags tab everything is
+    check(Se:NextToPrice() == nil, "Trades tab: an item with no price at all is still not priced there: every request is for buying")
     Se.pricedAt = {}; Se.prices[2589] = { price = 77, at = GetTime() - 700, commodity = true }
-    check(Se:NextToPrice() == 2589, "and on the Trades tab a price is still refreshed once in 10 minutes")
+    check(Se:NextToPrice() == nil, "Trades tab: nor is a price that is ten minutes old read again")
+    Se.pricedAt = {}; Se.prices[2589] = nil
+    do  -- the one exception: the "one key" way of buying also posts from the Trades tab, and needs the prices for it
+        local modeWas = AuctionMeshDB.cfg.buyMode
+        AuctionMeshDB.cfg.buyMode = "one"
+        check(UI.BuyMode() == "one" and Se:NextToPrice() == 2589, "(with 'One key: buys and posts' the prices are still read on the Trades tab: that key posts from there)")
+        AuctionMeshDB.cfg.buyMode = modeWas
+        Se.pricedAt = {}
+    end
+    UI.tab = "SELL"
+    check(Se:NextToPrice() == 2589, "Bags tab: it is priced at once")
+    UI.tab = "BUY"
     AuctionMeshDB.flips[2589] = nil; bags[1] = nil; fire("BAG_UPDATE_DELAYED"); Se.prices[2589] = nil; Se.pricedAt = {}; Se.pending = nil
     UI.tab = "BUY"; UI:Render()
 end
@@ -3883,8 +3895,11 @@ do
     rate = 120
     a = advice()
     print("     " .. a.word .. ": " .. a.why)
-    check(a.rec == "hold" and a.word == "HOLD 30m" and a.why:find("the cheaper units sell in about 30 min", 1, true),
-        "120 sell an hour: the 60 ahead are gone in about 30 minutes. HOLD, it sells anyway for more")
+    check(a.rec == "hold" and a.word == "HOLD" and a.untilT and math.abs((a.untilT - GetTime()) - 1800) < 2 and a.why:find("the cheaper units sell in about 30 min", 1, true)
+        and a.brief == "60 cheaper units ahead, 120 sell an hour",
+        "120 sell an hour: the 60 ahead are gone in about 30 minutes. HOLD, with the time it is given, and the reason in a few words")
+    check(a.text:find("Your call: Cancel on this row relists it anyway.", 1, true), "the advice says how to overrule it: Cancel relists it anyway")
+    Se.ucHold = nil
     -- 6. a long wait, and relisting gives up little: RELIST
     rate = 20 -- 3 hours to reach yours; 10 hours left
     a = advice()
@@ -3927,13 +3942,75 @@ do
     end
     local hs = table.concat(headsText(), "\n")
     print("     " .. strip(row.name._text) .. " | " .. strip(row.c[4]._text) .. " | " .. strip(row.state._text))
-    check(hs:find("[-] UNDERCUT (1) | QTY / COST / MARKET / ADVICE / P / L", 1, true) and row and strip(row.c[4]._text) == "RELIST"
-        and strip(row.state._text):find("^Relist: it sells next") and row.btn._text == "Cancel" and strip(row.detail._text):find("^RELIST at 89c: "),
-        "on the Bags tab the row says RELIST with the reason, the whole advice is behind the mouse, and Cancel is the button")
+    check(hs:find("[-] UNDERCUT (1) | QTY / WHY /  / ADVICE / P / L", 1, true) and row and strip(row.c[4]._text) == "RELIST"
+        and row.brief._shown and strip(row.brief._text) == "sells next for 3s60c less (or wait 3 hours)" and row.btn._text == "Cancel" and strip(row.detail._text):find("^RELIST at 89c: "),
+        "on the Bags tab the row says RELIST and, in a few words on the row itself, why; the whole advice is behind the mouse, and Cancel is the button")
+    do  -- A SMALL AMOUNT IS NOT WORTH A WAIT: something that makes 20c is not held for hours over 7c
+        local Lw = AuctionMeshDB.listed[9801]
+        local costWas, minWas = Lw.cost, ns.Deals.cfg.minProfit
+        Lw.cost, Lw.qty, Lw.fee = 80, 1, 1
+        e.count, e.live = 1, 1
+        S.lastRows[9801] = { rows = { { price = 97, qty = 60 }, { price = 110, qty = 200 } }, at = GetTime() }
+        ns.Deals.cfg.minProfit = 50
+        Se.ucHold = nil
+        local a7 = advice()
+        print("     " .. a7.word .. ": " .. a7.why)
+        check(a7.rec == "relist" and a7.holdProfit == 15 and a7.relistProfit == 10 and a7.why:find("it sells next, for only 5c less", 1, true),
+            "a 15c profit: relisting gives up 5c of it, more than a quarter, but far under the 50c you bother with. RELIST, not a three-hour wait")
+        Lw.cost, Lw.qty, Lw.fee, ns.Deals.cfg.minProfit = costWas, 30, 30, minWas
+        e.count, e.live = 30, 30
+    end
+    do  -- A HOLD COUNTS DOWN, and when its time is up and the auction is still undercut the advice becomes RELIST
+        -- (time passes with the radar still seeing the cheaper listing, as it does in the game)
+        local function wait(secs)
+            while secs > 0 do
+                local step = math.min(120, secs)
+                advance(step); secs = secs - step
+                St:Put(9801, 90, 500, GetServerTime())
+            end
+        end
+        St:Put(9801, 90, 500, GetServerTime())
+        rate = 120 -- 60 ahead: your turn in 30 minutes
+        S.lastRows[9801] = { rows = { { price = 90, qty = 20 }, { price = 95, qty = 40 }, { price = 110, qty = 200 } }, at = GetTime() }
+        Se.ucHold, Se.ucCache, Se.wantRows = nil, nil, nil
+        UI:Render()
+        print("     " .. strip(row.c[4]._text) .. " | " .. strip(row.brief._text))
+        check((strip(row.c[4]._text) == "HOLD 30:00" or strip(row.c[4]._text):find("^HOLD 29:5%d$")) and UI.holdTick == true, "the row shows HOLD with the time left: 30:00")
+        wait(60); UI:Render()
+        check(strip(row.c[4]._text):find("^HOLD 28:5%d$"), "a minute later it reads 28:5x: it counts down by itself")
+        -- the time runs out: the listing on record is from before, so it is read again first
+        LIST[9801] = { { 90, 20 }, { 95, 40 }, { 110, 200 } } -- still the same cheaper units
+        Se.pricedAt = {}
+        local readsBefore = #sent
+        wait(1700); UI:Render()
+        print("     " .. strip(row.c[4]._text))
+        check(strip(row.c[4]._text):find("^HOLD 0:%d%d$") and #sent - readsBefore >= 0, "with under a minute left it still says HOLD (the listing was read again on the way, and the count went on)")
+        local n9801 = 0
+        for i = 1, #sent do if sent[i] == "search9801" then n9801 = n9801 + 1 end end
+        wait(60) -- the time runs out while the tab is open
+        local n2 = 0
+        for i = 1, #sent do if sent[i] == "search9801" then n2 = n2 + 1 end end
+        check(n2 == n9801 + 1, "when the time is up the listing is read again, once, by itself")
+        Se.ucCache = nil; UI:Render()
+        local ax = Se:Undercut(e)
+        print("     " .. ax.word .. ": " .. strip(ax.why) .. " | row: " .. strip(row.c[4]._text) .. " | " .. strip(row.brief._text))
+        check(ax.rec == "relist" and strip(ax.why) == "it was given 30 min to sell and is still undercut" and strip(row.c[4]._text) == "RELIST"
+            and strip(row.brief._text) == "still undercut after 30 min: relist",
+            "read again, still undercut: the wait did not work, and the advice is now RELIST")
+        -- had the cheaper units gone, it would simply be listed
+        S.lastRows[9801] = { rows = { { price = 110, qty = 200 } }, at = GetTime() }
+        Se.ucCache = nil
+        ax = Se:Undercut(e)
+        check(ax.rec == "hold" and ax.ahead == 0 and Se.ucHold[9801] == nil, "(with nobody cheaper any more there is nothing to do, and the count starts afresh next time)")
+        rate = 20
+        S.lastRows[9801] = { rows = { { price = 90, qty = 20 }, { price = 95, qty = 40 }, { price = 110, qty = 200 } }, at = GetTime() }
+        Se.ucHold, Se.ucCache = nil, nil
+    end
     -- the listing is read on the Bags tab when it is missing
     S.lastRows[9801] = nil; Se.ucCache = nil; Se.pricedAt = {}; Se.wantRows = nil
     LIST[9801] = { { 90, 20 }, { 95, 40 }, { 110, 200 } }
     UI:Render()
+    St:Put(9801, 90, 500, GetServerTime()) -- (the radar still sees the cheaper listing)
     check(Se.wantRows and Se.wantRows[9801] == true and Se:NextToPrice() == 9801, "with no listing on record it is asked for in the Bags tab's upkeep turn")
     Se.pricedAt = {}
     advance(6); UI:Render()
@@ -3997,13 +4074,13 @@ do
     Se.pricedAt = {}; Se.pending = nil; Se.priority = nil
     fire("BAG_UPDATE_DELAYED")
     local wasNew, wasBags = S.upkeep.bagsNew, S.upkeep.bags
-    S.upkeep.bagsNew, S.upkeep.bags = 1, 3
+    S.upkeep.bagsNew, S.upkeep.bags = 0, 3 -- (as shipped)
     UI:Open("SELL"); UI.notice = nil; UI.wheelSeen = nil; UI:Render()
     local st = strip(AuctionMeshFrame.status._text)
     print("     " .. st:gsub("\n", "\n     "))
     check(st:find("READING PRICES: 0 of 3 ready", 1, true) and st:find("About %d+s for the rest%.") and st:find("Post lights up on a row as its price comes in.", 1, true),
         "with nothing priced yet the Bags tab says so in figures: 0 of 3 ready, and about how long the rest takes")
-    check(Se:Unpriced() == true and S:UpkeepEvery() == 1, "while prices are missing every other request reads one (it was one in four)")
+    check(Se:Unpriced() == true and S:UpkeepEvery() == 0 and S:UpkeepTurn() == true, "on the Bags tab, while prices are missing, EVERY request goes to reading them")
     -- rolling the wheel: sniping has every request, and the tab says the prices wait
     UI.wheelSeen = GetTime(); UI:Render()
     st = strip(AuctionMeshFrame.status._text)
