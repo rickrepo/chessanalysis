@@ -1,6 +1,15 @@
 -- AuctionMesh Gold: your gold over time, kept the way a stock chart needs it.
 --
--- Every time the gold on this character changes, three things are updated:
+-- WHAT IS CHARTED: YOUR CASH = the gold in your hand PLUS what has SOLD and is
+-- not in your hand yet (sale gold on its way, or waiting in the mailbox). An
+-- auction that has sold is as good as cash; only what is listed and has not
+-- sold is tied up. So buying a flip takes the line down by what you paid, its
+-- sale brings it up by what the buyer paid, and collecting the gold from the
+-- mailbox changes nothing: it only moves from "sold" to "in hand". (The first
+-- version charted gold in hand alone. A real session read "- 62%" with over
+-- ten gold of sales on their way.)
+--
+-- Every time that amount changes, three things are updated:
 --
 --   the hour   one record per hour in which it changed: what it was when the
 --              hour began (open), the most and the least it was (high, low)
@@ -34,6 +43,12 @@ Gold.cfg = {
 
 Gold.now = function() return GetServerTime() end
 Gold.money = function() return GetMoney() end
+-- What has sold and is not in hand yet, in copper; nil while that is not
+-- known (the list of your own auctions has not been read this session). Set
+-- by Core. Until it is known the last known amount is carried.
+Gold.sold = function() return nil end
+Gold.atMail = function() return false end -- the mailbox is open (sale gold being collected)
+Gold.START_WAIT = 300 -- a new record waits this long, at most, for the sold amount before it begins
 Gold.dayId = function(t) return tonumber(date("%Y%m%d", t)) end
 
 function Gold:Attach(db, charKey)
@@ -41,16 +56,36 @@ function Gold:Attach(db, charKey)
     db.gold = db.gold or {}
     local d = db.gold[charKey] or {}
     db.gold[charKey] = d
+    if d.kind ~= "cash" then
+        -- a record of gold in hand alone (3.52 to 3.56) is not the same thing: it starts again
+        d.h, d.d, d.ev = {}, {}, {}
+        d.kind, d.sold, d.wait, d.waitAt = "cash", nil, true, self.now()
+    end
     d.h, d.d, d.ev = d.h or {}, d.d or {}, d.ev or {}
     self.d = d
-    self.last = self.money()
-    self:Sample(self.last, self.last, self.now())
+    self.lastMoney = self.money()
+    self.last = nil
+    self:OnMoney()
     if not self.frame and CreateFrame then
         local f = CreateFrame("Frame")
         f:RegisterEvent("PLAYER_MONEY")
-        f:SetScript("OnEvent", function() Gold:OnMoney() end)
+        -- a frame later: everything else that reacts to the gold changing (the
+        -- mailbox taking sale gold off "sold") has then done so
+        f:SetScript("OnEvent", function()
+            if C_Timer and C_Timer.After then C_Timer.After(0, function() Gold:OnMoney() end) else Gold:OnMoney() end
+        end)
         self.frame = f
     end
+end
+
+-- Your cash now: gold in hand plus what has sold. Returns cash, in hand, sold.
+function Gold:Cash()
+    local d = self.d
+    local m = self.money()
+    if not d then return m, m, 0 end
+    local live = self.sold()
+    if live then d.sold = live end
+    return m + (d.sold or 0), m, d.sold or 0
 end
 
 -- one record of a list (hours or days) takes a new value
@@ -82,16 +117,39 @@ local function addWhy(e, text, limit)
     if #e.why < limit then e.why[#e.why + 1] = text else e.more = (e.more or 0) + 1 end
 end
 
--- The game says the gold changed.
+-- The gold in hand changed, or what has sold did (the list of your auctions
+-- was read, the mailbox was read). Called from each of those.
 function Gold:OnMoney()
     local d = self.d
     if not d then return end
-    local g = self.money()
-    local prev = self.last or g
+    local m = self.money()
+    local live = self.sold()
+    if live then
+        d.sold = live
+    elseif self.lastMoney and m > self.lastMoney and self.atMail() then
+        -- sale gold collected while the sold amount is not known afresh: it comes off the carried amount
+        d.sold = max(0, (d.sold or 0) - (m - self.lastMoney))
+    end
+    self.lastMoney = m
+    local g = m + (d.sold or 0)
+    local t = self.now()
+    if d.wait then
+        -- a new record begins once the sold amount is known (or after a few minutes without it)
+        if not live and t - (d.waitAt or t) < self.START_WAIT then self.last = nil; return end
+        d.wait, d.waitAt = nil, nil
+        self.last = g
+        self:Sample(g, g, t)
+        return
+    end
+    if not self.last then
+        -- the first reading of a session: what changed while the addon was not looking is one step
+        local b = d.d[#d.d]
+        self.last = b and b.c or g
+    end
+    local prev = self.last
     local delta = g - prev
     if delta == 0 then return end
     self.last = g
-    local t = self.now()
     self:Sample(g, prev, t)
     local c = self.cfg
     -- a cause declared just before this change, for this direction
@@ -157,7 +215,7 @@ function Gold:Line(view, cols)
     for _, b in ipairs(d.d) do add((b.t or 0) - 1, b.o); add(b.tc or b.t or 0, b.c) end
     for _, b in ipairs(d.h) do add((b.t or 0) - 1, b.o); add(b.tc or b.t or 0, b.c) end
     for _, e in ipairs(d.ev) do add(e.t - 1, e.g - e.d); add(e.t2 or e.t, e.g) end
-    add(now, self.money())
+    if not d.wait then add(now, (self:Cash())) end
     table.sort(pts, function(a, b)
         if a[1] ~= b[1] then return a[1] < b[1] end
         return a[3] < b[3]
@@ -238,7 +296,7 @@ end
 -- What a swing was, in words.
 function Gold.Why(e)
     if not e.why or #e.why == 0 then
-        return (e.d > 0) and "gold came in: not through the addon" or "gold went out: not through the addon"
+        return (e.d > 0) and "gold came in, or something sold: not seen by the addon as it happened" or "gold went out: not through the addon"
     end
     local s = table.concat(e.why, ", ")
     if (e.more or 0) > 0 then s = s .. (", and %d more"):format(e.more) end
@@ -256,7 +314,7 @@ function Gold:Change(secs)
         if b.id <= cut then base = b.c elseif not base then base = b.o end
     end
     if not base then return nil end
-    return self.money() - base, base
+    return (self:Cash()) - base, base
 end
 
 -- Today's change: now against what the day opened at.
@@ -265,8 +323,9 @@ function Gold:Today()
     if not d then return nil end
     local id = self.dayId(self.now())
     local b = d.d[#d.d]
-    if b and b.id == id then return self.money() - b.o, b.o end
-    return 0, self.money()
+    local cash = (self:Cash())
+    if b and b.id == id then return cash - b.o, b.o end
+    return 0, cash
 end
 
 return Gold

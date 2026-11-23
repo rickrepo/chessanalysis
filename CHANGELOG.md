@@ -6,6 +6,25 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.57.0 (2026-11-23)
+
+From four real screenshots.
+
+- **The Gold chart charts your CASH: gold in hand plus what has sold.** It charted gold in hand alone, so a session of buying flips read `- 62%` while over ten gold of sales were on their way. An auction that has sold is as good as cash; only what is listed and has not sold is tied up. Now:
+  - buying takes the line down by what you paid; a sale brings it up by what the buyer paid, the moment the auction house lists it as sold; collecting the gold from the mailbox changes nothing (it only moves from "sold" to "in hand");
+  - the large figure is that cash, and the line under it says what it is made of: `Cash = in hand 3g85s + sold 10g50s      Not sold yet: 7g68s listed, 33s in your bags`;
+  - new sales are named on the chart (`Sold 20 x Runecloth (auction)`) when the list of your auctions is read;
+  - the record starts again with this version (the old one was of gold in hand, a different thing), and begins once the sold amount is known, so it cannot start too low.
+- **Fixed: text at the top of the chart ran under the range buttons.** It ends where they begin now, and reads `since 23:48` (the longer wording is gone).
+- **The money breakdown is back on the Trades tab**, always there, as it was before 3.54: gold in hand, sold (in the mailbox, on its way), listed, in your bags, and the total. The line saying what is being sniped stays above it.
+- **The Bags tab with many auctions:**
+  - **A scroll bar** at the right edge of the list (drag it; the mouse wheel still scrolls, three rows a notch).
+  - **Sold and listed auctions fold into one line each**: `[+] SOLD, GOLD ON ITS WAY (12)   + 9g50s coming, the next in 14 min` and `[+] LISTED (14)   nobody is cheaper: + 7g68s if they sell`. Click a heading to open or fold its section; it is remembered. Stuck listings stay open (they need a decision).
+  - **What you can act on comes first**: to post, to sell, to collect, then "in your bags, not tracked" (Add), then stuck listings, then the folded ones.
+  - Headings are short (they were printed over their own column titles), the footer is no longer cut off, and the status lines do not repeat how many auctions are listed.
+- **The More tab:** a message could be printed over the page buttons; it has its own line under them now. The rows have room between them (the buttons used to touch), and the footer is shown in full.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.56.0 (2026-11-23)
 
 - **The Gold chart begins where your record begins.** A real screenshot showed why it looked wrong: with 25 minutes on record and "2 days" picked, the chart was two days of empty space with everything squeezed into the last sliver. Now, when there is less on record than the range asked for, the chart shows what there is across its whole width (never less than ten minutes), the times along the bottom are spaced to fit (every 5 minutes, 15 minutes, hour and so on), the marks sit along the line where each change happened, and the change at the top reads `since 23:40 (recording began then)` in place of `2 days`. Once two days are on record, "2 days" is two days.

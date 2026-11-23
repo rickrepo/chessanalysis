@@ -296,9 +296,7 @@ function Seller:Instructions(entries)
             or ("Talk to any vendor to sell " .. n.VENDOR .. " item(s). Nothing is sold until you press Sell."))
     end
     if n.HOLD > 0 then add("HOLD", n.HOLD .. " item(s) waiting: the market is below what you paid. Re-checked every 10 min.") end
-    if n.LISTED > 0 then
-        lines[#lines + 1] = ("|cffaaaaaa%d auction(s) listed. The gold arrives by mail when they sell.|r"):format(n.LISTED)
-    end
+    -- (the auctions you have up are on the list itself, folded into a line each for sold and listed: not said twice here)
     if #lines == 0 then
         lines[1] = "|cffaaaaaaNothing to sell. Items you buy on the Trades tab appear here.|r"
     end
@@ -513,8 +511,7 @@ function Seller:RecordSale(i)
             tostring(itemName), tostring(bid), tostring(feeBack), tostring(cut), tostring(count))
     end
     if kind ~= "seller" or not itemName or not bid or bid <= 0 then return end
-    -- (for the Gold tab's swings: what this gold is)
-    if ns.Gold then ns.Gold:Cause(("Sold %s%s (auction)"):format((count and count > 1) and (count .. " x ") or "", tostring(itemName)), 1) end
+    -- (the Gold tab counts a sale when it SELLS, not when its gold is collected: see Sniper:ReadOwned)
     local key = AuctionMeshDB.names and AuctionMeshDB.names[itemName]
     if not key then return end
     count = (count and count > 0) and count or 1

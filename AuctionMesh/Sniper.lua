@@ -2256,8 +2256,20 @@ function Sniper:ReadOwned()
             n = n + 1
         end
     end
+    do  -- for the Gold tab: what has newly sold is cash from this moment, and is named on the chart
+        local prev, names, more = self.ownSoldQty or {}, {}, 0
+        for key, q in pairs(soldQty) do
+            if q > (prev[key] or 0) then
+                if #names < 3 then names[#names + 1] = ("Sold %d x %s (auction)"):format(q - (prev[key] or 0), nameOf(key)) else more = more + 1 end
+            end
+        end
+        if ns.Gold and #names > 0 then
+            for _, w in ipairs(names) do ns.Gold:Cause(w, 1) end
+        end
+    end
     self.ownSold, self.ownSoldQty = soldRows, soldQty
     self.ownSoldPay = soldPay -- { amount after the cut, due = when it is paid out }
+    if ns.Gold then ns.Gold:OnMoney() end -- (what has sold is part of your cash: the record follows)
     ns.Log("OWNED: the server lists %d of your auctions (%d active, %d sold and waiting to be paid) %s", total, n, soldRows, table.concat(rowsLog, " "))
     self.own, self.ownRead = own, true
     self.ownIds, self.ownAt = ids, GetTime()

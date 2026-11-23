@@ -13,6 +13,9 @@ date = os.date
 local ns = {}
 local G = assert(loadfile("AuctionMesh/Gold.lua"))("AuctionMesh", ns)
 G.dayId = function(t) return tonumber(os.date("!%Y%m%d", t)) end
+local sold, atMail = 0, false -- what has sold and is not in hand yet (nil = not known); is the mailbox open
+G.sold = function() return sold end
+G.atMail = function() return atMail end
 local db = {}
 G:Attach(db, "Tester-Realm")
 local d = db.gold["Tester-Realm"]
@@ -41,6 +44,33 @@ check(d.ev[3].why == nil, "a sale declared right after gold went OUT is not put 
 local n = #d.ev
 G:OnMoney()
 check(#d.ev == n, "the game saying 'gold changed' with the same amount records nothing")
+
+print("sold counts as cash")
+do
+    local n0, cash0 = #d.ev, (G:Cash())
+    -- an auction sells: 5s on its way. Cash is up by 5s at once, and the swing says what sold.
+    T = T + 100; sold = 500
+    G:Cause("Sold 5 x Thick Leather (auction)", 1); G:OnMoney()
+    check(#d.ev == n0 + 1 and d.ev[#d.ev].d == 500 and d.ev[#d.ev].why[1] == "Sold 5 x Thick Leather (auction)" and (G:Cash()) == cash0 + 500,
+        "an auction sells: cash is up by what the buyer paid at once, with what sold")
+    -- an hour later the gold is collected: in hand + 5s, sold - 5s. Nothing changes.
+    T = T + 100; gold = gold + 500; sold = 0; G:OnMoney()
+    check(#d.ev == n0 + 1 and (G:Cash()) == cash0 + 500, "collecting it from the mailbox changes nothing: it moves from sold to in hand")
+    -- the sold amount is not known (a new session, the auction house not opened yet): the last known amount is carried
+    sold = 300; G:OnMoney(); T = T + 20
+    local n1, cash1 = #d.ev, (G:Cash())
+    sold = nil
+    T = T + 100; gold = gold - 200; G:OnMoney()
+    check((G:Cash()) == cash1 - 200 and d.sold == 300, "while the sold amount is not known afresh the last known one is carried: a purchase still takes cash down by what it cost")
+    atMail = true
+    T = T + 100; gold = gold + 300; G:OnMoney()
+    atMail = false
+    check((G:Cash()) == cash1 - 200 and d.sold == 0, "sale gold collected at the mailbox meanwhile comes off the carried amount: cash is unchanged")
+    sold = 0; G:OnMoney()
+    -- the amounts back to what the next sections expect
+    gold = 10900; G.last, G.lastMoney = nil, gold; d.d[#d.d].c = 10900; d.h[#d.h].c = 10900
+    for i = #d.ev, 4, -1 do table.remove(d.ev, i) end
+end
 
 print("hours and days")
 -- the next hour
@@ -85,6 +115,26 @@ do
     local ss = G:Swings("d2", 6, 60, Ls.from)
     check(#ss == 2 and ss[1].d == -1000 and ss[1].col == 54 and ss[2].col == 60, "and its swings sit where they happened on that short chart (one a minute ago, one now)")
     T, gold, G.d, G.last = was.T, was.gold, was.d, was.last
+end
+
+-- a new record waits for the sold amount: with it unknown nothing is kept, so the chart cannot begin too low
+do
+    local keep = { T = T, gold = gold, d = G.d, last = G.last, lm = G.lastMoney, sold = sold }
+    local db3 = {}
+    sold = nil; gold = 4000
+    G:Attach(db3, "Fresh-Realm")
+    local f = db3.gold["Fresh-Realm"]
+    check(f.wait == true and #f.d == 0, "a new record does not begin while the sold amount is not known")
+    T = T + 30; gold = 3000; G:OnMoney()
+    check(f.wait == true and #f.d == 0, "(a purchase meanwhile is not recorded either)")
+    sold = 10000; G:OnMoney()
+    check(f.wait == nil and #f.d == 1 and f.d[1].o == 13000 and #f.ev == 0, "it begins the moment the sold amount is known: 30s in hand + 1g sold = 1g30s, with no false jump")
+    local db4 = {}
+    sold = nil; gold = 700
+    G:Attach(db4, "Alt-Realm")
+    T = T + 400; G:OnMoney()
+    check(db4.gold["Alt-Realm"].wait == nil and db4.gold["Alt-Realm"].d[1].o == 700, "on a character that never opens the auction house it begins after five minutes, with the gold in hand")
+    T, gold, G.d, G.last, G.lastMoney, sold = keep.T, keep.gold, keep.d, keep.last, keep.lm, keep.sold
 end
 
 print("limits")

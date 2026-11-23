@@ -95,7 +95,7 @@ local bags = {}
 C_Container = {
     GetContainerNumSlots = function(b) return b == 0 and 16 or 0 end,
     GetContainerItemInfo = function(b, s) return b == 0 and bags[s] or nil end,
-    UseContainerItem = function(b, s) local it = bags[s]; gold = gold + ITEMS[it.itemID][2] * it.stackCount; bags[s] = nil; fire("BAG_UPDATE_DELAYED") end,
+    UseContainerItem = function(b, s) local it = bags[s]; gold = gold + ITEMS[it.itemID][2] * it.stackCount; bags[s] = nil; fire("PLAYER_MONEY"); fire("BAG_UPDATE_DELAYED") end, -- (the game says the gold changed, as it does)
 }
 local inbox = {}
 GetInboxNumItems = function() return #inbox, #inbox end
@@ -170,6 +170,7 @@ ns.Auto.cfg.manyHidden, ns.Auto.cfg.crowded = 1e9, 1e9 -- the walkthrough is not
 ns.Deals.cfg.maxSpend, ns.Deals.cfg.maxTied = 1, 1 -- the capital limits have their own section at the end
 AuctionMeshDB.cfg.autoConfirm = false -- the walkthrough drives the two-input path; one-input buying has its own section
 ns.Deals.cfg.requireTurnover = false -- the fake auction house has no other buyers until the "volume" section
+AuctionMeshDB.cfg.fold = { SOLD = false, LISTED = false } -- the walkthrough looks at the rows of every section (folding has its own section)
 -- the section headings on the panel, each with its column captions
 local function headsText()
     local out = {}
@@ -268,7 +269,7 @@ check(r[1]:find("List: + 48c (fee 12c first)   or vendor now: + 24c, 24c less, n
     "the row's hover text gives both: listed it brings +48c (the 12c fee goes first), a vendor now +24c, 24c less, with no wait")
 do
     local h = headsText(); print("     " .. tostring(h[1]))
-    check(h[1] == "TO POST, OR SELL TO A VENDOR NOW (1) | QTY / COST / MARKET / VENDOR NOW / P / L" and r[1]:find("| 12 / 3c / 8c / 24c less |", 1, true) and r[1]:find("| +48c |", 1, true),
+    check(h[1] == "[-] POST, OR VENDOR NOW (1) | QTY / COST / MARKET / VENDOR NOW / P / L" and r[1]:find("| 12 / 3c / 8c / 24c less |", 1, true) and r[1]:find("| +48c |", 1, true),
         "ON THE ROW: it sits under 'To post, or sell to a vendor now', with the listing profit (+48c) and a VENDOR NOW column (24c less)")
 end
 do  -- not enough gold for the posting fee: the row says so, and when sale gold arrives
@@ -315,7 +316,7 @@ do
     check(r[1]:find("Vendor now + 24c   listing instead: about + 12c, 12c less", 1, true), "and it shows what listing would bring instead: about +12c, 12c less than the vendor")
     do
         local h = headsText()
-        check(h[1] == "TO SELL TO A VENDOR (1) | QTY / COST / VENDOR / IF LISTED / P / L" and r[1]:find("| 12 / 3c / 5c / 12c less |", 1, true),
+        check(h[1] == "[-] TO SELL TO A VENDOR (1) | QTY / COST / VENDOR / IF LISTED / P / L" and r[1]:find("| 12 / 3c / 5c / 12c less |", 1, true),
             "ON THE ROW: under 'To sell to a vendor' the IF LISTED column says 12c less")
     end
     do  -- the auction house pays a little more, not enough to be the recommendation: the row still shows what waiting would add
@@ -441,27 +442,22 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
     print("     " .. strip(lg.note._text))
     local hd = heads(); UI.tab = "SELL"; UI:Render(); local hs = heads(); UI.tab = "BUY"; UI:Render()
     print("     sections: " .. table.concat(hd, " / "))
-    do  -- the front of the Trades tab: what is being sniped, and the money in one line
+    do  -- the front of the Trades tab: what is being sniped, then the money broken down
         local W2 = AuctionMeshFrame
         print("     " .. strip(W2.target._text))
-        print("     " .. strip(W2.money.text._text))
         check(W2.target._shown and strip(W2.target._text):find("^SNIPING FOR  any deal that makes %+ 20c or more    vendor deals and flips    the addon sets this figure from your results$"),
             "the Trades tab says in one plain line what is being sniped: any deal that makes + 20c or more")
-        check(W2.money._shown and strip(W2.money.text._text):find("^GOLD ") and strip(W2.money.text._text):find("when everything has sold", 1, true) and not lg:IsShown(),
-            "under it, the money in ONE line; the six-line breakdown is not on the tab any more")
-        W2.money._scripts.OnEnter(W2.money)
-        check(lg:IsShown(), "the mouse on the money line opens the breakdown")
-        W2.money._scripts.OnLeave(W2.money)
-        check(not lg:IsShown(), "and it closes when the mouse leaves")
+        check(lg:IsShown() and rawget(W2, "money") == nil and lg.rows[1].label._text == "Gold on this character now" and lg.total.label._text == "Total when it has all sold",
+            "under it the money is broken down, always there: in hand, sold, listed, in your bags, and the total")
     end
-    check(hd[1] == "DEALS TO BUY NOW (0)" and hd[2]:find("^None right now") and hd[3] == nil and hs[1] == "LISTED (1)", "below it: deals to buy and nothing else; your auctions are on the Bags tab under a grey heading")
+    check(hd[1] == "DEALS TO BUY NOW (0)" and hd[2]:find("^None right now") and hd[3] == nil and hs[1] == "[-] LISTED (1)", "below it: deals to buy and nothing else; your auctions are on the Bags tab under a grey heading")
     check(val(lg.rows[1]) == strip(ns.Seller.short(GetMoney())), "MONEY: gold on this character now")
     check(val(lg.rows[4]) == "+ 4s38c", "MONEY: 6 listed at 77c = + 4s38c after the 5% cut")
     check(val(lg.rows[2]) == "-" and val(lg.rows[3]) == "-" and val(lg.rows[5]) == "-", "MONEY: nothing sold yet, nothing waiting to be listed")
     check(val(lg.total) == strip(ns.Seller.short(GetMoney() + 438)), "MONEY: total when it has all sold = gold + listings")
     -- someone lists cheaper: the auction moves to STUCK LISTINGS
     ns.Store:Put(2589, 70, 900, GetServerTime()); UI.tab = "SELL"; UI:Render()
-    check(heads()[1] == "STUCK LISTINGS (1)", "a cheaper listing appears: the auction moves under STUCK LISTINGS")
+    check(heads()[1] == "[-] STUCK LISTINGS (1)", "a cheaper listing appears: the auction moves under STUCK LISTINGS")
     -- recommendations for that auction, and the drawer's one-item view
     local listedEntry
     for _, e in ipairs(Se:Entries()) do if e.action == "LISTED" and e.key == 2589 then listedEntry = e end end
@@ -515,7 +511,7 @@ do  -- the MONEY section on the Trades tab: label on the left, amount on the rig
         local row
         for _, l in ipairs(rowsText()) do if l:find("Linen Cloth x6") then row = l end end
         print("     " .. tostring(row))
-        check(hd[1] == "SOLD, GOLD ON ITS WAY (1)" and row and row:find("Sold: gold arrives in 16 min", 1, true) and row:find("/ SOLD |", 1, true),
+        check(hd[1] == "[-] SOLD, GOLD ON ITS WAY (1)" and row and row:find("Sold: gold arrives in 16 min", 1, true) and row:find("/ SOLD |", 1, true),
             "a sold auction is listed under SOLD, GOLD ON ITS WAY with its pay-out time, not under stuck or undercut")
         ns.Store.p[2589] = 78; UI.tab = "BUY"; UI:Render()
     end
@@ -3639,7 +3635,7 @@ do
             if rawget(f, "detail") and f._shown and l and l.key == key then return f end
         end
     end
-    check(heads():find("IN YOUR BAGS, NOT BOUGHT BY THE ADDON: ADD WHAT YOU FARMED OR MINED (5)", 1, true) ~= nil,
+    check(heads():find("IN YOUR BAGS, NOT TRACKED (5)", 1, true) ~= nil,
         "the Bags tab lists everything in your bags that is not bound and that the addon did not buy")
     check(flips[9292] == nil and flips[9293] == nil and flips[9500] == nil, "nothing is tracked by itself")
     do
@@ -3661,7 +3657,7 @@ do
         "Add: 20 Farm Ore are tracked as farmed, at a cost of nothing; nothing is posted by that click")
     check(J.list[#J.list].key == 9292 and J.list[#J.list].kind == "FARM", "the record says farmed, not bought")
     UI.notice = nil; UI:Render()
-    check(heads():find("FARMED OR MINED, TO POST: ALL PROFIT (1)", 1, true) ~= nil and looseRow(9292) == nil,
+    check(heads():find("FARMED, TO POST (1)", 1, true) ~= nil and looseRow(9292) == nil,
         "it moves to its own section, FARMED OR MINED, apart from what was flipped")
     advance(3); UI:Render()
     local p = Se.prices[9292]
@@ -3675,7 +3671,7 @@ do
     check(strip(fr.c[2]._text) == "farmed" and strip(fr.profit._text) == "+18s80c" and strip(fr.detail._text):find("^Farmed or mined: cost nothing  >  Sell 99c  >  %+94c each, all profit"),
         "the row says farmed where the cost would be, and all of what it sells for after the cut is profit (20 x 94c)")
     local ft = strip(AuctionMeshFrame.footer._text)
-    check(ft:find("Farmed or mined: + 18s80c when sold", 1, true) ~= nil and ft:find("Holding:", 1, true) == nil,
+    check(ft:find("Farmed: + 18s80c", 1, true) ~= nil and ft:find("Bought, to sell:", 1, true) == nil,
         "the footer counts it apart from what you bought")
     -- posted with the ordinary Post click
     Se:Post(9292); advance(1)
@@ -3762,6 +3758,79 @@ do
     UI.tab = "BUY"; UI.notice = nil; UI:Render()
 end
 
+print("the Bags tab with many auctions: sold and listed fold into a line each, and the list has a scroll bar")
+do
+    local cfg = AuctionMeshDB.cfg
+    local listedWas, ownWas, readWas, foldWas, salesWas = AuctionMeshDB.listed, S.own, S.ownRead, cfg.fold, AuctionMeshDB.sales
+    local soldQtyWas, soldPayWas = S.ownSoldQty, S.ownSoldPay
+    for s2 = 1, 16 do bags[s2] = nil end
+    fire("BAG_UPDATE_DELAYED")
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
+    -- 20 auctions: 4 have sold (their gold is on its way), 2 are undercut, 14 are simply listed
+    AuctionMeshDB.listed, S.own, S.ownSoldQty, S.ownSoldPay = {}, {}, {}, {}
+    AuctionMeshDB.sales = nil
+    for i = 1, 20 do
+        local k = 9700 + i
+        ITEMS[k] = { "Auction Item " .. i, 1 }
+        AuctionMeshDB.listed[k] = { qty = 10, price = 100, cost = 40, at = GetServerTime() }
+        if i <= 4 then
+            S.ownSoldQty[k] = 10
+            S.ownSoldPay[#S.ownSoldPay + 1] = { amount = 950, due = GetTime() + 600 + i * 60, key = k }
+        else
+            S.own[k] = { [100] = 10 }
+            if i <= 6 then ns.Store:Put(k, 90, 50, GetServerTime()) end -- someone lists these two cheaper
+        end
+    end
+    S.ownRead = true
+    cfg.fold = nil -- as on a new install
+    UI:Open("SELL"); UI.notice = nil; UI.scroll = {}; UI:Render()
+    local function heads() return headsText() end
+    local function sumOf(text)
+        for i = 1, #frames do
+            local f = frames[i]
+            if rawget(f, "detail") and f._shown and rawget(f, "sect") and f.sect.head and strip(f.head._text):find(text, 1, true) then return f, strip(f.detail._text or "") end
+        end
+    end
+    local hs = table.concat(heads(), "\n")
+    print("     " .. hs:gsub("\n", "\n     "))
+    check(hs:find("[-] STUCK LISTINGS (2)", 1, true) and hs:find("[+] SOLD, GOLD ON ITS WAY (4)", 1, true) and hs:find("[+] LISTED (14)", 1, true),
+        "what needs a decision is open (2 stuck listings); what only needs waiting is folded: 4 sold, 14 listed")
+    check(#rowsText() == 2, "so the list is 2 rows and three headings, not 20 rows")
+    local soldHead, soldSum = sumOf("SOLD, GOLD ON ITS WAY")
+    local _, listedSum = sumOf("[+] LISTED")
+    print("     " .. soldSum .. "   |   " .. listedSum)
+    check(soldSum == "+ 38s00c coming, the next in 11 min" and listedSum == "nobody is cheaper: + 1g33s if they sell",
+        "each folded heading says what is in it: the gold that is coming and when, and what the listings bring if they sell")
+    check(not AuctionMeshFrame.scrollBar._shown, "everything fits: no scroll bar")
+    -- a click on a heading opens it; that is remembered
+    soldHead._scripts.OnMouseUp(soldHead, "LeftButton")
+    hs = table.concat(heads(), "\n")
+    check(cfg.fold.SOLD == false and hs:find("[-] SOLD, GOLD ON ITS WAY (4)", 1, true) and #rowsText() == 6, "a click on the SOLD heading opens it: its 4 rows are listed")
+    local listedHead = sumOf("[+] LISTED")
+    listedHead._scripts.OnMouseUp(listedHead, "LeftButton")
+    check(cfg.fold.LISTED == false and UI.scrollMost and UI.scrollMost > 0 and AuctionMeshFrame.scrollBar._shown,
+        "LISTED opened too: the list is longer than the panel now, and the scroll bar appears")
+    -- the scroll bar moves the list; the wheel still does
+    local sb = AuctionMeshFrame.scrollBar
+    local first0 = rowsText()[1]
+    sb._scripts.OnValueChanged(sb, 5)
+    check(UI.scroll.SELL == 5 and rowsText()[1] ~= first0, "dragging the bar scrolls the list")
+    AuctionMeshFrame._scripts.OnMouseWheel(AuctionMeshFrame, -1)
+    check(UI.scroll.SELL == 8, "the mouse wheel scrolls it too, three rows a notch")
+    sb._scripts.OnValueChanged(sb, 0)
+    -- closing them again
+    local openSold = sumOf("[-] SOLD, GOLD ON ITS WAY")
+    openSold._scripts.OnMouseUp(openSold, "LeftButton")
+    local openListed = sumOf("[-] LISTED")
+    openListed._scripts.OnMouseUp(openListed, "LeftButton")
+    check(cfg.fold.SOLD == true and cfg.fold.LISTED == true and #rowsText() == 2 and not AuctionMeshFrame.scrollBar._shown, "a click on an open heading folds it again")
+    check(strip(AuctionMeshFrame.status._text):find("auction%(s%) listed") == nil, "the status lines no longer repeat how many auctions are listed")
+    for i = 1, 20 do ITEMS[9700 + i] = nil end
+    AuctionMeshDB.listed, S.own, S.ownRead, cfg.fold, AuctionMeshDB.sales = listedWas, ownWas, readWas, foldWas, salesWas
+    S.ownSoldQty, S.ownSoldPay = soldQtyWas, soldPayWas
+    UI.tab = "BUY"; UI.scroll = {}; UI.notice = nil; UI:Render()
+end
+
 print("the reagent bag is read like any other bag")
 do
     local flips = AuctionMeshDB.flips
@@ -3846,16 +3915,31 @@ print("the Gold tab: your gold as a line chart")
 do
     local G = ns.Gold
     check(G ~= nil and G.d ~= nil and AuctionMeshDB.gold["Tester-Realm"] == G.d and #G.d.d >= 1, "the gold of the character that logged in has been recorded since login")
-    do  -- what this run did was recorded with its causes
-        local seen = {}
+    do  -- a purchase and a vendor sale, each recorded with what it was
+        local seen
         for _, e in ipairs(G.d.ev) do
-            for _, w in ipairs(e.why or {}) do
-                if w:find("^Bought %d+ x ") and e.d < 0 then seen.bought = w end
-                if w:find(" to a vendor$") and e.d > 0 then seen.vendor = w end
-            end
+            for _, w in ipairs(e.why or {}) do if w:find("^Bought %d+ x ") and e.d < 0 then seen = w end end
         end
-        print("     " .. tostring(seen.bought) .. " | " .. tostring(seen.vendor))
-        check(seen.bought ~= nil and seen.vendor ~= nil, "the purchases and vendor sales of this run are among the swings, each with what it was")
+        print("     " .. tostring(seen))
+        check(seen ~= nil, "the purchases of this run are among the swings, each with what was bought")
+        -- a vendor sale, from the Bags tab's Sell button
+        local flips = AuctionMeshDB.flips
+        local soldFn = G.sold
+        G.sold = function() return 0 end
+        AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
+        for s2 = 1, 16 do bags[s2] = nil end
+        ITEMS[2770] = ITEMS[2770] or { "Copper Ore", 5 }
+        flips[2770] = { kind = "VENDOR", units = 12, cost = 3, sell = 5, at = GetServerTime() }
+        bags[1] = { itemID = 2770, stackCount = 12 }; fire("BAG_UPDATE_DELAYED")
+        G:OnMoney() -- (the record is level with the test's gold before the sale)
+        MerchantFrame:Show(); fire("MERCHANT_SHOW"); advance(1)
+        Se:SellVendor(2770); advance(3)
+        local e = G.d.ev[#G.d.ev]
+        print("     " .. tostring(e and e.d) .. " " .. tostring(e and e.why and e.why[1]))
+        check(e and e.d == 60 and e.why and e.why[1] == "Sold 12 x Copper Ore to a vendor", "a sale to a vendor is recorded as + 60c, 'Sold 12 x Copper Ore to a vendor'")
+        MerchantFrame:Hide(); fire("MERCHANT_CLOSED")
+        ns.Journal:Dropped(2770, nil, "test")
+        G.sold = soldFn
     end
     -- a known history: 1g, a sale to 1g60s yesterday, a purchase down to 1g10s six hours ago, a vendor sale to 1g15s just now
     local was = G.d
@@ -3868,8 +3952,9 @@ do
         { t = now - 6 * 3600, t2 = now - 6 * 3600, d = -5000, g = 11000, n = 1, why = { "Bought 60 x Runecloth" } },
         { t = now - 600, t2 = now - 600, d = 500, g = 11500, n = 1 },
     }
-    local goldWas = gold
-    gold = 11500; G.last = 11500
+    local goldWas, soldWas = gold, G.sold
+    G.sold = function() return 0 end -- (nothing sold and unpaid in this history; that has its own check below)
+    gold = 11500; G.last, G.lastMoney = 11500, 11500
     UI:Open("BUY")
     local tab = AuctionMeshFrame.tabGold
     check(tab ~= nil and tab._text == "Gold", "there is a Gold tab")
@@ -3917,21 +4002,31 @@ do
     -- the marks
     shown = 0
     for _, m in ipairs(gd.marks) do if m._shown then shown = shown + 1 end end
-    check(shown == 3 and strip(gd.marks[1].tip[2]) == "+ 60s00c" and gd.marks[1].tip[3] == "Sold 40 x Thick Leather (auction)" and strip(gd.marks[1].tip[4]) == "Gold after it: 1g60s",
+    check(shown == 3 and strip(gd.marks[1].tip[2]) == "+ 60s00c" and gd.marks[1].tip[3] == "Sold 40 x Thick Leather (auction)" and strip(gd.marks[1].tip[4]) == "Cash after it: 1g60s",
         "the biggest changes are marked on the line; the mouse over the biggest says: + 60s, the Thick Leather sale, and the gold after it")
     check(strip(gd.marks[2].tip[2]) == "- 50s00c" and gd.marks[2].tip[3] == "Bought 60 x Runecloth", "the next: - 50s, Bought 60 x Runecloth")
-    check(gd.marks[3].tip[3] == "gold came in: not through the addon", "a change the addon did not cause says so")
+    check(gd.marks[3].tip[3] == "gold came in, or something sold: not seen by the addon as it happened", "a change the addon did not see happen says so")
     -- the mouse anywhere on the chart
     local hv = gd.hover[C.hover]
-    check(hv.tip and strip(hv.tip[2]) == "Gold: 1g15s" and strip(hv.tip[3]) == "Since the start of this chart: + 15s00c", "the mouse on the chart gives the amount at that time")
+    check(hv.tip and strip(hv.tip[2]) == "Cash (in hand + sold): 1g15s" and strip(hv.tip[3]) == "Since the start of this chart: + 15s00c", "the mouse on the chart gives the amount at that time")
     -- the list under the chart
     check(strip(gd.head._text):find("^BIGGEST CHANGES, LAST 2 DAYS") and strip(gd.lines[1].label._text):find("Sold 40 x Thick Leather %(auction%)$") and strip(gd.lines[1].value._text) == "+ 60s00c"
         and strip(gd.lines[2].value._text) == "- 50s00c" and strip(gd.lines[4].label._text) == "",
         "the same changes are listed under the chart, largest first")
-    check(strip(gd.sum._text):find("^When everything has sold: "), "under the amount, in one line: what you are worth once everything has sold")
+    check(strip(gd.sum._text):find("^Cash = in hand 1g15s %+ sold 0c      Not sold yet: "), "under the amount, in one line: what the cash is made of, and what has not sold yet")
+    -- SOLD COUNTS AS CASH: 40s of sales on their way lift the figure and the line; collecting them changes nothing
+    G.sold = function() return 4000 end
+    G:OnMoney(); UI:Render()
+    check(strip(gd.big._text) == "1g55s" and strip(gd.sum._text):find("^Cash = in hand 1g15s %+ sold 40s00c") and G.d.ev[#G.d.ev].d == 4000,
+        "40s of sales on their way: the cash is 1g55s (1g15s in hand + 40s sold), and the line steps up by 40s")
+    gold = 15500; G.sold = function() return 0 end
+    fire("PLAYER_MONEY"); advance(0.1); UI:Render()
+    check(strip(gd.big._text) == "1g55s" and G.d.ev[#G.d.ev].d == 4000 and strip(gd.sum._text):find("^Cash = in hand 1g55s %+ sold 0c"),
+        "collecting that gold at the mailbox changes nothing on the chart: it only moves from sold to in hand")
+    table.remove(G.d.ev); gold = 11500; G.last, G.lastMoney = 11500, 11500
     -- a falling range is drawn in red
     G.d.ev[#G.d.ev + 1] = { t = now - 60, t2 = now - 60, d = -3000, g = 8500, n = 1, why = { "Bought 10 x Mageweave Cloth" } }
-    gold = 8500; G.last = 8500
+    gold = 8500; G.last, G.lastMoney = 8500, 8500
     UI:Render()
     st = UI.goldState
     check(st.up == false and strip(gd.chg._text) == "- 15s00c  [-15.00%]  2 days" and strip(gd.call.text._text) == "85s00c", "a range that ends lower than it began is red, with the change as a minus")
@@ -3940,7 +4035,7 @@ do
     st = UI.goldState
     check(st.view == "d7" and st.line.short == true and #st.line.days >= 4 and #st.line.days <= 5 and st.line.cols[1].v == 10000 and gd.cols[1].fill._shown,
         "'7 days' with five days on record: the chart begins where the record begins, with no empty stretch")
-    check(strip(gd.chg._text):find("since %a%a%a %d%d %a%a%a, %d%d:%d%d %(recording began then%)$") and strip(gd.head._text):find("^BIGGEST CHANGES, SINCE "),
+    check(strip(gd.chg._text):find("since %a%a%a %d%d:%d%d$") and strip(gd.head._text):find("^BIGGEST CHANGES, SINCE "),
         "and it says since when, in place of '7 days'")
     gd.views.d30._scripts.OnClick(gd.views.d30)
     check(UI.goldState.view == "d30" and UI.goldState.line.short == true, "'30 days' the same")
@@ -3954,7 +4049,7 @@ do
             { t = now - 600, t2 = now - 590, d = 19250, g = 106768, n = 4, why = { "Sold 22 x Crisp Spider Meat to a vendor" } },
             { t = now - 60, t2 = now - 50, d = -66873, g = 39895, n = 6, why = { "Bought 48 x Deviate Fish" } },
         }
-        gold = 39895; G.last = gold
+        gold = 39895; G.last, G.lastMoney = gold, gold
         gd.views.d2._scripts.OnClick(gd.views.d2)
         local s2 = UI.goldState
         local shown2, ticks2 = 0, {}
@@ -3963,21 +4058,21 @@ do
         print("     " .. strip(gd.chg._text) .. "   marks: " .. table.concat(ticks2, " "))
         check(s2.line.short == true and math.abs(s2.line.span - 1501) <= 1 and shown2 == C.cols,
             "25 minutes on record, '2 days' picked: those 25 minutes fill the whole chart")
-        check(#ticks2 >= 4 and ticks2[1]:find("^%d%d:%d%d$") and strip(gd.chg._text):find("since %d%d:%d%d %(recording began then%)$"),
+        check(#ticks2 >= 4 and ticks2[1]:find("^%d%d:%d%d$") and strip(gd.chg._text):find("since %d%d:%d%d$"),
             "the times along the bottom are a few minutes apart, and the change is 'since' the time recording began")
         local xs = {}
         for i = 1, 3 do xs[i] = UI.goldState.swings[i].col end
         check(xs[1] > 120 and xs[2] > 70 and xs[2] < 100 and xs[3] > 20 and xs[3] < 40, "the marks are spread along the line where each change happened, not piled at the edge")
         G.d = keep
-        gold = 8500; G.last = 8500
+        gold = 8500; G.last, G.lastMoney = 8500, 8500
         gd.views.d30._scripts.OnClick(gd.views.d30)
     end
     -- gold changing while the tab is open is drawn at once
-    gold = 9500; fire("PLAYER_MONEY")
-    check(UI.dirty == true and G.d.ev[#G.d.ev].d == 1000, "gold changes while the tab is open: recorded, and the chart is redrawn")
+    gold = 9500; fire("PLAYER_MONEY"); advance(0.1)
+    check(G.d.ev[#G.d.ev].d == 1000, "gold changes while the tab is open: recorded")
     UI:Render()
     check(strip(gd.big._text) == "95s00c", "(the new amount is shown)")
-    G.d = was; gold = goldWas; G.last = gold
+    G.d = was; gold = goldWas; G.sold = soldWas; G.last, G.lastMoney = nil, gold
     UI.tab = "BUY"; UI.goldView = nil; UI:Render()
 end
 

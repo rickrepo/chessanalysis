@@ -446,12 +446,30 @@ local function buildList(tab, deals, entries)
             local t = by[(e.farm and e.action == "AH") and "FARM" or (e.action == "AH" and e.vendorAlt) and "EITHER" or e.action]
             if t then t[#t + 1] = e end
         end
-        if #by.AH > 0 then section(list, "TO POST AT THE AUCTION HOUSE", CAPS.entry, by.AH) end
-        if #by.FARM > 0 then section(list, "FARMED OR MINED, TO POST: ALL PROFIT", CAPS.farm, by.FARM) end
-        if #by.EITHER > 0 then section(list, "TO POST, OR SELL TO A VENDOR NOW", CAPS.either, by.EITHER) end
-        if #by.VENDOR > 0 then section(list, "TO SELL TO A VENDOR", CAPS.vendor, by.VENDOR) end
-        if #by.MAIL > 0 then section(list, "IN THE MAILBOX", CAPS.entry, by.MAIL) end
-        if #by.HOLD > 0 then section(list, "HELD, PRICE TOO LOW", CAPS.entry, by.HOLD) end
+        -- THE ORDER: what you can act on first (post, sell, collect, add), then
+        -- what needs a decision (stuck listings), then what only needs
+        -- waiting: SOLD and LISTED, each folded into ONE line by default (a
+        -- click on a heading opens or closes its section; that is remembered).
+        -- With thirty auctions up, those two used to be most of the list.
+        local cfg = AuctionMeshDB.cfg
+        cfg.fold = cfg.fold or {}
+        local FOLD_DEFAULT = { SOLD = true, LISTED = true }
+        local function sect(id, text, caps, items, sum)
+            if #items == 0 then return end
+            local folded = cfg.fold[id]
+            if folded == nil then folded = FOLD_DEFAULT[id] or false end
+            list[#list + 1] = { head = ("%s %s (%d)"):format(folded and "[+]" or "[-]", text, #items), caps = (not folded) and caps or nil,
+                                fold = id, folded = folded, sum = folded and sum or nil }
+            if not folded then for _, it in ipairs(items) do list[#list + 1] = it end end
+        end
+        sect("AH", "TO POST", CAPS.entry, by.AH)
+        sect("FARM", "FARMED, TO POST", CAPS.farm, by.FARM)
+        sect("EITHER", "POST, OR VENDOR NOW", CAPS.either, by.EITHER)
+        sect("VENDOR", "TO SELL TO A VENDOR", CAPS.vendor, by.VENDOR)
+        sect("MAIL", "IN THE MAILBOX", CAPS.entry, by.MAIL)
+        sect("HOLD", "HELD, PRICE TOO LOW", CAPS.entry, by.HOLD)
+        -- what is in your bags that the addon does not track: one click on Add and it is yours to post, as farmed
+        sect("LOOSE", "IN YOUR BAGS, NOT TRACKED", CAPS.loose, ns.Seller:Loose(), "press Add on one to sell it")
         local stuck, ended, ok, sold = {}, {}, {}, {}
         local _, _, _, soldKeys = ns.Seller:SalesMoney()
         local S = ns.Sniper
@@ -473,14 +491,26 @@ local function buildList(tab, deals, entries)
                 t[#t + 1] = e
             end
         end
-        if #sold > 0 then section(list, "SOLD, GOLD ON ITS WAY", CAPS.entry, sold) end
-        if #stuck > 0 then section(list, "STUCK LISTINGS", CAPS.entry, stuck) end
-        if #ended > 0 then section(list, "ENDED, CHECK A MAILBOX", CAPS.entry, ended) end
-        if #ok > 0 then section(list, "LISTED", CAPS.entry, ok) end
+        sect("STUCK", "STUCK LISTINGS", CAPS.entry, stuck, "someone is cheaper: open to cancel and post again")
+        sect("ENDED", "ENDED, CHECK A MAILBOX", CAPS.entry, ended, "sold or expired: the mailbox shows which")
+        do  -- sold: one line with the gold that is coming and when the next of it arrives
+            local sum, nextIn = 0, nil
+            local Se, short = ns.Seller, ns.Seller.short
+            for _, e in ipairs(sold) do
+                local _, _, net = Se:Numbers(e)
+                sum = sum + (net or 0) * e.count
+                if e.soldIn and (not nextIn or e.soldIn < nextIn) then nextIn = e.soldIn end
+            end
+            sect("SOLD", "SOLD, GOLD ON ITS WAY", CAPS.entry, sold, GREEN .. "+ " .. short(sum) .. "|r" .. GREY
+                .. (nextIn and (" coming, the next in %d min"):format(math.max(1, floor(nextIn / 60 + 0.5))) or " coming") .. "|r")
+            sum = 0
+            for _, e in ipairs(ok) do
+                local _, _, net = Se:Numbers(e)
+                sum = sum + (net or 0) * e.count
+            end
+            sect("LISTED", "LISTED", CAPS.entry, ok, GREY .. "nobody is cheaper: " .. "|r" .. ORANGE .. "+ " .. short(sum) .. "|r" .. GREY .. " if they sell|r")
+        end
         if #list == 0 then list[1] = { note = "Nothing to sell. Items you buy on the Trades tab appear here." } end
-        -- what is in your bags that the addon did not buy: one click on Add and it is yours to post, as farmed
-        local loose = ns.Seller:Loose()
-        if #loose > 0 then section(list, "IN YOUR BAGS, NOT BOUGHT BY THE ADDON: ADD WHAT YOU FARMED OR MINED", CAPS.loose, loose) end
     end
     return list
 end
@@ -528,12 +558,6 @@ function UI:RenderMoney(entries, short)
     lg.total.label:SetText("Total when it has all sold")
     lg.total.value:SetText(short(gold + waiting + onway + listed + bought))
     self.moneyNow = { gold = gold, waiting = waiting, onway = onway, listed = listed, bought = bought, total = gold + waiting + onway + listed + bought }
-    do  -- the one line on the Trades tab
-        local coming = waiting + onway + listed + bought
-        frame.money.text:SetText(("%sGOLD|r %s%s|r%s    %s= %s when everything has sold|r    %s(mouse here for the breakdown)|r"):format(
-            GREY, GOLD, short(gold), coming > 0 and (GREY .. "    + " .. short(coming) .. " still to come (sold, listed, in your bags)|r") or "",
-            WHITE_C, short(gold + coming), GREY))
-    end
     local parts = {}
     if held > 0 then parts[#parts + 1] = ("%d held item%s that cost %s (tab Bags)"):format(held, held == 1 and "" or "s", short(heldCost)) end
     local endedNote = ended > 0 and (" %d of your auctions %s no longer seen on the auction house (sold, or returned): still counted above; the mailbox shows which."):format(
@@ -909,12 +933,12 @@ function UI:RenderGold(short)
     local gd, G, C = frame.gold, ns.Gold, UI.GOLD
     local view = self.goldView or "d2"
     for name, b in pairs(gd.views) do UI.outline(b, name == view and ACCENT or LINE) end
-    local now = GetMoney()
+    local now, inHand, soldAmt = G:Cash() -- cash: gold in hand plus what has sold (see Gold.lua)
     local L = G:Line(view, C.cols)
     local first, last = L.first or now, L.last or now
     local chg = last - first
     -- less on record than the range asked for: the chart shows what there is, and says since when
-    local rangeName = L.short and ("since " .. date((L.span > 20 * 3600) and "%a %d %b, %H:%M" or "%H:%M", L.from) .. " (recording began then)")
+    local rangeName = L.short and ("since " .. date((L.span > 20 * 3600) and "%a %H:%M" or "%H:%M", L.from))
         or (G.LINES[view] or G.LINES.d2).name
     local up = chg >= 0
     local RGB = up and { 0.20, 0.90, 0.40 } or { 1.00, 0.25, 0.20 }
@@ -923,17 +947,16 @@ function UI:RenderGold(short)
     gd.big:SetText("|cffffffff" .. short(now) .. "|r")
     gd.chg:SetText((up and GREEN or RED) .. (up and "+ " or "- ") .. short(math.abs(chg))
         .. ((first > 0) and ("  [%+.2f%%]"):format(chg / first * 100) or "") .. "|r" .. GREY .. "  " .. rangeName .. "|r")
-    do  -- under it, in one line: what you are worth once everything has sold
+    do  -- under it, in one line: what the figure is made of, and what is not in it yet
         local m = self.moneyNow
+        local line = GREY .. "Cash = in hand |r" .. GOLD .. short(inHand) .. "|r" .. GREY .. " + sold |r" .. GREEN .. short(soldAmt) .. "|r"
         if m then
-            local extra = {}
-            local function part(v, what) if v > 0 then extra[#extra + 1] = short(v) .. " " .. what end end
-            part(m.waiting, "in the mailbox"); part(m.onway, "on its way"); part(m.listed, "listed"); part(m.bought, "in your bags")
-            gd.sum:SetText(GREY .. "When everything has sold: |r" .. GOLD .. short(m.total) .. "|r"
-                .. (#extra > 0 and (GREY .. "   (" .. table.concat(extra, ", ") .. ")|r") or ""))
-        else
-            gd.sum:SetText("")
+            local tied = {}
+            if m.listed > 0 then tied[#tied + 1] = short(m.listed) .. " listed" end
+            if m.bought > 0 then tied[#tied + 1] = short(m.bought) .. " in your bags" end
+            line = line .. GREY .. "      Not sold yet: |r" .. (#tied > 0 and (ORANGE .. table.concat(tied, ", ") .. "|r") or (GREY .. "nothing|r"))
         end
+        gd.sum:SetText(line)
     end
     -- the range drawn: a little room above and below, lines at round amounts
     local lo, hi = math.min(L.lo or now, now), math.max(L.hi or now, now)
@@ -1067,7 +1090,7 @@ function UI:RenderGold(short)
             m:ClearAllPoints()
             m:SetPoint("BOTTOMLEFT", gd.plot, "BOTTOMLEFT", math.max(0, math.min(C.w - 11, (e.col - 1) * C.colW - 4)), yy)
             if e.d > 0 then m.tex:SetColorTexture(0.2, 1, 0.4, 1) else m.tex:SetColorTexture(1, 0.2, 0.2, 1) end
-            m.tip = { date("%a %d %b, %H:%M", e.t), signed(e.d), G.Why(e), GREY .. "Gold after it: " .. short(e.g) .. "|r" }
+            m.tip = { date("%a %d %b, %H:%M", e.t), signed(e.d), G.Why(e), GREY .. "Cash after it: " .. short(e.g) .. "|r" }
             m:Show()
         end
     end
@@ -1085,7 +1108,7 @@ function UI:RenderGold(short)
             if not c or c.none then
                 tip = { date("%a %d %b, %H:%M", c and c.t or L.to), "Nothing on record yet at this time." }
             else
-                tip = { date("%a %d %b, %H:%M", c.t), "Gold: " .. short(c.v), "Since the start of this chart: " .. signed(c.v - first) }
+                tip = { date("%a %d %b, %H:%M", c.t), "Cash (in hand + sold): " .. short(c.v), "Since the start of this chart: " .. signed(c.v - first) }
                 for k, e in ipairs(byStrip[i] or {}) do
                     if k > 3 then break end
                     tip[#tip + 1] = date("%H:%M", e.t) .. "  " .. signed(e.d) .. "  " .. G.Why(e)
@@ -1094,7 +1117,7 @@ function UI:RenderGold(short)
             gd.hover[i].tip = tip
         end
     end
-    gd.head:SetText(GREY .. "BIGGEST CHANGES, " .. (L.short and rangeName:gsub(" %(recording began then%)", ""):upper() or ("LAST " .. rangeName:upper())) .. "   (the squares on the line: mouse over one)|r")
+    gd.head:SetText(GREY .. "BIGGEST CHANGES, " .. (L.short and rangeName:upper() or ("LAST " .. rangeName:upper())) .. "   (the squares on the line: mouse over one)|r")
     for i = 1, C.lines do
         local w, e = gd.lines[i], swings[i]
         if e then
@@ -1395,6 +1418,17 @@ function UI:Render()
     self.scroll = self.scroll or {}
     local off = math.max(0, math.min(self.scroll[tab] or 0, #list - vis))
     self.scroll[tab] = off
+    do  -- the scroll bar follows: as long as the list is longer than what fits
+        local sb, most = frame.scrollBar, math.max(0, #list - vis)
+        sb:SetShown(most > 0)
+        if most > 0 then
+            self.scrollSetting = true
+            if sb.SetMinMaxValues then sb:SetMinMaxValues(0, most) end
+            if sb.SetValue then sb:SetValue(off) end
+            self.scrollSetting = nil
+        end
+        self.scrollMost = most
+    end
     for i = 1, MAXROWS do
         local r, item = rows[i], (i <= vis) and list[i + off] or nil
         r.item, r.sect, r.looseItem = nil, nil, nil
@@ -1421,6 +1455,7 @@ function UI:Render()
                 local caps = item.caps
                 for c = 1, 4 do r.c[c]:SetText(caps and (GREY .. caps[c] .. "|r") or "") end
                 r.profit:SetText(caps and (GREY .. caps[5] .. "|r") or "")
+                if item.sum then r.detail:SetText(item.sum); r.detail:Show() end -- (a folded section: what is in it, in one line)
             elseif item.m then
                 local age = GetServerTime() - item.t
                 r.icon:SetTexture(nil)
@@ -1473,10 +1508,10 @@ function UI:Render()
                 if e.action ~= "HOLD" then farmed = farmed + (net or 0) * e.count end
             elseif paid and e.action ~= "LISTED" then invested, back, any = invested + paid * e.count, back + net * e.count, true end
         end
-        if farmed > 0 then parts[#parts + 1] = ("Farmed or mined: %s+ %s|r when sold"):format(GREEN, short(farmed)) end
+        if farmed > 0 then parts[#parts + 1] = ("Farmed: %s+ %s|r"):format(GREEN, short(farmed)) end
         if any then
             local profit = back - invested
-            parts[#parts + 1] = ("Holding: paid %s  >  expect back %s  =  %s%s%s|r"):format(short(invested), short(back),
+            parts[#parts + 1] = ("Bought, to sell: paid %s, %s%s%s|r"):format(short(invested),
                 profit >= 0 and GREEN or RED, profit >= 0 and "+ " or "- ", short(math.abs(profit)))
         end
     elseif tab ~= "GOLD" then
@@ -1495,14 +1530,22 @@ function UI:Render()
         local toPost = false
         for _, e in ipairs(entries) do if e.action == "AH" then toPost = true end end
         frame.post:SetShown(tab == "SELL" and ahOpen() and toPost)
+        self.postShown = tab == "SELL" and ahOpen() and toPost
     end
     do  -- vendor sales always need your click
         local nv, gain = 0, 0
         for _, e in ipairs(entries) do
             if e.action == "VENDOR" then nv = nv + 1; gain = gain + (e.f.sell or 0) * e.count end
         end
-        frame.vend:SetShown(tab == "SELL" and merchantOpen() and nv > 0 and not ahOpen())
+        local vendShown = tab == "SELL" and merchantOpen() and nv > 0 and not ahOpen()
+        frame.vend:SetShown(vendShown)
         frame.vend:SetText(("Sell all to vendor  +%s"):format((short(gain):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))))
+        if tab ~= "BUY" then
+            -- the footer is only as narrow as the button next to it needs (it was always cut short for the widest one)
+            frame.footer:ClearAllPoints()
+            frame.footer:SetPoint("BOTTOMLEFT", 14, 12)
+            frame.footer:SetPoint("BOTTOMRIGHT", vendShown and -230 or self.postShown and -116 or -14, 12)
+        end
     end
 end
 
@@ -1604,6 +1647,15 @@ local function rowMouseUp(self, button)
     -- (something added by mistake, or that you want to keep). A plain click
     -- does nothing, so a stray one removes nothing. (This was a button in the
     -- Details sidebar, which is gone.)
+    do  -- a click on a section's heading opens or closes that section (Bags tab)
+        local sect = rawget(self, "sect")
+        if sect and sect.fold then
+            local cfg = AuctionMeshDB.cfg
+            cfg.fold = cfg.fold or {}
+            cfg.fold[sect.fold] = not sect.folded
+            return UI:Render()
+        end
+    end
     local item = rawget(self, "item")
     if item and item.key and item.action and button == "RightButton" and IsShiftKeyDown and IsShiftKeyDown() then
         local name = ns.Sniper.nameOf(item.key)
@@ -1900,7 +1952,7 @@ function UI:Create()
     if sn.RegisterForClicks then sn:RegisterForClicks("AnyDown", "AnyUp") end
     sn:EnableMouseWheel(true)
     sn:SetScript("OnMouseWheel", function() UI.InputPress(true, "wheel") end)
-    sn:SetPoint("TOPLEFT", 12, -82); sn:SetPoint("TOPRIGHT", -12, -82)
+    sn:SetPoint("TOPLEFT", 12, -184); sn:SetPoint("TOPRIGHT", -12, -184)
     sn.label = sn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     sn.label:SetPoint("TOPLEFT", 10, -8); sn.label:SetPoint("TOPRIGHT", -10, -8)
     sn.label:SetJustifyH("LEFT"); sn.label:SetWordWrap(false)
@@ -1952,49 +2004,30 @@ function UI:Create()
     outline(frame.stakeStop, { 1, 0.82, 0 })
     frame.stakeStop:Hide()
 
-    -- THE FRONT OF THE TRADES TAB, two lines above the snipe box:
+    -- THE FRONT OF THE TRADES TAB, above the snipe box:
     --   1. WHAT IS BEING SNIPED: the profit a deal must make to be offered.
     --      The addon sets and adjusts that figure itself; it is said here in
     --      plain words so there is nothing to work out.
-    --   2. YOUR MONEY in one line: gold in hand, what is still to come, and
-    --      the total once everything has sold. The mouse on the line opens
-    --      the breakdown (it used to be six lines that were always there).
+    --   2. YOUR MONEY, broken down: gold in hand, what has sold (in the
+    --      mailbox, on its way), what is listed, what is in your bags, and the
+    --      total. (3.54 folded this into one line with the breakdown behind
+    --      the mouse. It is back as it was: it was the part that was liked.)
     frame.target = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     frame.target:SetPoint("TOPLEFT", 14, -42); frame.target:SetPoint("TOPRIGHT", -14, -42)
     frame.target:SetJustifyH("LEFT"); frame.target:SetWordWrap(false)
     frame.target:Hide()
-    local mn = CreateFrame("Button", nil, frame)
-    mn:SetPoint("TOPLEFT", 14, -61); mn:SetPoint("TOPRIGHT", -14, -61)
-    mn:SetHeight(15)
-    mn.text = mn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    mn.text:SetAllPoints(); mn.text:SetJustifyH("LEFT"); mn.text:SetWordWrap(false)
-    mn:SetScript("OnEnter", function() if UI.tab == "BUY" and frame.ledger then frame.ledger:Show() end end)
-    mn:SetScript("OnLeave", function() if frame.ledger then frame.ledger:Hide() end end)
-    mn:Hide()
-    frame.money = mn
 
-    -- the breakdown: opens under the money line while the mouse is on it
     local lg = CreateFrame("Frame", nil, frame)
-    lg:SetPoint("TOPLEFT", 8, -78); lg:SetPoint("TOPRIGHT", -8, -78)
-    lg:SetHeight(146)
-    do
-        local bgp = lg:CreateTexture(nil, "BACKGROUND")
-        bgp:SetAllPoints(); bgp:SetColorTexture(0.045, 0.05, 0.06, 0.98)
-        outline(lg, ACCENT)
-        local lv = frame.GetFrameLevel and frame:GetFrameLevel()
-        if type(lv) == "number" and lg.SetFrameLevel then lg:SetFrameLevel(lv + 20) end
-    end
-    local inner = CreateFrame("Frame", nil, lg)
-    inner:SetPoint("TOPLEFT", 6, -6); inner:SetPoint("BOTTOMRIGHT", -6, 6)
-    lg.title = heading(inner, 0, "MONEY")
+    lg:SetPoint("TOPLEFT", 14, -62); lg:SetPoint("TOPRIGHT", -14, -62)
+    lg:SetHeight(116)
     lg.rows = {}
-    for i = 1, 5 do lg.rows[i] = ledgerRow(inner, -16 - (i - 1) * 15) end
-    lg.rule = inner:CreateTexture(nil, "ARTWORK")
-    lg.rule:SetPoint("TOPLEFT", 0, -93); lg.rule:SetPoint("TOPRIGHT", 0, -93); lg.rule:SetHeight(1)
+    for i = 1, 5 do lg.rows[i] = ledgerRow(lg, -(i - 1) * 15) end
+    lg.rule = lg:CreateTexture(nil, "ARTWORK")
+    lg.rule:SetPoint("TOPLEFT", 0, -77); lg.rule:SetPoint("TOPRIGHT", 0, -77); lg.rule:SetHeight(1)
     lg.rule:SetColorTexture(LINE[1], LINE[2], LINE[3], 1)
-    lg.total = ledgerRow(inner, -99, "GameFontHighlight")
-    lg.note = inner:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    lg.note:SetPoint("TOPLEFT", 0, -119); lg.note:SetPoint("TOPRIGHT", 0, -119)
+    lg.total = ledgerRow(lg, -83, "GameFontHighlight")
+    lg.note = lg:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    lg.note:SetPoint("TOPLEFT", 0, -102); lg.note:SetPoint("TOPRIGHT", 0, -102)
     lg.note:SetJustifyH("LEFT"); lg.note:SetWordWrap(false)
     lg:Hide()
     frame.ledger = lg
@@ -2002,8 +2035,8 @@ function UI:Create()
     -- SETUP tab: a control for everything that can be changed (no commands
     -- to remember), then what the request engine has learned.
     local sp = CreateFrame("Frame", nil, frame)
-    sp:SetPoint("TOPLEFT", 14, -68); sp:SetPoint("TOPRIGHT", -14, -68)
-    sp:SetHeight(402)
+    sp:SetPoint("TOPLEFT", 14, -86); sp:SetPoint("TOPRIGHT", -14, -86)
+    sp:SetHeight(384)
     -- TWO PAGES. "Settings": the few things you set once (how you buy, where
     -- the panel lives, your bank alt, what to send to Claude). "Advanced":
     -- the figures the addon works out and adjusts by itself (the smallest
@@ -2058,7 +2091,7 @@ function UI:Create()
     -- Heights: the heading is at 0, the one-line status (what a click just did)
     -- at -15, then the groups. The last line ends 473 px under the top of the
     -- panel, above the footer in both the docked and the floating window.
-    local ROW, HEAD = 22, 15
+    local ROW, HEAD = 26, 15 -- (26: the buttons are 22 high and used to touch the row below)
     local yy = -28
     local ys = { basic = -28, adv = -28 }
     local function page(name)
@@ -2241,7 +2274,7 @@ function UI:Create()
     sp.rows = {}
     for i = 1, 3 do sp.rows[i] = ledgerRow(cur, yy - (i - 1) * 14, nil, 170) end
     page("basic") -- (both pages' ends are known now)
-    sp.bottom = math.min(ys.basic, ys.adv - 2 * 14 - 12) - 28 -- where the longer page ends (the pages start 28 lower than they did), for the layout test
+    sp.bottom = math.min(ys.basic, ys.adv - 2 * 14 - 12) - 46 -- where the longer page ends (the pages start 46 lower than the tab once did), for the layout test
     sp:Hide()
     frame.setup = sp
 
@@ -2260,7 +2293,7 @@ function UI:Create()
         gd.big = gd:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         gd.big:SetPoint("TOPLEFT", 0, -2); gd.big:SetJustifyH("LEFT")
         gd.chg = gd:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-        gd.chg:SetPoint("LEFT", gd.big, "RIGHT", 14, 0); gd.chg:SetJustifyH("LEFT")
+        gd.chg:SetPoint("LEFT", gd.big, "RIGHT", 14, 0); gd.chg:SetJustifyH("LEFT"); gd.chg:SetWordWrap(false)
         gd.sum = gd:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         gd.sum:SetPoint("TOPLEFT", 0, -27); gd.sum:SetPoint("TOPRIGHT", 0, -27)
         gd.sum:SetJustifyH("LEFT"); gd.sum:SetWordWrap(false)
@@ -2272,6 +2305,8 @@ function UI:Create()
             gd.views[v[1]] = bt
             prev = bt
         end
+        -- (the text at the top ends where the range buttons begin: a real screenshot had it running under them)
+        gd.chg:SetPoint("RIGHT", prev, "LEFT", -10, 0)
         -- the plot
         local plot = CreateFrame("Frame", nil, gd)
         plot:SetPoint("TOPLEFT", C.x, -50); plot:SetSize(C.w, C.h)
@@ -2382,8 +2417,8 @@ function UI:Create()
     -- it is worked out from deals the radar has already seen (see Picks.lua):
     -- it sends nothing to the auction house and waits while you are sniping.
     local pk = CreateFrame("Frame", nil, frame)
-    pk:SetPoint("TOPLEFT", 14, -68); pk:SetPoint("TOPRIGHT", -14, -68)
-    pk:SetHeight(402)
+    pk:SetPoint("TOPLEFT", 14, -86); pk:SetPoint("TOPRIGHT", -14, -86)
+    pk:SetHeight(384)
     heading(pk, 0, "PICKS    worked out from deals the radar has already seen: no requests, and never while you are sniping")
     pk.head = pk:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     pk.head:SetPoint("TOPLEFT", 0, -34); pk.head:SetPoint("TOPRIGHT", 0, -34)
@@ -2512,6 +2547,32 @@ function UI:Create()
         rows[i] = r
     end
 
+    -- THE SCROLL BAR of the list, at its right edge: drag it, or roll the
+    -- wheel over the list as before. Shown only when the list is longer than
+    -- the panel.
+    do
+        local sb = CreateFrame("Slider", nil, frame)
+        sb:SetWidth(10)
+        if sb.SetOrientation then sb:SetOrientation("VERTICAL") end
+        local bg = sb:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints(); bg:SetColorTexture(1, 1, 1, 0.06)
+        local thumb = sb:CreateTexture(nil, "OVERLAY")
+        thumb:SetSize(10, 36); thumb:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.85)
+        if sb.SetThumbTexture then sb:SetThumbTexture(thumb) end
+        sb.thumb = thumb
+        if sb.SetMinMaxValues then sb:SetMinMaxValues(0, 0) end
+        if sb.SetValueStep then sb:SetValueStep(1) end
+        if sb.SetObeyStepOnDrag then sb:SetObeyStepOnDrag(true) end
+        sb:SetScript("OnValueChanged", function(_, v)
+            if UI.scrollSetting or type(v) ~= "number" then return end -- (the redraw itself moving the bar)
+            UI.scroll = UI.scroll or {}
+            local to = floor(v + 0.5)
+            if UI.scroll[UI.tab] ~= to then UI.scroll[UI.tab] = to; UI:Render() end
+        end)
+        sb:Hide()
+        frame.scrollBar = sb
+    end
+
     frame.footer = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.footer:SetPoint("BOTTOMLEFT", 14, 12)
     frame.footer:SetPoint("BOTTOMRIGHT", -230, 12)
@@ -2562,10 +2623,10 @@ end
 --   Bags:   the NEXT line, what to do, the list
 --   Setup:  one status line under the heading, then the settings
 local LAYOUT = {
-    BUY = { next = -86, status = -164, statusH = 38, top = 208 }, -- (the pace gauge sits between the snipe box's lines and the status)
+    BUY = { next = -188, status = -266, statusH = 38, top = 310 }, -- (the pace gauge sits between the snipe box's lines and the status)
     SELL = { next = -40, status = -58, statusH = 38, top = 104 },
-    HISTORY = { status = -55, statusH = 14, top = 480 },
-    PICKS = { status = -55, statusH = 14, top = 480 },
+    HISTORY = { status = -66, statusH = 14, top = 480 },
+    PICKS = { status = -66, statusH = 14, top = 480 },
     GOLD = { status = -55, statusH = 14, top = 480 },
 }
 function UI:Layout()
@@ -2574,9 +2635,8 @@ function UI:Layout()
     self.listTop = L.top
     if self.layoutKey == tab then return end
     self.layoutKey = tab
-    if tab ~= "BUY" then frame.ledger:Hide() end -- (the breakdown opens only from the Trades tab's money line)
+    frame.ledger:SetShown(tab == "BUY")
     frame.target:SetShown(tab == "BUY")
-    frame.money:SetShown(tab == "BUY")
     frame.setup:SetShown(tab == "HISTORY")
     frame.picks:SetShown(tab == "PICKS")
     frame.gold:SetShown(tab == "GOLD")
@@ -2593,8 +2653,11 @@ function UI:Layout()
         local r = rows[i]
         r:ClearAllPoints()
         r:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -L.top - (i - 1) * ROW_H)
-        r:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -L.top - (i - 1) * ROW_H)
+        r:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -18, -L.top - (i - 1) * ROW_H)
     end
+    frame.scrollBar:ClearAllPoints()
+    frame.scrollBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -L.top)
+    frame.scrollBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -5, 36)
 end
 
 -- Reads the two "smallest profit" boxes and applies them right away.

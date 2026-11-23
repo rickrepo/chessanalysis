@@ -145,7 +145,17 @@ ev:SetScript("OnEvent", function(_, event, arg1)
                 ns.charKey = name .. "-" .. tostring(realm)
                 db.chars = db.chars or {}
                 db.chars[ns.charKey] = { name = name, realm = tostring(realm), seen = GetServerTime() }
-                if ns.Gold then ns.Gold:Attach(db, ns.charKey) end -- this character's gold, over time (the Gold tab)
+                if ns.Gold then
+                    -- this character's cash over time (the Gold tab): gold in hand plus what has sold.
+                    -- What has sold is known once the list of your own auctions has been read this session.
+                    ns.Gold.sold = function()
+                        if Sniper.ownSoldPay == nil then return nil end
+                        local waiting, onway = Seller:SalesMoney()
+                        return (waiting or 0) + (onway or 0)
+                    end
+                    ns.Gold.atMail = function() return MailFrame ~= nil and MailFrame:IsShown() and true or false end
+                    ns.Gold:Attach(db, ns.charKey)
+                end
             end
         end
         db.realms[realm] = db.realms[realm] or {}
