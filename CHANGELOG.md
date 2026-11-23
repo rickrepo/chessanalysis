@@ -6,6 +6,15 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.59.0 (2026-11-23)
+
+From a real screenshot of the Gold tab on 3.58.
+
+- **Confirmed in game: the true line works on this client.**
+- **Squares only where the line visibly moves.** The chart had red squares for posting fees of 4c and 2c on a line at 15g: marks for dips that cannot be seen. A change is now marked only if it is at least a fiftieth of the height drawn. Smaller ones are still in the list under the chart.
+- **Sale gold collected at the mailbox no longer looks like new money at the start of a session.** That chart showed `+ 9g33s, not seen by the addon as it happened`: gold from auctions that had sold earlier, collected at the mailbox before the auction house had been opened, when the addon did not yet know they had sold. What has sold is now also known from the last look into the mailbox, which is kept across reloads, so those sales are already counted as cash and collecting them changes nothing. (The jump already on your chart stays there: it is in the record.)
+- Not confirmed in game: these two corrections.
+
 ## 3.58.0 (2026-11-23)
 
 - **The Gold chart's line is a true line.** It was pieced together from small rectangles, which is why it went up and down in blocks. It is now drawn with the game's own line segments, one from each point to the next: level where your cash does not change, sloping from the old amount to the new one where it does, in one unbroken line. The area under it is still filled.

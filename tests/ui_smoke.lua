@@ -4042,6 +4042,25 @@ do
         "the biggest changes are marked on the line; the mouse over the biggest says: + 60s, the Thick Leather sale, and the gold after it")
     check(strip(gd.marks[2].tip[2]) == "- 50s00c" and gd.marks[2].tip[3] == "Bought 60 x Runecloth", "the next: - 50s, Bought 60 x Runecloth")
     check(gd.marks[3].tip[3] == "gold came in, or something sold: not seen by the addon as it happened", "a change the addon did not see happen says so")
+    do  -- changes too small to see are listed, not marked (a real chart had red squares for fees of 4c and 2c)
+        G.d.ev[#G.d.ev + 1] = { t = now - 300, t2 = now - 300, d = -4, g = 11496, n = 1, why = { "Posting fee: 10 x Rough Stone" } }
+        G.d.ev[#G.d.ev + 1] = { t = now - 200, t2 = now - 200, d = 3, g = 11499, n = 1 }
+        UI:Render()
+        local shownNow = 0
+        for _, m in ipairs(gd.marks) do if m._shown then shownNow = shownNow + 1 end end
+        check(shownNow == 3 and UI.goldState.marked == 3 and strip(gd.lines[4].label._text):find("Posting fee: 10 x Rough Stone$") and strip(gd.lines[4].value._text) == "- 4c",
+            "a posting fee of 4c is in the list but gets no square: the line does not visibly move for it")
+        table.remove(G.d.ev); table.remove(G.d.ev)
+        UI:Render()
+    end
+    do  -- what has sold is known from the auction house's list, or else from the last look into the mailbox
+        local payWas, salesWas = S.ownSoldPay, AuctionMeshDB.sales
+        S.ownSoldPay, AuctionMeshDB.sales = nil, nil
+        check(soldWas() == nil, "with neither reading the sold amount is not known")
+        AuctionMeshDB.sales = { waiting = 500, pending = { { amount = 300, at = GetServerTime() + 600 } } }
+        check(soldWas() == 800, "a mailbox reading on record: 5s waiting there and 3s on its way count as sold, also after a reload")
+        S.ownSoldPay, AuctionMeshDB.sales = payWas, salesWas
+    end
     -- the mouse anywhere on the chart
     local hv = gd.hover[C.hover]
     check(hv.tip and strip(hv.tip[2]) == "Cash (in hand + sold): 1g15s" and strip(hv.tip[3]) == "Since the start of this chart: + 15s00c", "the mouse on the chart gives the amount at that time")

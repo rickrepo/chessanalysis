@@ -928,7 +928,7 @@ end
 -- the figures behind it, and one button per item.
 -- THE GOLD TAB, DRAWN (see where its widgets are made, and Gold.lua).
 -- x: where the plot begins (the amounts are to its left). cols x colW = w.
-UI.GOLD = { x = 64, w = 560, h = 190, cols = 140, colW = 4, grid = 6, days = 31, ticks = 9, hover = 35, marks = 6, lines = 5 }
+UI.GOLD = { x = 64, w = 560, h = 190, cols = 140, colW = 4, grid = 6, days = 31, ticks = 9, hover = 35, marks = 6, lines = 5, markShare = 0.02 }
 function UI:RenderGold(short)
     local gd, G, C = frame.gold, ns.Gold, UI.GOLD
     local view = self.goldView or "d2"
@@ -1120,11 +1120,18 @@ function UI:RenderGold(short)
     -- what moved the gold most, on the line and listed under the chart
     local swings = G:Swings(view, C.lines, C.cols, L.from)
     local used = {}
+    -- A MARK ONLY WHERE THE LINE VISIBLY MOVES: a change of at least a
+    -- fiftieth of the height drawn. (A real chart had red squares for posting
+    -- fees of 4c and 2c on a line at 15g: marks for dips that cannot be seen.)
+    -- Smaller changes are still in the list under the chart.
+    local minMark = (hi - lo) * UI.GOLD.markShare
+    local marked = 0
     for i = 1, C.marks do
         local m, e = gd.marks[i], swings[i]
-        if not e then
+        if not e or math.abs(e.d) < minMark then
             m:Hide(); m.tip = nil
         else
+            marked = marked + 1
             local key = e.col .. (e.d > 0 and "u" or "d")
             local nth = used[key] or 0
             used[key] = nth + 1
@@ -1160,7 +1167,8 @@ function UI:RenderGold(short)
             gd.hover[i].tip = tip
         end
     end
-    gd.head:SetText(GREY .. "BIGGEST CHANGES, " .. (L.short and rangeName:upper() or ("LAST " .. rangeName:upper())) .. "   (the squares on the line: mouse over one)|r")
+    gd.head:SetText(GREY .. "BIGGEST CHANGES, " .. (L.short and rangeName:upper() or ("LAST " .. rangeName:upper()))
+        .. (marked > 0 and "   (the squares on the line mark the ones big enough to see: mouse over one)" or "") .. "|r")
     for i = 1, C.lines do
         local w, e = gd.lines[i], swings[i]
         if e then
@@ -1172,7 +1180,7 @@ function UI:RenderGold(short)
         end
     end
     self.goldState = { view = view, first = first, last = last, change = chg, up = up, lo = lo, hi = hi, grid = gridVals, swings = swings, line = L,
-                       lines = gd.segs ~= nil and not UI.goldNoLines, segs = self.goldSegs }
+                       lines = gd.segs ~= nil and not UI.goldNoLines, segs = self.goldSegs, marked = marked }
 end
 
 function UI:RenderPicks(short)

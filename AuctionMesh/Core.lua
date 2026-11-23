@@ -148,8 +148,15 @@ ev:SetScript("OnEvent", function(_, event, arg1)
                 if ns.Gold then
                     -- this character's cash over time (the Gold tab): gold in hand plus what has sold.
                     -- What has sold is known once the list of your own auctions has been read this session.
+                    -- Known from either of two readings: the auction house's own list
+                    -- of your auctions (this session), or the last look into the
+                    -- mailbox (kept across reloads: its sale invoices and the gold
+                    -- waiting there). Without the second, a session that began at
+                    -- the mailbox started at "nothing sold", and the sale gold
+                    -- collected there looked like new money: a real chart showed
+                    -- + 9g33s that had sold hours before.
                     ns.Gold.sold = function()
-                        if Sniper.ownSoldPay == nil then return nil end
+                        if Sniper.ownSoldPay == nil and AuctionMeshDB.sales == nil then return nil end
                         local waiting, onway = Seller:SalesMoney()
                         return (waiting or 0) + (onway or 0)
                     end
