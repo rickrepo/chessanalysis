@@ -6,6 +6,17 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.51.0 (2026-11-23)
+
+- **Bank alt, corrected: it is the one character the addon is for.** 3.48 to 3.50 had this the wrong way round (they switched the addon off at the auction house on the bank alt, which is why posting sat on "pricing" there). Now:
+  - **On the bank alt** everything works as it always did: deals, prices, posting, mailbox, vendors.
+  - **On every other character** the addon is switched off: it opens nowhere by itself (not at a vendor, the mailbox or the auction house), adds no tab, reads no prices, sends no request, collects no mail, writes nothing off as "not found" and says nothing at login.
+  - **With no bank alt set** it works on every character, as before.
+- **Setup, the "Panel / bank alt" row:** the button reads `Use on: every character` or `Only on: Name`. Each click moves to the next choice; the character picked last time comes first. A character is on the list once it has logged in with the addon.
+- **If you open the panel by hand on a switched-off character**, the badge at the top left reads `OFF ON THIS CHARACTER` and the Trades and Bags tabs say so in full, so nothing ever looks stuck. One click on that badge makes the addon work on every character again (the bank alt is remembered for next time). The log says `SWITCHED OFF on this character` when the auction house opens there.
+- If your main was set as the bank alt in 3.48 to 3.50, that setting now means what you wanted: the addon works on the main and is off on the others.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.50.0 (2026-11-23)
 
 - **Clicking the `BANK ALT: VENDORS ONLY` badge switches the mode.** It used to do nothing there. One click takes that character out of bank-alt mode (to `VENDOR + FLIPS`); at the auction house everything starts at once, with no need to reopen it.

@@ -3653,7 +3653,7 @@ do
     UI.tab = "BUY"; UI:Render()
 end
 
-print("bank alt: on that character the addon opens at vendors only")
+print("bank alt: the one character the addon is for; switched off on the others")
 do
     local cfg, Do, Sw, flips = AuctionMeshDB.cfg, ns.Do, ns.Swarm, AuctionMeshDB.flips
     AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED"); MerchantFrame:Hide(); MailFrame:Hide(); UI:Close()
@@ -3661,87 +3661,85 @@ do
     fire("BAG_UPDATE_DELAYED")
     check(ns.charKey == "Tester-Realm" and AuctionMeshDB.chars["Tester-Realm"] ~= nil and AuctionMeshDB.chars["Tester-Realm"].name == "Tester",
         "the character that logs in is added to the list of your characters")
-    check(cfg.bankAlt == nil and not ns.BankAlt(), "no bank alt until you pick one")
+    check(cfg.bankAlt == nil and not ns.BankAlt() and not ns.Dormant(), "no bank alt until you pick one: the addon works on every character")
     AuctionMeshDB.chars["Banker-Realm"] = { name = "Banker", realm = "Realm", seen = GetServerTime() } -- another character that has logged in before
-    -- Setup: one button; each click moves to the next character, then back to none
+    -- Setup: one button; each click moves to the next choice, then back to every character
     UI:Open("HISTORY")
     local sp = AuctionMeshFrame.setup
-    check(sp.bank ~= nil and sp.bank._text == "Bank alt: none", "Setup has a 'Bank alt' button: none to begin with")
+    check(sp.bank ~= nil and sp.bank._text == "Use on: every character", "Setup has the button: 'Use on: every character' to begin with")
     sp.bank._scripts.OnClick(sp.bank)
-    check(cfg.bankAlt == "Banker-Realm" and sp.bank._text == "Bank alt: Banker" and not ns.BankAlt() and UI.modeText ~= "BANK ALT: VENDORS ONLY",
-        "a click picks the first of your characters; on this one nothing changes")
-    sp.bank._scripts.OnClick(sp.bank)
-    check(cfg.bankAlt == "Tester-Realm" and sp.bank._text == "Bank alt: Tester (this one)" and ns.BankAlt() and UI.modeText == "BANK ALT: VENDORS ONLY",
-        "the next click picks this character: the button says so and the badge at the top left reads BANK ALT: VENDORS ONLY")
-    check(strip(AuctionMeshFrame.status._text):find("^Tester %(this character%) is your bank alt: here the addon opens at vendors only"), "and the panel says what that means")
-    do  -- the badge switches the mode, and the bank alt is remembered
-        local badge = AuctionMeshFrame.mode
-        local function press() badge._scripts.OnClick(badge); UI.notice = nil; UI:Render() end
-        press()
-        check(not ns.BankAlt() and cfg.bankAlt == nil and cfg.bankAltLast == "Tester-Realm" and UI.modeText == "VENDOR + FLIPS" and cfg.flips ~= false,
-            "a click on the BANK ALT badge switches it off: VENDOR + FLIPS, and the character stays remembered")
-        check(sp.bank._text == "Bank alt: off (Tester)", "Setup shows it is off, and who it was")
-        press()
-        check(UI.modeText == "VENDOR ONLY" and not ns.BankAlt(), "the next click: VENDOR ONLY")
-        press()
-        check(ns.BankAlt() and cfg.bankAlt == "Tester-Realm" and UI.modeText == "BANK ALT: VENDORS ONLY", "and the next brings BANK ALT back, without a visit to Setup")
-        -- at the auction house, leaving the mode starts everything at once
-        UI:Close(); AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
-        check(not S.active and not Sw.active, "(bank alt, auction house open: nothing runs)")
-        UI:Open("BUY"); press()
-        check(not ns.BankAlt() and S.active == true, "switched off at the auction house: the sniper starts at once, with no need to reopen it")
-        AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
-        UI:Open("BUY") -- (the docked panel left with the auction house)
-        -- on a character that was never the bank alt the badge has its two steps only
-        local me = ns.charKey
-        ns.charKey = "Banker-Realm"
-        press(); local a = UI.modeText
-        press(); local b = UI.modeText
-        press(); local c = UI.modeText
-        check(a == "VENDOR ONLY" and b == "VENDOR + FLIPS" and c == "VENDOR ONLY" and cfg.bankAlt == nil, "on another character the badge only goes between VENDOR + FLIPS and VENDOR ONLY")
-        ns.charKey = me
-        press()
-        check(ns.BankAlt() and UI.modeText == "BANK ALT: VENDORS ONLY", "(back on the bank alt, in bank-alt mode, for the rest of this test)")
-    end
+    check(cfg.bankAlt == "Banker-Realm" and sp.bank._text == "Only on: Banker" and ns.Dormant() and not ns.BankAlt(),
+        "a click picks the first of your characters, Banker: the addon is now for Banker only")
+    check(UI.modeText == "OFF ON THIS CHARACTER" and strip(AuctionMeshFrame.status._text):find("^The addon is for Banker only%. On this character it is switched off"),
+        "on this character (not Banker) the badge reads OFF ON THIS CHARACTER and the panel says why")
+
+    -- SWITCHED OFF HERE: nothing by itself, anywhere
     UI:Close()
-    -- the auction house: nothing
     local n0 = #sent
     AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(5)
     check(not UI:IsShown() and not Sw.active and not S.active and #sent == n0,
         "at the auction house the panel stays closed, the radar and the sniper do not start, and no request is sent")
     S:Start(); Sw:Start(true)
     check(not Sw.active and not S.active, "they cannot be started by hand there either")
+    UI:Open("BUY"); UI.notice = nil; UI:Render()
+    check(strip(AuctionMeshFrame.status._text):find("^SWITCHED OFF ON THIS CHARACTER: the addon is set to work on Banker only"),
+        "opened by hand, the Trades tab says it is switched off here (it never looks stuck)")
+    UI.tab = "SELL"; UI:Render()
+    check(strip(AuctionMeshFrame.status._text):find("^SWITCHED OFF ON THIS CHARACTER"), "and so does the Bags tab")
+    UI:Close()
     AuctionHouseFrame:Hide(); fire("AUCTION_HOUSE_CLOSED")
-    -- the mailbox: nothing is taken, and what another character holds is not given up on
+    -- the mailbox: nothing is taken, and what the bank alt holds is not given up on
     flips[2592] = { kind = "FLIP", units = 5, cost = 30, sell = 90, at = GetServerTime() - 1000 }
     inbox[#inbox + 1] = { itemID = 2592, stackCount = 5 }
     local inboxWas = #inbox
     MailFrame:Show(); fire("MAIL_SHOW"); advance(4); fire("MAIL_INBOX_UPDATE"); advance(400); fire("MAIL_INBOX_UPDATE"); advance(4)
     check(#inbox == inboxWas and not UI:IsShown() and flips[2592] and flips[2592].units == 5 and flips[2592].missingSince == nil,
-        "at the mailbox nothing is collected, the panel stays closed, and a holding that is not in these bags is not marked as not found")
+        "at the mailbox nothing is collected, the panel stays closed, and what the bank alt holds is not marked as not found")
     MailFrame:Hide(); fire("MAIL_CLOSED")
     table.remove(inbox)
-    -- a vendor, with nothing of the addon's in these bags
-    MerchantFrame:Show(); fire("MERCHANT_SHOW"); advance(1)
-    check(not UI:IsShown(), "at a vendor with nothing to sell in these bags it stays closed (what another character holds does not open it)")
-    MerchantFrame:Hide(); fire("MERCHANT_CLOSED")
-    -- a vendor, with something to sell
+    -- a vendor, even with something the addon bought in these bags
     ITEMS[2770] = ITEMS[2770] or { "Copper Ore", 5 }
     flips[2770] = { kind = "VENDOR", units = 12, cost = 3, sell = 5, at = GetServerTime() }
     bags[1] = { itemID = 2770, stackCount = 12 }; fire("BAG_UPDATE_DELAYED")
     MerchantFrame:Show(); fire("MERCHANT_SHOW"); advance(1)
-    check(UI:IsShown() and UI.tab == "SELL", "at a vendor with something of the addon's in the bags the panel opens on the Bags tab")
+    check(not UI:IsShown(), "at a vendor it stays closed too")
+    MerchantFrame:Hide(); fire("MERCHANT_CLOSED")
+
+    -- the badge: one click and the addon works on every character again; the bank alt is remembered
+    UI:Open("BUY")
+    local badge = AuctionMeshFrame.mode
+    badge._scripts.OnClick(badge); UI.notice = nil; UI:Render()
+    check(cfg.bankAlt == nil and cfg.bankAltLast == "Banker-Realm" and not ns.Dormant() and UI.modeText ~= "OFF ON THIS CHARACTER",
+        "a click on the OFF badge: the addon works on every character again, and the bank alt is remembered")
+    UI.tab = "HISTORY"; UI:Render()
+    check(sp.bank._text == "Use on: every character", "(Setup: every character)")
+    sp.bank._scripts.OnClick(sp.bank)
+    check(cfg.bankAlt == "Banker-Realm", "the next click on Setup's button offers the remembered bank alt first")
+
+    -- ON THE BANK ALT: everything works as it always did
+    sp.bank._scripts.OnClick(sp.bank)
+    check(cfg.bankAlt == "Tester-Realm" and sp.bank._text == "Only on: Tester (this one)" and ns.BankAlt() and not ns.Dormant(),
+        "the next click picks this character: 'Only on: Tester (this one)'")
+    UI.notice = nil; UI:Render()
+    check(UI.modeText ~= "OFF ON THIS CHARACTER", "on the bank alt the badge is the ordinary mode badge")
+    UI:Close()
+    MerchantFrame:Show(); fire("MERCHANT_SHOW"); advance(1)
+    check(UI:IsShown() and UI.tab == "SELL", "on the bank alt the panel opens at a vendor as before")
     local goldWas = gold
-    Se:SellVendor(2770); advance(3) -- (the row's own Sell button)
-    check(gold == goldWas + 60 and flips[2770] == nil and bags[1] == nil, "and selling works as on any character: 12 Copper Ore to the vendor for 60c")
+    Se:SellVendor(2770); advance(3)
+    check(gold == goldWas + 60 and flips[2770] == nil, "and selling works: 12 Copper Ore to the vendor for 60c")
     MerchantFrame:Hide(); fire("MERCHANT_CLOSED"); UI:Close()
-    -- no bank alt again: everything is back
+    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(2)
+    check(S.active == true and UI:IsShown(), "at the auction house the panel opens and the sniper runs, as before")
+    -- switched to another character while the auction house is open, and back: stops, then starts at once
+    Do.BankAlt("Banker-Realm")
+    check(ns.Dormant() and not S.active and not Sw.active, "the bank alt moved to another character with the auction house open: everything stops here")
+    Do.BankAlt("Tester-Realm")
+    check(not ns.Dormant() and S.active == true, "moved back: the sniper starts at once, with no need to reopen the auction house")
+
+    -- clean up: no bank alt
     Do.BankAlt(false); cfg.bankAltLast = nil
-    if cfg.flips == false then UI:SetVendorOnly(false) end
-    check(cfg.bankAlt == nil and not ns.BankAlt(), "set back to none")
-    AuctionHouseFrame:Show(); fire("AUCTION_HOUSE_SHOW"); advance(1)
-    S:Start()
-    check(S.active == true, "and the auction house works as before")
+    check(cfg.bankAlt == nil and not ns.Dormant(), "set back to every character")
     flips[2592] = nil; ns.Journal:Dropped(2592, nil, "test"); ns.Journal:Dropped(2770, nil, "test")
     AuctionMeshDB.chars["Banker-Realm"] = nil
     UI.notice = nil

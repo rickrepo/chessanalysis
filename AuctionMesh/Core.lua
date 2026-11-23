@@ -103,19 +103,26 @@ local function realmKey()
     return GetNormalizedRealmName and GetNormalizedRealmName() or GetRealmName()
 end
 
--- BANK ALT. One of your characters can be marked as the bank alt (Setup tab).
--- On that character the addon is for selling to vendors only: the panel opens
--- at a vendor when there is something of yours to sell, and nowhere else by
--- itself. At the auction house it adds no tab, reads no prices and sends no
--- request; at the mailbox it collects nothing and gives up on nothing as "not
--- found" (what your other character holds is not in this one's bags). The
--- setting is kept for the account, so it is the same on every character.
+-- BANK ALT: THE ONE CHARACTER THE ADDON IS FOR. With a bank alt set (Setup
+-- tab), the addon works on that character and is switched off on every other
+-- one: there it opens nowhere by itself (not at a vendor, the mailbox or the
+-- auction house), adds no tab, reads no prices, sends no request, collects no
+-- mail, gives up on nothing as "not found" and says nothing at login. With no
+-- bank alt set it works on every character, as it always did. The setting is
+-- kept for the account.
 --
 -- The game gives an addon no list of your characters. Each one is added to the
 -- list (AuctionMeshDB.chars) the first time it logs in with the addon.
+--
+--   ns.BankAlt()  this character is the bank alt
+--   ns.Dormant()  a bank alt is set and this character is not it: switched off here
 function ns.BankAlt()
     local cfg = AuctionMeshDB and AuctionMeshDB.cfg
     return cfg ~= nil and cfg.bankAlt ~= nil and cfg.bankAlt == ns.charKey
+end
+function ns.Dormant()
+    local cfg = AuctionMeshDB and AuctionMeshDB.cfg
+    return cfg ~= nil and cfg.bankAlt ~= nil and cfg.bankAlt ~= ns.charKey
 end
 
 local ev = CreateFrame("Frame")
@@ -241,7 +248,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
             -- seconds). The game's window may only be shown a frame after
             -- this event, so the start is tried again until it has taken.
             local function start()
-                if ns.BankAlt() then return end -- the bank alt: nothing runs at the auction house
+                if ns.Dormant() then return end -- switched off on this character
                 if AuctionMeshDB.cfg.autoScan and not Swarm.active and not Swarm.manual then Swarm:Start(true) end
             end
             start()
@@ -262,7 +269,7 @@ ev:SetScript("OnEvent", function(_, event, arg1)
         -- then the sweep. The slow timers remain only as a safety net.
         ns.OnAHReady = function()
             if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
-            if ns.BankAlt() then return end
+            if ns.Dormant() then return end
             local before = ns.Gate.uses
             -- a locked-in price becomes BUY NOW the instant the lock opens
             if Sniper.buying and Sniper.buying.phase == "confirm" then UI:Now() end
@@ -325,39 +332,41 @@ function Do.Chars()
     return out
 end
 
--- Which character is the bank alt. key = one from Do.Chars(), or false for
--- none; nil moves to the next one (none, then each character in turn).
+-- Which character is the bank alt: the only one the addon works on. key = one
+-- from Do.Chars(), or false for none (it works on every character); nil moves
+-- to the next choice: none, then the one picked last time, then the others.
 function Do.BankAlt(key)
     local cfg = AuctionMeshDB.cfg
-    local chars = Do.Chars()
     if key == nil then
+        local order = {}
+        for _, c in ipairs(Do.Chars()) do
+            if c.key == cfg.bankAltLast then table.insert(order, 1, c.key) else order[#order + 1] = c.key end
+        end
         local at = 0
-        for i, c in ipairs(chars) do if c.key == cfg.bankAlt then at = i end end
-        key = chars[at + 1] and chars[at + 1].key or false
+        for i, k in ipairs(order) do if k == cfg.bankAlt then at = i end end
+        key = order[at + 1] or false
     end
-    local was = ns.BankAlt()
+    local was = ns.Dormant()
     cfg.bankAlt = key or nil
-    -- the last character picked is remembered, so that the badge at the top
-    -- left can switch the mode off and on again without going through Setup
-    if key then cfg.bankAltLast = key end
-    local is = ns.BankAlt()
+    if key then cfg.bankAltLast = key end -- remembered: the first choice the next time
+    local is = ns.Dormant()
+    ns.Log("BANK ALT set to %s: on this character the addon is %s", key and "a character" or "none", is and "switched OFF" or "on")
     local open = AuctionHouseFrame and AuctionHouseFrame:IsShown()
     if is and not was then
-        -- this character is the bank alt from now on: what was running here stops
+        -- switched off on this character from now on: what was running here stops
         if Swarm.active then Swarm:Stop() end
         if Sniper.active then Sniper:Stop() end
     elseif was and not is and open then
-        -- no longer the bank alt, at the auction house: everything starts as if it had just been opened
+        -- on again, at the auction house: everything starts as if it had just been opened
         UI:CreateAHTab()
         Seller:AtAuctionHouse()
         if cfg.snipeAuto then Sniper:Start() end
         if cfg.autoScan and not Swarm.active and not Swarm.manual then Swarm:Start(true) end
     end
     local name = key and ((AuctionMeshDB.chars[key] or {}).name or key)
-    UI:Notice(not key and (was and "Bank-alt mode is off on this character: the addon works as on any other. Click the badge again to go through the modes; the bank alt is remembered."
-            or "No bank alt: the addon works the same on every character.")
-        or is and (name .. " (this character) is your bank alt: here the addon opens at vendors only. Nothing runs at the auction house or the mailbox. Click the badge to switch.")
-        or (name .. " is your bank alt: on that character the addon opens at vendors only."), true)
+    UI:Notice(not key and "No bank alt: the addon works on every character."
+        or is and ("The addon is for " .. name .. " only. On this character it is switched off: it opens nowhere by itself and nothing runs.")
+        or (name .. " (this character) is your bank alt: the addon works here, and is switched off on your other characters."), true)
     UI:Render()
 end
 

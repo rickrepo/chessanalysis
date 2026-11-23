@@ -553,7 +553,7 @@ function Scout:Snapshot(o)
         " | auto-adjust ", cfg.tune ~= false and "on" or "off", " | posting fee comes back: ", cfg.feeBack == nil and "not known yet" or tostring(cfg.feeBack))
     -- (the character's name is left out: the snapshot is sent on)
     if cfg.bankAlt then
-        add("bank alt: ", (ns.BankAlt and ns.BankAlt()) and "THIS character (vendors only: nothing runs at the auction house or the mailbox)" or "another character")
+        add("bank alt: ", (ns.Dormant and ns.Dormant()) and "ANOTHER character: the addon is SWITCHED OFF on this one (nothing runs)" or "this character (the addon is off on the others)")
     end
     do
         local parts = {}

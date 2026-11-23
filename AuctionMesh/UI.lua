@@ -285,7 +285,17 @@ end
 --   2. the last answer to something the radar asked about
 --   3. the radar: seconds between its reads, and what the last minute's
 --      requests went to
+-- Switched off on this character (a bank alt is set and this is not it): said
+-- in full wherever a status line is. With the panel opened by hand nothing
+-- happens, and that must never look like something is stuck.
+local function dormantLine()
+    local cfg = AuctionMeshDB.cfg
+    local c = (AuctionMeshDB.chars or {})[cfg.bankAlt or ""]
+    return ORANGE .. ("SWITCHED OFF ON THIS CHARACTER: the addon is set to work on %s only. Nothing runs here: no deals, no prices, no posting, no mail.|r "):format(c and c.name or "your bank alt")
+        .. GOLD .. "Click the badge at the top left to use it on every character again.|r"
+end
 local function buyStatus(n)
+    if ns.Dormant() then return dormantLine() end
     if not ahOpen() then return GOLD .. "Open the Auction House to look for deals.|r" end
     local S, Sw, G = ns.Sniper, ns.Swarm, ns.Gate
     local name, lines = S.nameOf, {}
@@ -1021,7 +1031,7 @@ function UI:RenderMode()
     local S = ns.Sniper
     local sk = S:StakeKey()
     local text, c
-    if ns.BankAlt() then text, c = "BANK ALT: VENDORS ONLY", { 0.55, 0.75, 1 }
+    if ns.Dormant() then text, c = "OFF ON THIS CHARACTER", { 0.6, 0.6, 0.6 }
     elseif sk then text, c = "STAKE-OUT: " .. S.nameOf(sk), { 1, 0.82, 0 }
     elseif S.lowGold then text, c = "VENDOR ONLY: GOLD LOW", { 1, 0.5, 0.25 }
     elseif not ns.Deals.cfg.flips then text, c = "VENDOR ONLY", { 0.2, 1, 0.4 }
@@ -1033,18 +1043,14 @@ end
 function UI:ModeClick()
     local S = ns.Sniper
     local cfg = AuctionMeshDB.cfg
-    if ns.BankAlt() then
-        -- BANK ALT -> VENDOR + FLIPS. The character stays remembered as the
-        -- bank alt, so the badge can bring the mode back (see below).
-        if cfg.flips == false then self:SetVendorOnly(false) end
+    if ns.Dormant() then
+        -- switched off here (not the bank alt): one click and the addon works
+        -- on every character again. The bank alt is remembered: Setup's button
+        -- offers it first.
         ns.Do.BankAlt(false)
     elseif S:StakeKey() then
         S:SetStake(nil)
         self:Notice("Stake-out ended. The radar has every request again.", true)
-    elseif cfg.flips == false and cfg.bankAltLast ~= nil and cfg.bankAltLast == ns.charKey then
-        -- on the character last set as the bank alt the badge has a third
-        -- step: VENDOR + FLIPS -> VENDOR ONLY -> BANK ALT -> VENDOR + FLIPS
-        ns.Do.BankAlt(ns.charKey)
     else
         self:SetVendorOnly(cfg.flips ~= false)
     end
@@ -1070,8 +1076,7 @@ function UI:RenderSetup()
     sp.auto:SetText(cfg.autoOpen and "Opens by itself: on" or "Opens by itself: off")
     do
         local c = cfg.bankAlt and (AuctionMeshDB.chars or {})[cfg.bankAlt]
-        local last = not cfg.bankAlt and cfg.bankAltLast and (AuctionMeshDB.chars or {})[cfg.bankAltLast]
-        sp.bank:SetText(not cfg.bankAlt and (last and ("Bank alt: off (" .. last.name .. ")") or "Bank alt: none") or ("Bank alt: " .. (c and c.name or cfg.bankAlt) .. (ns.BankAlt() and " (this one)" or "")))
+        sp.bank:SetText(not cfg.bankAlt and "Use on: every character" or ("Only on: " .. (c and c.name or cfg.bankAlt) .. (ns.BankAlt() and " (this one)" or "")))
         UI.outline(sp.bank, ns.BankAlt() and ACCENT or LINE)
     end
     sp.tune:SetText(ns.Tuner.cfg.enabled and "Auto-adjust: on" or "Auto-adjust: off")
@@ -1148,6 +1153,7 @@ function UI:Render()
     self:RenderSnipe(short)
     if frame.stakeStop then frame.stakeStop:SetShown(tab == "BUY" and ns.Sniper:StakeKey() ~= nil) end
     local status = tab == "BUY" and buyStatus(#deals) or tab == "SELL" and Se:Instructions(entries) or ""
+    if tab == "SELL" and ns.Dormant() then status = dormantLine() end
 
     local n = self.notice
     if n and GetTime() < n.till then
@@ -1961,7 +1967,7 @@ function UI:Create()
         "On: the panel opens and starts reading prices when you open the auction house. Off: click the AuctionMesh tab under the auction house window.")
     sp.auto:SetPoint("RIGHT", sp.dock, "LEFT", -6, 0)
     sp.bank = tip(button(sp, 190, "", function() ns.Do.BankAlt() end),
-        "Click to pick which of your characters is the bank alt: none, then each character in turn. On the bank alt the addon opens at vendors only, to sell what it bought; nothing runs at the auction house or the mailbox. Kept for the whole account. A character is on the list once it has logged in with the addon.")
+        "Your bank alt: the one character the addon is for. Click to pick: every character, then each of your characters in turn (the one picked last comes first). With a bank alt set, the addon works on that character and is switched off on all the others: it opens nowhere by itself and nothing runs. Kept for the whole account. A character is on the list once it has logged in with the addon.")
     sp.bank:SetPoint("RIGHT", sp.auto, "LEFT", -6, 0)
     upTo(L, sp.bank)
 
@@ -2905,8 +2911,8 @@ function UI:Init()
         f:RegisterEvent(e)
     end
     f:SetScript("OnEvent", function(_, event)
-        if event == "AUCTION_HOUSE_SHOW" and ns.BankAlt() then
-            -- the bank alt: no tab under the auction house, and the panel stays closed
+        if event == "AUCTION_HOUSE_SHOW" and ns.Dormant() then
+            -- switched off on this character: no tab under the auction house, and the panel stays closed
         elseif event == "AUCTION_HOUSE_SHOW" then
             UI:CreateAHTab()
             if frame and frame:IsShown() then frame:Hide() end -- re-place inside the auction house
