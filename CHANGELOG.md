@@ -6,6 +6,17 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.46.0 (2026-11-23)
+
+- **The mode is at the top left of the panel**, where the name used to be, on every tab: a coloured badge that reads `VENDOR + FLIPS`, `VENDOR ONLY`, `VENDOR ONLY: GOLD LOW` or `STAKE-OUT: Runecloth`. **A click changes it**: between vendor + flips and vendor only, or, during a stake-out, it ends the stake-out. No trip to the Setup tab. (The status line under the snipe box no longer starts with the mode; the tabs moved right to make room.)
+- **The footer of the Trades tab is SESSION | TODAY | the year**, each with how many deals you bought and what they are worth when sold (the "Worth + X when sold" of every purchase, added up):
+  `SESSION 18:42  5 bought, 14 missed  + 9s65c   |   TODAY  35 bought  + 3g12s   |   2026  412 bought  + 41g20s`
+  - **SESSION** is one stretch of pressing, **with a running clock**. It starts with your first press after a break of 10 minutes or more (or after logging in). Ten minutes without a press and it is over; its figures stay until the next one starts.
+  - **TODAY** carries over reloads and log-outs and starts again at midnight (server time).
+  - **The year** is the year to date. The first time, today and the year are filled from the journal of your trades (which keeps the most recent ones), and counted from then on.
+  - The count that was under the snipe box ("This session: N got ...") and "Banked so far" are replaced by this.
+- Not yet tried in the real game.
+
 ## 3.45.0 (2026-11-23)
 
 - **Confirmed in game: the stake-out works.** Real log, 20:28: Runecloth's price was asked every 0.72 to 0.75s (the game's limit for price requests); at 20:28:25 the answer was 1s58c against a limit of 4s38c, the purchase was sent half a second later and one Runecloth was bought. The next request asked for two: none were left at that price.

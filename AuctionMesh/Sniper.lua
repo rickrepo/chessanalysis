@@ -1642,10 +1642,64 @@ end
 -- as a line that stays on the panel until the next outcome, with a running
 -- count for the session. A different sound plays for a win and for a miss.
 Sniper.tally = { won = 0, lost = 0, gone = 0 }
+
+-- SESSION, TODAY, THIS YEAR: what you bought and what it is worth when sold
+-- (the "Worth + X when sold" of each purchase, added up).
+--   A session is one stretch of pressing: it starts with your first input
+--   after a break of 10 minutes or more (or after logging in).
+--   Today and the year are kept across reloads and log-outs.
+local SESSION_GAP = 600
+function Sniper:SessionTouch()
+    local now = GetTime()
+    local se = self.session
+    if not se or now - (se.last or 0) > SESSION_GAP then
+        se = { at = now, won = 0, lost = 0, gone = 0, profit = 0 }
+        self.session = se
+        ns.Log("SESSION started (first input after a break)")
+    end
+    se.last = now
+    return se
+end
+local function dayId() return tonumber(date("%Y%m%d", GetServerTime())) or 0 end
+local function yearId() return tonumber(date("%Y", GetServerTime())) or 0 end
+-- The two kept totals, made new when the day or the year turns. The first
+-- time, they are filled from the journal of your trades.
+function Sniper:Totals()
+    local db = AuctionMeshDB
+    local t = db.totals
+    local d, y = dayId(), yearId()
+    if not t then
+        t = { day = { id = d, n = 0, profit = 0 }, year = { id = y, n = 0, profit = 0 } }
+        db.totals = t
+        local cut = 1 - Deals.cfg.cut
+        for _, tr in ipairs((ns.Journal and ns.Journal.list) or {}) do
+            if tr.at and tr.cost and tr.plan and (tr.qty or 0) > 0 then
+                local each = (tr.kind == "VENDOR") and (tr.plan - tr.cost) or (floor(tr.plan * cut) - tr.cost)
+                local p = math.max(0, each) * tr.qty
+                if tonumber(date("%Y", tr.at)) == y then t.year.n, t.year.profit = t.year.n + 1, t.year.profit + p end
+                if tonumber(date("%Y%m%d", tr.at)) == d then t.day.n, t.day.profit = t.day.n + 1, t.day.profit + p end
+            end
+        end
+    end
+    if t.day.id ~= d then t.day = { id = d, n = 0, profit = 0 } end
+    if t.year.id ~= y then t.year = { id = y, n = 0, profit = 0 } end
+    return t
+end
+-- A purchase went through: its worth is added to the session, the day and the year.
+function Sniper:CountPurchase(profit)
+    profit = math.max(0, profit or 0)
+    local t = self:Totals()
+    t.day.n, t.day.profit = t.day.n + 1, t.day.profit + profit
+    t.year.n, t.year.profit = t.year.n + 1, t.year.profit + profit
+    local se = self.session
+    if se then se.profit = se.profit + profit end
+end
+
 local FLASH = { won = { 0.2, 1, 0.4 }, lost = { 1, 0.25, 0.25 }, gone = { 1, 0.6, 0.25 } }
 function Sniper:Result(kind, key, text, lasted)
     self.result = { kind = kind, key = key, text = text, at = GetTime() }
     self.tally[kind] = (self.tally[kind] or 0) + 1
+    if self.session and self.session[kind] then self.session[kind] = self.session[kind] + 1 end
     local rec
     do  -- kept for the snapshot and the Session view: the last outcomes, how fast the input came and what it was
         local list = AuctionMeshDB.outcomes or {}
@@ -2102,8 +2156,9 @@ function Sniper:OnPurchase(ok, why)
                 st.q = min((st.q or 1) * 2, STAKE_CAP)
             end
         end
-        self:Result("won", b.key, ("GOT IT  %d x %s for %s. Worth + %s when sold."):format(b.units, nameOf(b.key), plain(spent),
-            plain(math.max(0, floor((b.deal.profit or 0) * b.units / math.max(1, b.deal.units or b.units))))))
+        local worth = math.max(0, floor((b.deal.profit or 0) * b.units / math.max(1, b.deal.units or b.units)))
+        self:CountPurchase(worth)
+        self:Result("won", b.key, ("GOT IT  %d x %s for %s. Worth + %s when sold."):format(b.units, nameOf(b.key), plain(spent), plain(worth)))
         self.bought[b.key] = (self.bought[b.key] or 0) + b.units
         if b.item then
             b.deal.units, b.deal.cost = b.deal.units - b.units, b.deal.cost - (b.total or 0)

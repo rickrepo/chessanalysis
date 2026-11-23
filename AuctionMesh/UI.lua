@@ -48,6 +48,7 @@ local CYAN = "|cff66ccff"
 UI.tab = "BUY"
 
 local GREEN, GOLD, BLUE, RED, GREY, ORANGE = "|cff33ff66", "|cffffd100", "|cff4d99ff", "|cffff4040", "|cffaaaaaa", "|cffff8040"
+local WHITE_C = "|cffffffff"
 
 local frame, rows = nil, {}
 
@@ -267,9 +268,7 @@ local function buyStatus(n)
     local name, lines = S.nameOf, {}
     -- THE MODE, first thing on the line, in capitals and in colour:
     -- what kind of deals are being offered right now.
-    local mode = S.lowGold and (ORANGE .. "MODE: VENDOR ONLY (gold is low).|r ")
-        or (not ns.Deals.cfg.flips) and (GREEN .. "MODE: VENDOR ONLY.|r ")
-        or (TEAL .. "MODE: VENDOR + FLIPS.|r ")
+    local mode = "" -- (the mode itself is the badge at the top left of the panel: see RenderMode)
     local cap = S:Capital()
     if ns.Deals.cfg.flips and (AuctionMeshDB.cfg.focusMode or "off") ~= "off" then
         local set, flist = S:FocusSet()
@@ -278,7 +277,6 @@ local function buyStatus(n)
 
     -- A STAKE-OUT IS A MODE OF ITS OWN: one item, bought by asking its price; nothing else while you press.
     local sk = S:StakeKey()
-    if sk then mode = GOLD .. ("MODE: STAKE-OUT on %s.|r "):format(name(sk)) end
     local poor = S.PoorCount and S:PoorCount() or 0
     local low = S.lowGold
     if low then
@@ -807,6 +805,7 @@ function UI.InputPress(inBox, via)
         if #t > 60 then table.remove(t, 1) end
         UI.inputCount = (UI.inputCount or 0) + 1
     end
+    if ns.Sniper.SessionTouch then ns.Sniper:SessionTouch() end
     if UI.tab == "SELL" and via == "key" and UI.BuyMode() == "one" then return UI.OnePost() end -- the one key, on the Bags tab: it posts
     if UI.tab ~= "BUY" then return false end
     if via == "wheel" and UI.BuyMode() ~= "wheel" then return false end
@@ -1036,14 +1035,13 @@ function UI:RenderSnipe(short)
     end
     -- The line under the button never leaves you guessing: the last outcome
     -- stays there with its age, next to the count for this session.
-    local t = S.tally
-    local tally = ("%sThis session:|r %s%d got|r, %s%d missed|r, %s%d gone before a click|r"):format(GREY, GREEN, t.won, RED, t.lost, ORANGE, t.gone)
+    -- (the session's count is in the footer: SESSION, TODAY, the year)
     if last and not (res and not d) then
         local age = GetTime() - last.at
-        sn.result:SetText(("%sLast:|r %s%s|r %s(%s ago)|r    %s"):format(GREY, last.kind == "won" and GREEN or last.kind == "lost" and RED or ORANGE,
-            last.text, GREY, age < 90 and (floor(age) .. "s") or (floor(age / 60) .. " min"), tally))
+        sn.result:SetText(("%sLast:|r %s%s|r %s(%s ago)|r"):format(GREY, last.kind == "won" and GREEN or last.kind == "lost" and RED or ORANGE,
+            last.text, GREY, age < 90 and (floor(age) .. "s") or (floor(age / 60) .. " min")))
     else
-        sn.result:SetText((t.won + t.lost + t.gone > 0) and tally or "")
+        sn.result:SetText("")
     end
 end
 
@@ -1151,6 +1149,60 @@ function UI:RenderPicks(short)
         .. "\nA stake-out watches one item by asking its price with every input. It is quicker than the radar, and the radar is off while it runs.")
 end
 
+-- THE TRADES TAB'S FOOTER: SESSION | TODAY | THE YEAR. What you bought and
+-- what it is worth when sold.
+--   SESSION is one stretch of pressing, with its clock: it starts with your
+--   first input after a break of 10 minutes or more. After 10 minutes with
+--   no input it is over and stays shown until the next one starts.
+--   TODAY and the year carry over reloads and log-outs.
+local function clockText(secs)
+    secs = math.max(0, floor(secs))
+    local h, m, sec = floor(secs / 3600), floor(secs / 60) % 60, secs % 60
+    return h > 0 and ("%d:%02d:%02d"):format(h, m, sec) or ("%d:%02d"):format(m, sec)
+end
+function UI.TradesFooter(short)
+    local S = ns.Sniper
+    local se, t = S.session, S:Totals()
+    local parts = {}
+    local function worth(c) return GREEN .. "+ " .. short(c) .. "|r" end
+    if se then
+        local over = GetTime() - (se.last or se.at) > 600
+        parts[1] = ("%sSESSION|r %s%s%s|r  %d bought, %d missed  %s"):format(WHITE_C, over and GREY or GOLD,
+            clockText((over and se.last or GetTime()) - se.at), over and " (over)" or "", se.won, se.lost, worth(se.profit))
+    else
+        parts[1] = ("%sSESSION|r %sstarts with your first press|r"):format(WHITE_C, GREY)
+    end
+    parts[2] = ("%sTODAY|r  %d bought  %s"):format(WHITE_C, t.day.n, worth(t.day.profit))
+    parts[3] = ("%s%d|r  %d bought  %s"):format(WHITE_C, t.year.id, t.year.n, worth(t.year.profit))
+    return parts
+end
+
+-- THE MODE BADGE (top left). What is being bought, and one click to change it.
+function UI:RenderMode()
+    local b = frame and frame.mode
+    if not b then return end
+    local S = ns.Sniper
+    local sk = S:StakeKey()
+    local text, c
+    if sk then text, c = "STAKE-OUT: " .. S.nameOf(sk), { 1, 0.82, 0 }
+    elseif S.lowGold then text, c = "VENDOR ONLY: GOLD LOW", { 1, 0.5, 0.25 }
+    elseif not ns.Deals.cfg.flips then text, c = "VENDOR ONLY", { 0.2, 1, 0.4 }
+    else text, c = "VENDOR + FLIPS", ACCENT end
+    b:SetText(("|cff%02x%02x%02x%s|r"):format(floor(c[1] * 255 + 0.5), floor(c[2] * 255 + 0.5), floor(c[3] * 255 + 0.5), text))
+    UI.outline(b, c)
+    self.modeText = text
+end
+function UI:ModeClick()
+    local S = ns.Sniper
+    if S:StakeKey() then
+        S:SetStake(nil)
+        self:Notice("Stake-out ended. The radar has every request again.", true)
+    else
+        self:SetVendorOnly(AuctionMeshDB.cfg.flips ~= false)
+    end
+    self:Render()
+end
+
 -- Waiting for a key press (Setup, Key) ends when the Setup tab is left.
 function UI:StopKeyCapture()
     if not self.capturingKey then return end
@@ -1238,6 +1290,7 @@ function UI:Render()
     end
 
     if tab == "SELL" then frame.next:SetText(TEAL .. "NEXT|r  " .. nextStep(deals, entries, short)) end -- (hidden on the other tabs)
+    self:RenderMode()
     self:RenderSnipe(short)
     if frame.stakeStop then frame.stakeStop:SetShown(tab == "BUY" and ns.Sniper:StakeKey() ~= nil) end
     local status = tab == "BUY" and buyStatus(#deals) or tab == "SELL" and Se:Instructions(entries) or ""
@@ -1300,19 +1353,7 @@ function UI:Render()
     -- Footer: one line of totals for the tab.
     local parts = {}
     if tab == "BUY" then
-        if #deals > 0 then
-            local total = 0
-            for _, d in ipairs(deals) do total = total + d.profit end
-            parts[#parts + 1] = ("Make now  %s+ %s|r  %s(%d deal%s)|r"):format(GREEN, short(total), GREY, #deals, #deals == 1 and "" or "s")
-        end
-        local rz = AuctionMeshDB.realized or 0
-        parts[#parts + 1] = ("%sBanked so far|r  %s%s%s|r"):format(GREY, rz >= 0 and GREEN or RED, rz >= 0 and "+ " or "- ", short(math.abs(rz)))
-        local made = rz - (ns.realizedAtLogin or 0)
-        local hours = (GetTime() - (ns.sessionStart or GetTime())) / 3600
-        if made ~= 0 and hours > 0.05 then
-            parts[#parts + 1] = ("%sThis session|r  %s%s%s|r %s(%s an hour)|r"):format(GREY, made >= 0 and GREEN or RED,
-                made >= 0 and "+ " or "- ", short(math.abs(made)), GREY, short(made / hours))
-        end
+        for _, part in ipairs(UI.TradesFooter(short)) do parts[#parts + 1] = part end
     elseif tab == "SELL" then
         local invested, back, any = 0, 0, false
         for _, e in ipairs(entries) do
@@ -1330,7 +1371,11 @@ function UI:Render()
     if #list > vis then
         parts[#parts + 1] = ("%srows %d-%d of %d (mouse wheel)|r"):format(GREY, off + 1, math.min(#list, off + vis), #list)
     end
-    frame.footer:SetText(table.concat(parts, "    "))
+    -- (the Trades tab has no button at the bottom right: its footer may use the whole width)
+    frame.footer:ClearAllPoints()
+    frame.footer:SetPoint("BOTTOMLEFT", 14, 12)
+    frame.footer:SetPoint("BOTTOMRIGHT", tab == "BUY" and -14 or -230, 12)
+    frame.footer:SetText(table.concat(parts, tab == "BUY" and (GREY .. "   |   |r") or "    "))
 
     do  -- "Post next" only when there is something to post
         local toPost = false
@@ -1571,6 +1616,7 @@ function UI:Create()
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     frame.title:SetPoint("TOPLEFT", 14, -12)
     frame.title:SetText("AuctionMesh")
+    frame.title:Hide() -- its place is the mode badge's now
     -- A separate window is dragged by any part of it that is not a button or a
     -- box: the background, the item rows, the drawer.
     function UI.Draggable(w)
@@ -1588,7 +1634,24 @@ function UI:Create()
     frame.closeBtn:SetPoint("TOPRIGHT", 0, 0)
     frame.closeBtn:SetScript("OnClick", function() UI:Close() end)
 
-    -- tabs (positioned in Place(): next to the title when floating, at the left edge when docked)
+    -- THE MODE, top left on every tab, where the name used to be: what is being
+    -- bought right now, in colour. A click changes it (no trip to the Setup tab).
+    frame.mode = button(frame, 158, "", function() UI:ModeClick() end)
+    frame.mode:SetHeight(20)
+    frame.mode:SetPoint("TOPLEFT", 12, -7)
+    frame.mode:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+        GameTooltip:AddLine("What is being bought", 1, 1, 1)
+        GameTooltip:AddLine("VENDOR + FLIPS: everything. Vendor deals (listed under what a vendor pays) and flips (resold on the auction house).", 0.30, 0.86, 0.76, true)
+        GameTooltip:AddLine("VENDOR ONLY: vendor deals only. Gold back at the next vendor, guaranteed.", 0.2, 1, 0.4, true)
+        GameTooltip:AddLine("VENDOR ONLY: GOLD LOW: the addon's own switch while you cannot pay the posting fees; flips come back by themselves.", 1, 0.5, 0.25, true)
+        GameTooltip:AddLine("STAKE-OUT: one item, bought by asking its price with every input; nothing else while you press. Set on the Picks tab.", 1, 0.82, 0, true)
+        GameTooltip:AddLine(ns.Sniper:StakeKey() and "Click: end the stake-out." or "Click: switch between VENDOR + FLIPS and VENDOR ONLY.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    frame.mode:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- tabs (positioned in Place(): to the right of the mode badge)
     frame.tabBuy = makeTab(frame, "Trades", function() UI:StopKeyCapture(); UI.tab = "BUY"; UI:Render() end)
     frame.tabSell = makeTab(frame, "Bags", function() UI:StopKeyCapture(); UI.tab = "SELL"; UI:Render() end)
     frame.tabPick = makeTab(frame, "Picks", function() UI:StopKeyCapture(); UI.tab = "PICKS"; UI:Render() end)
@@ -2099,6 +2162,13 @@ function UI:Create()
         acc = 0
         if UI.notice and GetTime() >= UI.notice.till then UI.notice = nil; UI.dirty = true end
         UI:SampleGold() -- one gold sample every 20 seconds for the Session view (a time check on the others)
+        do  -- the session clock in the footer: once a second, the footer's text only
+            local sec = floor(GetTime())
+            if UI.tab == "BUY" and ns.Sniper.session and sec ~= UI.clockSec and not UI.dirty then
+                UI.clockSec = sec
+                frame.footer:SetText(table.concat(UI.TradesFooter(ns.Seller.short), GREY .. "   |   |r"))
+            end
+        end
         if UI.flashUntil and GetTime() >= UI.flashUntil then
             UI.flashUntil, UI.flashKind = nil, nil
             for _, t in ipairs(rawget(frame, "flashEdges") or {}) do t:Hide() end
@@ -2212,8 +2282,8 @@ function UI:Place()
         frame:SetPoint("BOTTOMRIGHT", ah, "BOTTOMRIGHT", -3, 3)
         frame:SetFrameStrata("DIALOG")
         frame:SetMovable(false)
-        frame.title:Hide(); frame.closeBtn:Hide()
-        frame.tabBuy:SetPoint("TOPLEFT", 12, -8)
+        frame.closeBtn:Hide()
+        frame.tabBuy:SetPoint("TOPLEFT", 178, -8)
         frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -12, -6)
         frame.pop:SetText("Pop out"); frame.pop:Show()
     else
@@ -2222,8 +2292,8 @@ function UI:Place()
         frame:SetSize(WIDTH, FLOAT_H)
         frame:SetFrameStrata("HIGH")
         frame:SetMovable(true)
-        frame.title:Show(); frame.closeBtn:Show()
-        frame.tabBuy:SetPoint("TOPLEFT", 130, -8)
+        frame.closeBtn:Show()
+        frame.tabBuy:SetPoint("TOPLEFT", 178, -8)
         -- "Dock" only makes sense while the auction house is open
         frame.pop:ClearAllPoints(); frame.pop:SetPoint("TOPRIGHT", -34, -6)
         frame.pop:SetText("Dock"); frame.pop:SetShown(ahOpen() and true or false)

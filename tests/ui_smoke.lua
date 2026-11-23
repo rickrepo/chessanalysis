@@ -242,7 +242,13 @@ check(#r == 2, "exactly the 2 real deals are listed (the 500-unit trap is not)")
 check(r[1] and r[1]:find("Copper Ore") and r[1]:find("SAFE  Buy 12 for 36c, vendor pays 60c | +24c", 1, true), "vendor deal first, exact quantity, total and profit")
 check(r[2] and r[2]:find("Linen Cloth") and r[2]:find("FLIP  Buy 6 for 1s20c, relist at 77c", 1, true) and r[2]:find("| +3s18c |", 1, true), "flip shows exact buy and resale price")
 check(S.verified[2447] == nil, "Peacebloom (500 cheap units) correctly rejected")
-check(strip(AuctionMeshFrame.footer._text):find("Make now  + 3s42c  (2 deals)", 1, true), "footer: Make now + 3s42c (2 deals)")
+do
+    local ft = strip(AuctionMeshFrame.footer._text)
+    print("     " .. ft)
+    check(ft:find("^SESSION starts with your first press   |   TODAY  0 bought  %+ 0c   |   %d%d%d%d  0 bought  %+ 0c$"),
+        "footer: SESSION (not started yet), TODAY and the year")
+    check(strip(AuctionMeshFrame.mode._text) == "VENDOR + FLIPS", "the mode badge at the top left reads VENDOR + FLIPS")
+end
 check(morePages >= 1 and morePages < 3, ("first page already proves a deal: acted on at once; only the item that was NOT a deal had the rest of its listing fetched (%d extra page)"):format(morePages))
 
 print("buying")
@@ -1129,7 +1135,7 @@ for l in st:gmatch("[^\n]+") do print("     " .. l) end
 check(st:find("Next check", 1, true) == nil and select(2, st:gsub("\n", "")) == 0,
     "the Trades tab's status is one line: the mode and what the radar is doing")
 check(st:find("Peacebloom", 1, true) == nil, "a routine look at an item is not reported on the Trades tab")
-check(st:find("^MODE: VENDOR %+ FLIPS%. .-Radar: a read every %d+%.%d%ds%.$") ~= nil, "it gives the measured time between radar reads")
+check(st:find("Radar: a read every %d+%.%d%ds%.$") ~= nil and st:find("MODE", 1, true) == nil, "it gives the measured time between radar reads (the mode itself is the badge at the top left)")
 do
     local dt = drawerText("session")
     check(dt:find("RADAR\nA read every  |  %d+%.%d%ds") ~= nil and dt:find("Requests in the last minute  |  %d+ radar, %d+ alerts, %d+ buying, %d+ other") ~= nil,
@@ -1146,7 +1152,7 @@ check(st:find("Last alert", 1, true) == nil and drawerText("session"):find("Last
 UI.wheelSeen = GetTime(); UI:Render()
 st = strip(AuctionMeshFrame.status._text)
 for l in st:gmatch("[^\n]+") do print("     " .. l) end
-check(st:find("^MODE: VENDOR %+ FLIPS%.") ~= nil and select(2, st:gsub("\n", "")) == 0, "armed: still one line, starting with the mode in capitals")
+check(select(2, st:gsub("\n", "")) == 0 and strip(AuctionMeshFrame.mode._text) == "VENDOR + FLIPS", "armed: still one line; the mode is on the badge")
 check(strip(AuctionMeshFrame.snipe.label._text):find("ARMED.-radar first; %d+ listings? still being read for instant flips") ~= nil, "the snipe box says what is still being read for instant flips")
 do
     local was = S.ListingReady
@@ -1455,7 +1461,7 @@ do
         advance(2)
         check(UI.flashKind == nil and not e[1]._shown, "the flash is gone after a second and a half")
     end
-    check(strip(btn.result._text) == "This session: 1 got, 0 missed, 0 gone before a click", "the line under the button keeps count")
+    check(strip(btn.result._text) == "" and strip(AuctionMeshFrame.footer._text):find("^SESSION "), "the count is in the footer now, not under the button")
     AuctionMeshDB.flips[2770] = nil
     ns.Journal:Dropped(2770, nil, "test")
 
@@ -1593,7 +1599,7 @@ do
         local st = strip(AuctionMeshFrame.status._text)
         print("     " .. st:match("[^\n]+"))
         check(st:find("Gold is low: vendor deals only. You hold 2s50c; posting the 2 items you bought takes 4s", 1, true), "the Trades tab says it, with the figures")
-        check(st:find("MODE: VENDOR ONLY (gold is low).", 1, true), "and the mode on the Trades tab reads VENDOR ONLY (gold is low)")
+        check(strip(AuctionMeshFrame.mode._text) == "VENDOR ONLY: GOLD LOW", "and the mode badge reads VENDOR ONLY: GOLD LOW")
         -- a flip is not offered now; a vendor deal still is
         LIST[2589] = { { 20, 6 }, { 78, 100 }, { 80, 300 }, { 85, 500 } }
         LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
@@ -1616,9 +1622,17 @@ do
         check(S.lowGold == nil, "little gold but nothing waiting to be posted: no switch")
         gold = 900
         UI:SetVendorOnly(true); UI.notice = nil; UI:Render()
-        check(strip(AuctionMeshFrame.status._text):find("^MODE: VENDOR ONLY%."), "your own vendor-only setting shows as MODE: VENDOR ONLY")
+        check(strip(AuctionMeshFrame.mode._text) == "VENDOR ONLY", "your own vendor-only setting shows on the badge as VENDOR ONLY")
         UI:SetVendorOnly(false); UI.notice = nil; UI:Render()
-        check(strip(AuctionMeshFrame.status._text):find("^MODE: VENDOR %+ FLIPS%."), "and with flips on as MODE: VENDOR + FLIPS")
+        check(strip(AuctionMeshFrame.mode._text) == "VENDOR + FLIPS", "and with flips on as VENDOR + FLIPS")
+        do  -- one click on the badge changes it, without the Setup tab
+            local m = AuctionMeshFrame.mode
+            m._scripts.OnClick(m)
+            check(AuctionMeshDB.cfg.flips == false and strip(m._text) == "VENDOR ONLY", "a click on the badge: VENDOR ONLY")
+            m._scripts.OnClick(m)
+            check(AuctionMeshDB.cfg.flips ~= false and strip(m._text) == "VENDOR + FLIPS", "another click: VENDOR + FLIPS again")
+            UI.notice = nil; UI:Render()
+        end
         C_AuctionHouse.CalculateCommodityDeposit = realFee; S.ClearFees()
         LIST[2589], LIST[2770] = nil, nil
         for _, k in ipairs({ 2592, 4306 }) do ns.Journal:Dropped(k, nil, "test") end
@@ -1782,6 +1796,61 @@ do
         cfg0.focusItems, cfg0.ignore, cfg0.focusMode = itemsWas, ignoreWas, modeWas; ns.Scout:Changed()
         UI.itemsCache = nil
         reset()
+    end
+
+    -- THE FOOTER: SESSION (with its clock) | TODAY | THE YEAR
+    do
+        reset(); gold = 900; cfg.autoConfirm = nil
+        S.cool, S.streak, S.muted = {}, {}, {}
+        local leather = LIST[2319]; LIST[2319] = nil
+        local totalsWas, sessionWas = AuctionMeshDB.totals, S.session
+        local year = tonumber(os.date("%Y", GetServerTime()))
+        AuctionMeshDB.totals = { day = { id = tonumber(os.date("%Y%m%d", GetServerTime())), n = 3, profit = 500 }, year = { id = year, n = 40, profit = 9000 } }
+        S.session = nil
+        UI.tab = "BUY"; UI.notice = nil; UI:Render()
+        local function foot() return strip(AuctionMeshFrame.footer._text) end
+        check(foot() == ("SESSION starts with your first press   |   TODAY  3 bought  + 5s00c   |   %d  40 bought  + 90s00c"):format(year),
+            "before your first press: no session yet; today and the year are there from earlier")
+        -- the first press starts the session and its clock
+        UI.InputPress(true, "wheel")
+        UI:Render()
+        check(foot():find("^SESSION 0:00  0 bought, 0 missed  %+ 0c   |   TODAY  3 bought"), "your first press starts the session: its clock is at 0:00")
+        advance(65)
+        check(foot():find("^SESSION 1:0%d  0 bought, 0 missed"), "the clock runs by itself (1:05 after 65 seconds), with no redraw of the panel needed")
+        -- a purchase counts in all three
+        LIST[2770] = { { 3, 12 }, { 9, 200 }, { 10, 300 } }
+        S.checkedAt = {}; S.priority = 2770; advance(1)
+        UI.InputPress(true, "wheel"); advance(1.5)
+        UI:Render()
+        local worth = S.session.profit
+        print("     " .. foot())
+        check(gold == 900 - 36 and S.session.won == 1 and worth > 0, "a deal is bought in the session")
+        check(foot():find("^SESSION 1:0%d  1 bought, 0 missed  %+ ") and AuctionMeshDB.totals.day.n == 4 and AuctionMeshDB.totals.day.profit == 500 + worth
+            and AuctionMeshDB.totals.year.n == 41 and AuctionMeshDB.totals.year.profit == 9000 + worth,
+            "it counts in the session, in today and in the year, each with what it is worth when sold")
+        -- a miss counts in the session
+        S:Result("lost", 2770, "MISSED  test"); UI:Render()
+        check(foot():find("1 bought, 1 missed", 1, true), "a miss counts in the session")
+        -- ten minutes with no press: the session is over; it stays shown until the next one starts
+        advance(601); UI:Render()
+        check(foot():find("^SESSION %d:%d%d %(over%)  1 bought, 1 missed"), "ten minutes without a press: the session is over, its figures stay")
+        UI.InputPress(true, "wheel"); UI:Render()
+        check(foot():find("^SESSION 0:00  0 bought, 0 missed  %+ 0c") and AuctionMeshDB.totals.day.n == 4, "the next press starts a new session from zero; today keeps its total")
+        -- the day turns: today starts again, the year goes on
+        AuctionMeshDB.totals.day.id = AuctionMeshDB.totals.day.id - 1
+        UI:Render()
+        check(AuctionMeshDB.totals.day.n == 0 and AuctionMeshDB.totals.year.n == 41 and foot():find("TODAY  0 bought", 1, true), "a new day: today starts at zero, the year goes on")
+        -- the first time, the totals are filled from the journal of your trades
+        AuctionMeshDB.totals = nil
+        local tt = S:Totals()
+        check(tt.year.n >= 1 and tt.year.profit > 0 and tt.day.n >= 1, "with no totals yet they are worked out once from the journal of your trades")
+        AuctionMeshDB.flips[2770] = nil; ns.Journal:Dropped(2770, nil, "test")
+        AuctionMeshDB.totals, S.session = totalsWas, sessionWas
+        LIST[2770] = nil; LIST[2319] = leather
+        cfg.autoConfirm = false
+        S.result, S.lastTry, UI.flashUntil, UI.wheelSeen = nil, nil, nil, nil
+        S.tally.won, S.tally.lost, S.tally.gone = 0, 0, 0
+        advance(1); reset(); UI:Render()
     end
 
     -- FAST SELLERS OUTSIDE THE FOCUS SET are checked for flips too (they were passed over), without taking the radar's turns
@@ -1984,6 +2053,8 @@ do
     do
         reset(); gold = 900; S.cool, S.streak, S.muted = {}, {}, {}
         local leather = LIST[2319]; LIST[2319] = nil
+        local heavy = LIST[4234]; LIST[4234] = nil -- (standing deals of other sections are not part of this)
+        S.verified, S.dealSeen, G.holdUntil = {}, {}, nil
         local lines, realLog = {}, ns.Log
         ns.Log = function(fmt, ...) local ok, l = pcall(string.format, fmt, ...); lines[#lines + 1] = ok and l or tostring(fmt); return realLog(fmt, ...) end
         local function logged(pat) for _, l in ipairs(lines) do if l:find(pat) then return l end end end
@@ -2034,7 +2105,7 @@ do
         check(okp and r == true, "inputs still work after it")
         ns.errs, ns.errList, UI.notice = nil, nil, nil
         ns.Log = realLog
-        LIST[2770] = nil; LIST[2319] = leather
+        LIST[2770] = nil; LIST[2319] = leather; LIST[4234] = heavy
         S.result, S.lastTry, UI.flashUntil, UI.wheelSeen, UI.inputTimes = nil, nil, nil, nil, nil
         S.tally.won, S.tally.lost, S.tally.gone, S.tally.armed = 0, 0, 0, nil
         advance(1); reset(); UI:Render()
@@ -3187,8 +3258,8 @@ do
             UI.notice = nil; UI:Render()
             local stt = strip(AuctionMeshFrame.status._text)
             print("     " .. stt)
-            check(stt:find("^MODE: STAKE%-OUT on Heavy Stone%. Not running: press in the snipe box to start it%. Until then the radar reads as usual%.$"),
-                "the status line: MODE: STAKE-OUT on the item, and that it is not running yet")
+            check(strip(AuctionMeshFrame.mode._text) == "STAKE-OUT: Heavy Stone" and stt:find("^Not running: press in the snipe box to start it%. Until then the radar reads as usual%.$"),
+                "the badge reads STAKE-OUT: Heavy Stone, and the status line says it is not running yet")
             check(AuctionMeshFrame.stakeStop._shown and AuctionMeshFrame.stakeStop._text == "Stop stake-out", "a Stop stake-out button is on the Trades tab while one is set")
             UI.tab = "SELL"; UI:Render()
             check(not AuctionMeshFrame.stakeStop._shown, "(on the Trades tab only)")
@@ -3209,7 +3280,7 @@ do
         do
             UI.notice = nil; UI:Render()
             local stt = strip(AuctionMeshFrame.status._text)
-            check(stt:find("^MODE: STAKE%-OUT on Heavy Stone%. Running: every input asks its price%. Nothing else is bought and the radar is off%.$"),
+            check(strip(AuctionMeshFrame.mode._text) == "STAKE-OUT: Heavy Stone" and stt:find("^Running: every input asks its price%. Nothing else is bought and the radar is off%.$"),
                 "while it runs the status line says so: only this item, radar off")
         end
         -- three cheap units are listed

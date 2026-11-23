@@ -294,7 +294,7 @@ if SCEN == "armed" then
     local st = strip(AuctionMeshFrame.status._text or "")
     UI:Render(); st = strip(AuctionMeshFrame.status._text or "")
     print("     " .. st:gsub("\n", "\n     "))
-    check(st:find("^MODE: VENDOR %+ FLIPS%. .-Radar: a read every 0%.6%ds%.$") ~= nil, "the Trades tab shows it in one line: the mode and a read every 0.6xs")
+    check(st:find("Radar: a read every 0%.6%ds%.$") ~= nil and select(2, st:gsub("\n", "")) == 0, "the Trades tab shows it in one line: a read every 0.6xs")
     local dt = {}
     for _, ln in ipairs(UI:SessionLines(ns.Seller:Entries(), ns.Seller.short)) do dt[#dt + 1] = strip((ln.head or ln.l or "") .. (ln.r and ("  |  " .. ln.r) or "")) end
     dt = table.concat(dt, "\n")
