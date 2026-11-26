@@ -1306,7 +1306,8 @@ function Sniper:NextCheck(upkeep)
         tr[k] = nil
         local info = self.trigInfo and self.trigInfo[k]
         if self.trigInfo then self.trigInfo[k] = nil end
-        if not self.verified[k] and self:Since(k) >= ((info and info.fast) and 1.5 or TRIGGER_MIN) then
+        -- (a check that was lost is asked again whatever the time since it was "last checked": it never was)
+        if not self.verified[k] and ((info and info.retry) or self:Since(k) >= ((info and info.fast) and 1.5 or TRIGGER_MIN)) then
             return k, info and info.src or "drop", info and (GetTime() - info.at) or 0, info and info.from or "me"
         end
     end
@@ -1453,13 +1454,35 @@ function Sniper:Tick()
     if sr then
         -- A request the client never transmitted: free the queue after 0.4s, not 3.
         local unsent = ns.Gate.sawSent and sr.sent == ns.Gate.sentCount and now - sr.at > 0.4 and not sr.needMore
-        if unsent then ns.Log("SEARCH %s was not transmitted by the client; skipped", tostring(sr.key)) end
         local timeout = ns.Tuner and ns.Tuner:Timeout() or SEARCH_TIMEOUT
         if unsent or now - sr.at > timeout then
+            -- AN ALERT WHOSE CHECK WAS LOST IS ASKED AGAIN, once. (A real log: the
+            -- radar saw an item at vendor price, its check went out right after a
+            -- refused purchase, came back as an error with no data, and was
+            -- "skipped": that price was never looked at.) Once in ten seconds
+            -- per item, so a check that can never be sent does not go round.
+            local again = false
+            if ALERT_SRC[sr.src or ""] and not self.verified[sr.key] then
+                self.lostOnce = self.lostOnce or {}
+                local was = self.lostOnce[sr.key]
+                if not was or now - was > 10 then
+                    self.lostOnce[sr.key] = now
+                    self.triggers = self.triggers or {}
+                    if not self.triggers[sr.key] then
+                        self.triggers[sr.key] = (sr.src == "vendor") and 11 or 1 -- (ahead of what is waiting: it was already at the front once)
+                        self.triggers[#self.triggers + 1] = sr.key
+                        self.trigInfo = self.trigInfo or {}
+                        self.trigInfo[sr.key] = { src = sr.src, at = now - (sr.waited or 0), from = sr.from or "me", retry = true }
+                    end
+                    again = true
+                end
+            end
+            local what = again and "asked again" or "skipped"
+            if unsent then ns.Log("SEARCH %s was not transmitted by the client; %s", tostring(sr.key), what) end
             if ns.Tuner then ns.Tuner:Wasted(unsent and "unsent" or "timeout") end
             if ns.Watch then
-                ns.Watch:Add("NO-ANSWER", now - sr.at, unsent and ("the item check of %s was never transmitted by the game; skipped"):format(tostring(sr.key))
-                    or ("the item check of %s was not answered in %.1fs; given up"):format(tostring(sr.key), now - sr.at))
+                ns.Watch:Add("NO-ANSWER", now - sr.at, unsent and ("the item check of %s was never transmitted by the game; %s"):format(tostring(sr.key), what)
+                    or ("the item check of %s was not answered in %.1fs; %s"):format(tostring(sr.key), now - sr.at, again and "asked again" or "given up"))
             end
             local Se = ns.Seller
             if Se and Se.pending and Se.pending.key == sr.key then

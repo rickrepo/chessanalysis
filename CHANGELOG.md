@@ -6,6 +6,11 @@ To install any version: delete the old `AuctionMesh` folder, unzip the new one i
 
 ---
 
+## 3.66.1 (2026-11-26)
+
+- **An alert whose check was lost is asked again.** In a real log the radar saw an item at vendor price; its check went out right after a refused purchase, came back as an error with no data, and was logged as "skipped". That price was never looked at. A lost check of an alert (vendor price, under market, price drop) is now asked again at once, ahead of what is waiting. Once in ten seconds per item; routine checks are not repeated.
+- Not confirmed in game: only run in the offline tests.
+
 ## 3.66.0 (2026-11-23)
 
 - **SPEED, in numbers, on the Buy tab.** Two lines under the snipe box, measured over the last 60 seconds:

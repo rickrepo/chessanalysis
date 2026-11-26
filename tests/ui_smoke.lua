@@ -4720,6 +4720,33 @@ do
     UI.tab = "BUY"; UI.goldView = nil; UI:Render()
 end
 
+print("an alert whose check was lost is asked again, once")
+do
+    local G = ns.Gate
+    AuctionHouseFrame:Show(); UI:Open("BUY"); UI.notice = nil
+    local K = 2589
+    S.buying, S.verified[K], S.priority, S.triggers, S.trigInfo, S.lostOnce = nil, nil, nil, {}, {}, nil
+    G.holdUntil, G.userUntil, G.penaltyUntil, G.errAt, G.nextAt, G.outstanding = nil, nil, nil, nil, 0, 0
+    if not S.active then S:Start() end
+    local function lose(src)
+        -- a check that went out and got no answer: the game's count of sent requests did not move
+        G.sawSent = true
+        S.searching = { key = K, at = GetTime() - 0.5, sent = G.sentCount, src = src, waited = 0, from = "me" }
+        S:Tick()
+    end
+    local function again() return (S.searching and S.searching.key == K and S.searching.src) or (S.triggers[K] and S.trigInfo[K] and S.trigInfo[K].src) or nil end
+    lose("vendor")
+    check(again() == "vendor", "a vendor-price alert whose check was lost is asked again at once (it was skipped, and that price was never looked at)")
+    check(ns.Diag:Text():find("SEARCH 2589 was not transmitted by the client; asked again", 1, true) ~= nil, "the log says so")
+    S.triggers, S.trigInfo = {}, {}
+    lose("vendor")
+    check(again() == nil, "lost a second time within ten seconds: not asked a third time")
+    S.lostOnce = nil; S.triggers, S.trigInfo = {}, {}
+    lose("routine")
+    check(again() == nil, "a routine check that was lost is not repeated: only alerts are")
+    S.searching, S.lostOnce = nil, nil; S.triggers, S.trigInfo = {}, {}
+end
+
 print("speed in numbers, and the wait after an error")
 do
     local G, W = ns.Gate, ns.Watch
